@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sunny — Find great outdoor pubs</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <style>
+:root { --bg:#fff; --fg:#111; --muted:#666; --chip:#ddd; --brand:#111; --ok:#136f63; --warn:#f4c95d; --bad:#c94f4f; }
+* { box-sizing: border-box; }
+html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:var(--bg); }
+#app { display:grid; grid-template-rows: auto 1fr; height: 100dvh; }
+.toolbar { display:flex; align-items:center; gap:.6rem; padding:.6rem .8rem; border-bottom:1px solid #eee; background:#fff; position:sticky; top:0; z-index:1000; }
+.toolbar h1 { font-size:1.1rem; font-weight:800; margin:0; }
+.toolbar .spacer { flex:1; }
+a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
+#map { width:100%; height:100%; min-height:60vh; }
+/* Inline minimal Leaflet CSS to ensure map renders on content:// */
+
+.leaflet-container{position:relative;outline:0;overflow:hidden;-webkit-tap-highlight-color:transparent;}.leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-image-layer,.leaflet-layer{position:absolute;left:0;top:0;}.leaflet-container img{max-width:none !important;}.leaflet-container a{outline:0;}.leaflet-tile{filter:inherit;visibility:hidden;}.leaflet-tile-loaded{visibility:inherit;}.leaflet-zoom-animated{-webkit-transform-origin:0 0;transform-origin:0 0;}.leaflet-zoom-animated .leaflet-zoom-animated{will-change:transform}.leaflet-zoom-hide{visibility:hidden;}.leaflet-control{position:relative;z-index:800;pointer-events:auto;}.leaflet-top,.leaflet-bottom{position:absolute;z-index:1000;pointer-events:none;}.leaflet-top{top:0;}.leaflet-right{right:0;}.leaflet-left{left:0;}.leaflet-control{clear:both;}.leaflet-top .leaflet-control{margin-top:10px;}.leaflet-right .leaflet-control{margin-right:10px;}.leaflet-bottom .leaflet-control{margin-bottom:10px;}.leaflet-left .leaflet-control{margin-left:10px;}
+
+
+/* Filters button */
+.fab { position: fixed; right: 12px; bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 1100; border: none; border-radius: 999px; padding: .6rem .9rem; background: var(--brand); color: #fff; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+
+/* Bottom carousel */
+.carousel { position: fixed; left:0; right:0; bottom:0; z-index:1050; background:linear-gradient(to top, rgba(255,255,255,0.95), rgba(255,255,255,0.85)); padding: .5rem .5rem calc(.5rem + env(safe-area-inset-bottom)); border-top:1px solid #eee; }
+.carousel-header { display:flex; align-items:center; justify-content:space-between; padding:0 .25rem .35rem; }
+.view-toggle { display:flex; gap:.25rem; }
+.view-toggle button { border:1px solid #ddd; background:#fff; border-radius:10px; padding:.35rem .6rem; }
+.view-toggle .active { background:#111; color:#fff; border-color:#111; }
+.cards { display:flex; gap:.5rem; overflow-x:auto; padding:.25rem; scroll-snap-type: x proximity; }
+.card { min-width: 260px; max-width: 280px; flex:0 0 auto; border:1px solid #eee; border-radius:14px; background:#fff; padding:.6rem .7rem; box-shadow: 0 4px 14px rgba(0,0,0,.06); scroll-snap-align: start; }
+.card h3 { margin:.1rem 0 .25rem; font-size:1rem; }
+.badges { display:flex; flex-wrap:wrap; gap:.25rem; margin:.25rem 0 .35rem; }
+.badge { font-size:.75rem; border:1px solid #ddd; border-radius:999px; padding:2px 6px; }
+.b-sun-full { background:#136f63; color:#fff; border-color:#136f63; }
+.b-sun-some { background:#f4c95d; color:#111; border-color:#f4c95d; }
+.b-outdoor { background:#f1f1f1; }
+.meta { font-size:.82rem; color:var(--muted); }
+.actions { display:flex; gap:.4rem; margin-top:.5rem; flex-wrap: wrap; }
+.actions a, .actions button { border:1px solid #ddd; background:#fff; border-radius:10px; padding:.35rem .6rem; text-decoration:none; color:inherit; }
+.actions .primary { background:#111; color:#fff; border-color:#111; }
+
+/* List panel */
+.list-panel { position: fixed; left:0; right:0; bottom:0; background:#fff; z-index:1060; max-height: 45vh; overflow:auto; border-top:1px solid #eee; display:none; }
+.list-panel.show { display:block; }
+.list-item { display:flex; justify-content:space-between; align-items:flex-start; gap:.6rem; padding:.6rem .8rem; border-bottom:1px solid #f1f1f1; }
+.list-item h4 { margin:.1rem 0; }
+
+/* Detail modal */
+.modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:1300; display:none; }
+.modal-backdrop.show { display:block; }
+.modal { position:fixed; left:0; right:0; bottom:0; z-index:1310; background:#fff; border-radius:16px 16px 0 0; box-shadow:0 -10px 30px rgba(0,0,0,.2); transform: translateY(100%); transition: transform .22s ease; }
+.modal.show { transform: translateY(0); }
+.modal-head { display:flex; align-items:center; justify-content:space-between; padding:.9rem 1rem; border-bottom:1px solid #eee; }
+.modal-body { padding: .8rem 1rem 1rem; display:grid; gap:.6rem; }
+.detail-map { height:180px; border-radius:12px; overflow:hidden; }
+
+/* Bottom sheet (filters) */
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 1200; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+.sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1300; max-height: 85vh; background: #fff; border-radius: 16px 16px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.2); transform: translateY(100%); transition: transform .22s ease; }
+.sheet-head { display:flex; align-items:center; justify-content:space-between; padding: .9rem 1rem; border-bottom: 1px solid #eee; }
+.sheet-body { padding: .8rem 1rem 1rem; overflow-y: auto; max-height: calc(85vh - 56px); display: grid; gap: 1rem; }
+.icon-btn { background: transparent; border: 1px solid #ddd; border-radius: 8px; padding: .3rem .5rem; }
+.sheet-actions { display:flex; gap:.6rem; justify-content:flex-end; padding-top: .5rem; }
+.primary { background:#111; color:#fff; border:0; border-radius: 10px; padding:.6rem 1rem; }
+.secondary { background:#f6f6f6; color:#111; border:1px solid #ddd; border-radius: 10px; padding:.6rem 1rem; }
+.pill-row { display:flex; flex-wrap:wrap; gap:.5rem; }
+.pill { border:1px solid #ddd; border-radius:999px; padding:.35rem .7rem; }
+.pill input { margin-right:.35rem; }
+.hidden { display:none; }
+.backdrop.show { opacity: 1; pointer-events: auto; }
+.sheet.show { transform: translateY(0); }
+
+/* Pre-permission card */
+.loc-card { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(56px + env(safe-area-inset-bottom)); width: min(540px, calc(100% - 24px)); z-index: 1200; background:#fff; border:1px solid #eee; border-radius:14px; padding:.8rem; box-shadow:0 8px 30px rgba(0,0,0,.18); display:none; }
+.loc-card.show { display:block; }
+.loc-card h4 { margin:.1rem 0 .4rem; }
+.loc-card .row { display:flex; gap:.5rem; }
+.loc-card button { flex:1; border:1px solid #ddd; border-radius:10px; padding:.5rem .7rem; background:#fff; }
+.loc-card .primary { background:#111; color:#fff; border-color:#111; }
+
+/* Empty state */
+.empty { padding:.6rem .8rem; color:var(--muted); }
+</style>
+</head>
+<body>
+  <div id="app">
+    <div class="toolbar">
+      <h1>Sunny</h1>
+      <div class="spacer"></div>
+      <a class="tiny" href="privacy.html">Privacy</a>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <!-- Filters FAB -->
+  <button id="filterBtn" class="fab" aria-controls="filterSheet" aria-expanded="false">Filters</button>
+
+  <!-- Pre-permission card -->
+  <div id="locCard" class="loc-card">
+    <h4>Find outdoor pubs near you?</h4>
+    <p class="tiny" style="margin:.2rem 0 .6rem;">We only use your location on this device to show nearby venues.</p>
+    <div class="row">
+      <button id="denyLoc">Not now</button>
+      <button id="allowLoc" class="primary">Allow</button>
+    </div>
+  </div>
+
+  <!-- Bottom carousel -->
+  <div class="carousel" id="carousel">
+    <div class="carousel-header">
+      <div class="empty" id="resultHint">Loading venues…</div>
+      <div class="view-toggle">
+        <button id="viewMap" class="active" aria-pressed="true">Map</button>
+        <button id="viewList" aria-pressed="false">List</button>
+      </div>
+    </div>
+    <div class="cards" id="cards"></div>
+  <div id="enrichHint" class="empty" style="position:fixed;left:8px;bottom:64px;background:rgba(255,255,255,.9);border:1px solid #eee;border-radius:10px;padding:.3rem .5rem;display:none;z-index:1200">
+    Enrichment off in local preview — deploy to Netlify to see hours.
+  </div>
+
+  </div>
+  <div class="list-panel" id="listPanel" aria-hidden="true"></div>
+
+  <!-- Venue detail modal -->
+  <div class="modal-backdrop" id="detailBackdrop"></div>
+  <aside class="modal" id="detailModal" role="dialog" aria-modal="true">
+    <header class="modal-head">
+      <h3 id="detailTitle" style="margin:0"></h3>
+      <button id="closeDetail" class="icon-btn" aria-label="Close">✕</button>
+    </header>
+    <div class="modal-body">
+      <div id="detailMiniMap" class="detail-map"></div>
+      <div id="detailInfo"></div>
+      <div class="actions">
+        <a id="detailDirections" class="primary" target="_blank" rel="noopener">Directions</a>
+        <a id="detailUber" target="_blank" rel="noopener">Uber</a>
+        <a id="detailCall" target="_blank" rel="noopener">Call</a>
+        <a id="detailWebsite" target="_blank" rel="noopener">Website</a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Filter sheet -->
+  <div id="backdrop" class="backdrop hidden"></div>
+  <aside id="filterSheet" class="sheet hidden" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <header class="sheet-head">
+      <h2 id="sheetTitle">Filters</h2>
+      <button id="closeSheet" class="icon-btn" aria-label="Close">✕</button>
+    </header>
+    <form id="filtersForm" class="sheet-body">
+      <fieldset>
+        <legend>Sun preference</legend>
+        <label><input type="radio" name="pref" value="full"> Full sun</label>
+        <label><input type="radio" name="pref" value="partial"> Some sun</label>
+        <label><input type="radio" name="pref" value="shade"> Shade</label>
+      </fieldset>
+      <fieldset>
+        <legend>Options</legend>
+        <label><input type="checkbox" id="fOutdoor" checked> Outdoor only</label>
+        <label><input type="checkbox" id="fOpenNow"> Open now</label>
+      </fieldset>
+      <fieldset>
+        <legend>Distance</legend>
+        <div class="pill-row">
+          <label class="pill"><input type="radio" name="dist" value="all" checked> All</label>
+          <label class="pill"><input type="radio" name="dist" value="0.5"> ≤ 500 m</label>
+          <label class="pill"><input type="radio" name="dist" value="1"> ≤ 1 km</label>
+          <label class="pill"><input type="radio" name="dist" value="3"> ≤ 3 km</label>
+        </div>
+      </fieldset>
+      <div class="sheet-actions">
+        <button type="button" id="resetFilters" class="secondary">Reset</button>
+        <button type="submit" class="primary">Apply</button>
+      </div>
+    </form>
+  </aside>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/opening_hours@3.8.0/opening_hours.js"></script>
+  <script> if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js'); </script>
+  <script src="app.js"></script>
+</body>
+</html>
