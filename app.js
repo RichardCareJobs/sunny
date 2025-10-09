@@ -1,424 +1,398 @@
-// Sunny v2.7 — mobile map fix (inline Leaflet CSS), Uber action, broader outdoor heuristic, details parity
-const AUSTRALIA_CENTER = { lat: -25.2744, lon: 133.7751 };
-let preference = "full";
-let outdoorOnly = true;
-let distanceFilter = 'all';
-let openNowOnly = false;
-let venues = [];
-let markers = [];
-let userLoc = null;
-let firstRun = localStorage.getItem('sunny-first-run-done') !== 'true' ? true : false;
 
-// Map
-const map = L.map('map', { zoomControl: true }).setView([AUSTRALIA_CENTER.lat, AUSTRALIA_CENTER.lon], 4);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap, &copy; CARTO' }).addTo(map);
+/* --------------------------------------------------------------------------
+   Sunny — app.js (drop-in replacement)
+   - Leaflet map + Overpass (OSM) loader
+   - Broadened venue query (pub/bar/biergarten + restaurant/cafe w/ outdoor hints + hotel terraces)
+   - Do NOT discard at import; mark with hasOutdoor and let UI filter in render
+   - "Outdoor only" default OFF (shows more pins)
+   - Simple localStorage cache
+   - Uses /icons/sunny-32.png marker if available (falls back to default)
+   -------------------------------------------------------------------------- */
 
+(function () {
+  // ---------------------------
+  // Basic configuration
+  // ---------------------------
+  const OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.openstreetmap.ru/api/interpreter"
+  ];
 
-// === Enrichment cache & fetch ===
+  // Initial map centre (Australia-wide view; users can pan/zoom)
+  const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 }; // Newcastle default for quick testing
 
-function labelFromEnrichedHours(hoursObj){
-  if (!hoursObj) return null;
-  if (typeof hoursObj.open_now === 'boolean') return hoursObj.open_now ? 'Open now' : 'Closed';
-  if (typeof hoursObj.status === 'string' && hoursObj.status.trim()) return hoursObj.status;
-  if (typeof hoursObj.display === 'string' && hoursObj.display.trim()) return hoursObj.display;
-  if (typeof hoursObj.text === 'string' && hoursObj.text.trim()) return hoursObj.text;
-  return null;
-}
+  // Caching
+  const VENUE_CACHE_KEY = "sunny-pubs-venues"; // all venues dictionary
+  const TILE_CACHE_PREFIX = "sunny-pubs-overpass-tiles-v1:"; // per-bbox cache
+  const TILE_CACHE_TTL_MS = 1000 * 60 * 30; // 30 minutes per tile
 
-const ENRICH_CACHE_TTL = 7 * 24 * 3600 * 1000; // 7 days
-function getEnrichCache(id){
-  try {
-    const raw = localStorage.getItem('sunny:enrich:' + id);
-    if (!raw) return null;
-    const obj = JSON.parse(raw);
-    if (!obj.ts || (Date.now() - obj.ts) > ENRICH_CACHE_TTL) return null;
-    return obj.data;
-  } catch (e) { console.warn('Enrich error', e); return null; }
-}
-function setEnrichCache(id, data){
-  try { localStorage.setItem('sunny:enrich:' + id, JSON.stringify({ ts: Date.now(), data })); } catch {}
-}
-async function enrichVenue(v){
-  if (!(location.protocol === 'http:' || location.protocol === 'https:')) { console.debug('Enrich skipped (not http/https)'); return null; }
+  // UI defaults
+  let outdoorOnly = false; // <— default OFF so more pins show first
+  let openNowOnly = false; // available if you add a UI toggle with id="toggleOpenNow"
 
-  const cached = getEnrichCache(v.id);
-  if (cached) return cached;
-  const params = new URLSearchParams({ name: v.name, lat: v.lat, lon: v.lon });
-  if (v.wikidata) params.set('wikidata', v.wikidata);
-  if (v.id) params.set('osm_id', v.id);
-  try {
-    console.debug('Enrich fetch →', '/api/enrich?' + params.toString());
-    const res = await fetch('/api/enrich?' + params.toString(), { headers: { 'Accept':'application/json' } });
-    if (!res.ok) throw new Error('enrich fail');
-    const json = await res.json();
-    setEnrichCache(v.id, json);
-    return json;
-  } catch (e) { console.warn('Enrich error', e); return null; }
-}
+  // Map + layers
+  let map;
+  let markersLayer; // L.LayerGroup
+  let allVenues = {}; // id => venue
 
-// Marker
-const markerIcon = L.icon({ iconUrl: 'icons/marker.png', iconSize: [30,30], iconAnchor: [15,30], popupAnchor: [0,-28] });
+  // Debounce for moveend
+  let moveTimer = null;
+  const MOVE_DEBOUNCE_MS = 500;
 
-// Elements
-const locCard = document.getElementById('locCard');
-const allowLoc = document.getElementById('allowLoc');
-const denyLoc = document.getElementById('denyLoc');
-const cardsEl = document.getElementById('cards');
-const listPanel = document.getElementById('listPanel');
-const resultHint = document.getElementById('resultHint');
-const viewMapBtn = document.getElementById('viewMap');
-const viewListBtn = document.getElementById('viewList');
+  // Custom marker icon (try your icon, fall back to Leaflet default)
+  const CustomIcon = L.Icon.extend({
+    options: {
+      iconUrl: "/icons/sunny-32.png",
+      iconSize: [28, 28],
+      iconAnchor: [14, 28],
+      popupAnchor: [0, -28],
+      shadowUrl: undefined
+    }
+  });
 
-function kmBetween(a, b) {
-  const R=6371, toRad=x=>x*Math.PI/180;
-  const dLat=toRad(b.lat-a.lat), dLon=toRad(b.lon-a.lon);
-  const lat1=toRad(a.lat), lat2=toRad(b.lat);
-  const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
-  return 2*R*Math.asin(Math.sqrt(h));
-}
-function formatDistanceKm(d){ if (d < 1) return Math.round(d*1000) + ' m'; return d.toFixed(1) + ' km'; }
+  let markerIcon = null;
 
-// Overpass
-const OVERPASS_CACHE_PREFIX = 'sunny-pubs-overpass-tiles-v2:';
-const OVERPASS_CACHE_TTL_MS = 7 * 24 * 3600 * 1000;
-const OVERPASS_ENDPOINTS = [
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass-api.de/api/interpreter'
-];
-let overpassIdx = 0;
-function nextOverpassEndpoint(){ overpassIdx = (overpassIdx + 1) % OVERPASS_ENDPOINTS.length; return OVERPASS_ENDPOINTS[overpassIdx]; }
-function bboxKey(b) { const f = x => x.toFixed(2); return `${f(b.getSouth())},${f(b.getWest())},${f(b.getNorth())},${f(b.getEast())}`; }
-function getCachedTile(key){
-  try { const raw = localStorage.getItem(OVERPASS_CACHE_PREFIX + key); if (!raw) return null;
-        const obj = JSON.parse(raw); if (!obj.ts || (Date.now() - obj.ts) > OVERPASS_CACHE_TTL_MS) return null; return obj.data; } catch { return null; }
-}
-function setCachedTile(key,data){ try { localStorage.setItem(OVERPASS_CACHE_PREFIX + key, JSON.stringify({ts:Date.now(), data})); } catch {} }
-let overpassDebounce = null;
+  // ---------------------------
+  // Utility helpers
+  // ---------------------------
 
-async function fetchOverpassFor(b) {
-  const key = bboxKey(b);
-  const cached = getCachedTile(key);
-  if (cached) return cached;
-
-  const sw = b.getSouthWest(), ne = b.getNorthEast();
-  const bbox = [sw.lat, sw.lng, ne.lat, ne.lng].join(',');
-  const q = `[out:json][timeout:25];
-    (
-      node["amenity"~"pub|bar|biergarten"](${bbox});
-      way["amenity"~"pub|bar|biergarten"](${bbox});
-      relation["amenity"~"pub|bar|biergarten"](${bbox});
-    );
-    out center tags;`;
-
-  for (let i=0;i<OVERPASS_ENDPOINTS.length;i++) {
-    const endpoint = OVERPASS_ENDPOINTS[overpassIdx];
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8', 'Accept':'application/json' },
-        body: new URLSearchParams({ data: q })
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const json = await res.json();
-      setCachedTile(key, json);
-      return json;
-    } catch (e) { nextOverpassEndpoint(); }
+  function log(...args) {
+    const VERBOSE = false; // flip to true to debug
+    if (VERBOSE) console.log("[Sunny]", ...args);
   }
-  throw new Error('Overpass failed');
-}
 
-// Outdoor heuristic (broader but respects explicit no)
-function hasOutdoor(tags){
-  const val = (x) => (typeof x === 'string') ? x.trim().toLowerCase() : x;
-  const pos = new Set(['yes','designated','covered','pergola','roofed','terrace','garden','seating','tables','limited']);
-  const v = {
-    amenity: val(tags.amenity),
-    beer_garden: val(tags.beer_garden),
-    outdoor_seating: val(tags['outdoor_seating']),
-    terrace: val(tags.terrace),
-    garden: val(tags.garden),
-    courtyard: val(tags.courtyard),
-    seating_outside: val(tags['seating:outside']),
-  };
-  if (v.beer_garden === 'no' || v.outdoor_seating == 'no' || v.terrace == 'no' || v.garden == 'no') return false;
-  if (v.amenity === 'biergarten') return true;
-  if (v.beer_garden && v.beer_garden != 'no') return true;
-  if (v.outdoor_seating && v.outdoor_seating != 'no') return true;
-  if (v.terrace && v.terrace != 'no') return true;
-  if (v.garden && v.garden != 'no') return true;
-  if (v.courtyard && v.courtyard != 'no') return true;
-  if (v.seating_outside && v.seating_outside != 'no') return true;
-  return false;
-}
+  function getBBoxKey(b) {
+    const sw = b.getSouthWest();
+    const ne = b.getNorthEast();
+    // Round to 4dp so we don’t explode cache keys on tiny pans
+    const r = (n) => +n.toFixed(4);
+    return `${r(sw.lat)},${r(sw.lng)},${r(ne.lat)},${r(ne.lng)}`;
+  }
 
-function normalizeOverpass(json){
-  const out = [];
-  if (!json || !json.elements) return out;
-  for (const el of json.elements) {
+  function saveLocal(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify({ v: value, t: Date.now() }));
+    } catch (e) {
+      // storage full or disabled
+      log("localStorage set error", e);
+    }
+  }
+
+  function loadLocal(key, maxAgeMs = null) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const { v, t } = JSON.parse(raw);
+      if (maxAgeMs != null && Date.now() - t > maxAgeMs) return null;
+      return v;
+    } catch (e) {
+      log("localStorage get error", e);
+      return null;
+    }
+  }
+
+  function toTitle(s = "") {
+    if (!s) return "";
+    return s.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  // ---------------------------
+  // Outdoor heuristic (broad, but safe)
+  // ---------------------------
+  function looksLikeBeerGarden(tags = {}) {
+    const t = (x) => (x || "").toLowerCase();
+    const name = t(tags.name);
+    const desc = t(tags.description || tags.note || "");
+
+    const outdoorTags =
+      tags["outdoor_seating"] === "yes" ||
+      tags["terrace"] === "yes" ||
+      tags["roof_terrace"] === "yes" ||
+      tags["garden"] === "yes" ||
+      tags["patio"] === "yes";
+
+    const nameHints = /beer ?garden|courtyard|terrace|rooftop|roof ?top|outdoor|al ?fresco/.test(
+      name
+    );
+    const textHints = /courtyard|terrace|rooftop|beer ?garden|patio|alfresco/.test(desc);
+
+    return !!(outdoorTags || nameHints || textHints);
+  }
+
+  // ---------------------------
+  // Opening hours (placeholder)
+  // ---------------------------
+  function isOpenNow(tags) {
+    // Minimal placeholder: treat unknown as open when openNowOnly==false
+    // For future: parse tags.opening_hours via opening_hours.js
+    if (!tags || !tags.opening_hours) return !openNowOnly;
+    // naive: if tag contains "24/7" or "Mo-Su", assume open
+    const oh = String(tags.opening_hours).toLowerCase();
+    if (/24.?7/.test(oh)) return true;
+    // Fallback: don't filter aggressively
+    return !openNowOnly;
+  }
+
+  // ---------------------------
+  // Overpass query
+  // ---------------------------
+  function buildOverpassQuery(bbox) {
+    return `
+      [out:json][timeout:25];
+      (
+        // Pubs/Bars/Biergarten — always grab
+        node["amenity"~"^(pub|bar|biergarten)$"](${bbox});
+        way["amenity"~"^(pub|bar|biergarten)$"](${bbox});
+        relation["amenity"~"^(pub|bar|biergarten)$"](${bbox});
+
+        // Restaurants/Cafes with outdoor hints
+        node["amenity"~"^(restaurant|cafe)$"]["outdoor_seating"="yes"](${bbox});
+        way["amenity"~"^(restaurant|cafe)$"]["outdoor_seating"="yes"](${bbox});
+        relation["amenity"~"^(restaurant|cafe)$"]["outdoor_seating"="yes"](${bbox});
+
+        node["amenity"~"^(restaurant|cafe)$"]["garden"="yes"](${bbox});
+        way["amenity"~"^(restaurant|cafe)$"]["garden"="yes"](${bbox});
+        relation["amenity"~"^(restaurant|cafe)$"]["garden"="yes"](${bbox});
+
+        node["amenity"~"^(restaurant|cafe)$"]["terrace"="yes"](${bbox});
+        way["amenity"~"^(restaurant|cafe)$"]["terrace"="yes"](${bbox});
+        relation["amenity"~"^(restaurant|cafe)$"]["terrace"="yes"](${bbox});
+
+        // Optional: hotels with outdoor areas
+        node["tourism"="hotel"]["terrace"="yes"](${bbox});
+        way["tourism"="hotel"]["terrace"="yes"](${bbox});
+        relation["tourism"="hotel"]["terrace"="yes"](${bbox});
+      );
+      out center tags;
+    `;
+  }
+
+  async function fetchOverpass(q) {
+    const body = new URLSearchParams({ data: q });
+    for (const url of OVERPASS_ENDPOINTS) {
+      try {
+        const res = await fetch(url, { method: "POST", body });
+        if (!res.ok) continue;
+        const json = await res.json();
+        if (json && json.elements) return json.elements;
+      } catch (e) {
+        // try next endpoint
+        log("Overpass failed for", url, e);
+      }
+    }
+    throw new Error("All Overpass endpoints failed");
+  }
+
+  // Convert Overpass element to a normalized venue (with center lat/lng)
+  function elementToVenue(el) {
     const tags = el.tags || {};
-    const lat = el.lat || (el.center && el.center.lat);
-    const lon = el.lon || (el.center && el.center.lon);
-    if (lat == null || lon == null) continue;
-    const id = (tags.name || 'venue').toLowerCase().replace(/[^a-z0-9]+/g,'-') + '-' + el.id;
-    out.push({
-      id, name: tags.name || 'Unnamed',
-      lat, lon,
-      hasClearOutdoor: hasOutdoor(tags),
-      opening_hours: tags.opening_hours || null,
-      website: tags.website || null,
-      phone: tags.phone || tags['contact:phone'] || null,
-      addr: [tags['addr:housenumber'], tags['addr:street'], tags['addr:suburb'] || tags.suburb, tags['addr:city'] || tags.city].filter(Boolean).join(', '), wikidata: tags.wikidata || null
+    let lat = el.lat, lng = el.lon;
+    if ((!lat || !lng) && el.center) {
+      lat = el.center.lat;
+      lng = el.center.lon;
+    }
+    if (!lat || !lng) return null;
+
+    const id = `${el.type}/${el.id}`;
+    const name =
+      tags.name ||
+      tags["brand"] ||
+      toTitle(tags["operator"]) ||
+      (tags.amenity ? toTitle(tags.amenity) : "Unnamed");
+
+    const hasOutdoor = looksLikeBeerGarden(tags);
+
+    return {
+      id,
+      name,
+      lat,
+      lng,
+      tags,
+      hasOutdoor,
+      source: "osm"
+    };
+  }
+
+  // ---------------------------
+  // Venue storage / merge
+  // ---------------------------
+  function mergeVenues(newList) {
+    let added = 0;
+    for (const v of newList) {
+      if (!v) continue;
+      if (!allVenues[v.id]) {
+        allVenues[v.id] = v;
+        added++;
+      } else {
+        // update tags/flags if newer looks better
+        allVenues[v.id] = { ...allVenues[v.id], ...v };
+      }
+    }
+    if (added > 0) {
+      saveLocal(VENUE_CACHE_KEY, allVenues);
+    }
+    return added;
+  }
+
+  function loadVenuesFromCache() {
+    const cached = loadLocal(VENUE_CACHE_KEY);
+    if (cached && typeof cached === "object") {
+      allVenues = cached;
+    }
+  }
+
+  // ---------------------------
+  // Map + UI
+  // ---------------------------
+  function setupMap() {
+    map = L.map("map").setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+
+    markersLayer = L.layerGroup().addTo(map);
+
+    // Try to use custom icon; if missing, fall back to default
+    (function resolveIcon() {
+      const testImg = new Image();
+      testImg.onload = () => (markerIcon = new CustomIcon());
+      testImg.onerror = () => (markerIcon = new L.Icon.Default());
+      testImg.src = "/icons/sunny-32.png";
+    })();
+
+    map.on("moveend", debouncedLoadVisible);
+    map.on("zoomend", debouncedLoadVisible);
+
+    // Wire up toggles if they exist
+    const toggleOutdoorEl = document.getElementById("toggleOutdoor");
+    if (toggleOutdoorEl) {
+      // Ensure UI matches default (off)
+      toggleOutdoorEl.classList.remove("active");
+      toggleOutdoorEl.addEventListener("click", () => {
+        outdoorOnly = !outdoorOnly;
+        toggleOutdoorEl.classList.toggle("active", outdoorOnly);
+        renderMarkers();
+      });
+    }
+
+    const toggleOpenNowEl = document.getElementById("toggleOpenNow");
+    if (toggleOpenNowEl) {
+      toggleOpenNowEl.classList.remove("active");
+      toggleOpenNowEl.addEventListener("click", () => {
+        openNowOnly = !openNowOnly;
+        toggleOpenNowEl.classList.toggle("active", openNowOnly);
+        renderMarkers();
+      });
+    }
+  }
+
+  function debouncedLoadVisible() {
+    if (moveTimer) clearTimeout(moveTimer);
+    moveTimer = setTimeout(loadVisibleTiles, MOVE_DEBOUNCE_MS);
+  }
+
+  async function loadVisibleTiles() {
+    const bboxKey = getBBoxKey(map.getBounds());
+    const cacheKey = `${TILE_CACHE_PREFIX}${bboxKey}`;
+
+    // If we have a fresh tile cache, use it
+    const cached = loadLocal(cacheKey, TILE_CACHE_TTL_MS);
+    if (cached && Array.isArray(cached)) {
+      const venues = cached.map(elementToVenue).filter(Boolean);
+      mergeVenues(venues);
+      renderMarkers();
+      return;
+    }
+
+    // Fetch from Overpass
+    const b = map.getBounds();
+    const sw = b.getSouthWest();
+    const ne = b.getNorthEast();
+    const bbox = [sw.lat, sw.lng, ne.lat, ne.lng].join(",");
+
+    const query = buildOverpassQuery(bbox);
+
+    try {
+      const elements = await fetchOverpass(query);
+      saveLocal(cacheKey, elements); // store raw so we can reparse with new heuristics in future
+      const venues = elements.map(elementToVenue).filter(Boolean);
+      mergeVenues(venues);
+      renderMarkers();
+    } catch (e) {
+      console.error("Overpass error:", e);
+    }
+  }
+
+  function venueMatchesFilters(v) {
+    if (outdoorOnly && !v.hasOutdoor) return false;
+    if (openNowOnly && !isOpenNow(v.tags)) return false;
+    return true;
+  }
+
+  function renderMarkers() {
+    markersLayer.clearLayers();
+    const b = map.getBounds();
+
+    const visible = [];
+    for (const id in allVenues) {
+      const v = allVenues[id];
+      if (!v) continue;
+      if (!b.contains([v.lat, v.lng])) continue;
+      if (!venueMatchesFilters(v)) continue;
+      visible.push(v);
+    }
+
+    visible.forEach((v) => {
+      const icon = markerIcon || new L.Icon.Default();
+      const marker = L.marker([v.lat, v.lng], { icon }).addTo(markersLayer);
+
+      const tags = v.tags || {};
+      const parts = [];
+      if (tags.amenity || tags.tourism) parts.push(`<div><strong>${toTitle(tags.amenity || tags.tourism)}</strong></div>`);
+      if (v.hasOutdoor) parts.push(`<div>🌿 Outdoor friendly</div>`);
+      if (tags.opening_hours) parts.push(`<div>Hours: ${tags.opening_hours}</div>`);
+      if (tags.website) {
+        const safeUrl = String(tags.website).replace(/^http:\/\//, "https://");
+        parts.push(`<div><a href="${safeUrl}" target="_blank" rel="noopener">Website</a></div>`);
+      }
+      if (tags["addr:street"] || tags["addr:city"]) {
+        const addr = [tags["addr:housenumber"], tags["addr:street"], tags["addr:city"]]
+          .filter(Boolean)
+          .join(" ");
+        if (addr) parts.push(`<div>${addr}</div>`);
+      }
+
+      const popupHtml = `
+        <div class="venue-popup">
+          <div class="venue-name"><strong>${v.name}</strong></div>
+          ${parts.join("")}
+        </div>
+      `;
+
+      marker.bindPopup(popupHtml);
     });
   }
-  return out;
-}
 
-// Opening-hours helpers
-function isOpenNow(v, when=new Date()){
-  if (!openNowOnly) return true;
-  if (!v.opening_hours) return false;
-  try { const oh = new opening_hours(v.opening_hours, null, { address: null }); return oh.getState(when); } catch { return false; }
-}
-function openStateLabel(v, when=new Date()){
-  if (!v.opening_hours) return 'Hours unknown';
-  try {
-    const oh = new opening_hours(v.opening_hours, null, { address: null });
-    const state = oh.getState(when);
-    if (state) {
-      const until = oh.getNextChange(when);
-      const mins = Math.max(0, Math.round((until - when)/60000));
-      if (mins <= 45) return 'Closing soon';
-      return 'Open now';
-    } else {
-      const next = oh.getNextChange(when);
-      if (next) { const h = String(next.getHours()).padStart(2,'0'), m = String(next.getMinutes()).padStart(2,'0'); return `Opens ${h}:${m}`; }
-      return 'Closed';
-    }
-  } catch { return 'Hours unknown'; }
-}
-
-// UI: pre-permission
-function showLocPrompt(){ locCard.classList.add('show'); }
-function hideLocPrompt(){ locCard.classList.remove('show'); }
-allowLoc?.addEventListener('click', () => { hideLocPrompt(); requestGeo(); });
-denyLoc?.addEventListener('click', () => { hideLocPrompt(); localStorage.setItem('sunny-first-run-done','true'); map.fire('moveend'); });
-
-function requestGeo(){
-  if (!navigator.geolocation) { map.fire('moveend'); return; }
-  navigator.geolocation.getCurrentPosition((pos) => {
-    userLoc = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-    map.setView([userLoc.lat, userLoc.lon], 14);
-    localStorage.setItem('sunny-first-run-done','true');
-    map.fire('moveend');
-  }, () => { map.fire('moveend'); }, { enableHighAccuracy: true, timeout: 8000 });
-}
-
-// Rendering helpers
-function clearMarkers(){ for (const m of markers) m.remove(); markers = []; }
-function addMarkers(list){
-  for (const v of list) {
-    const m = L.marker([v.lat, v.lon], { icon: markerIcon }).addTo(map);
-    markers.push(m);
-    m.on('click', () => openDetail(v));
+  // ---------------------------
+  // Boot
+  // ---------------------------
+  function boot() {
+    // Load cached state first so we can show pins quickly
+    loadVenuesFromCache();
+    setupMap();
+    renderMarkers();
+    // Trigger initial load
+    debouncedLoadVisible();
   }
-}
-function inViewport(v){ return map.getBounds().contains([v.lat, v.lon]); }
-function withinDistance(v){
-  if (distanceFilter === 'all' || !userLoc) return true;
-  const d = kmBetween({lat:userLoc.lat, lon:userLoc.lon}, {lat:v.lat, lon:v.lon});
-  const lim = parseFloat(distanceFilter);
-  return d <= lim;
-}
-function filterList(){
-  return venues.filter(v => inViewport(v) && (!openNowOnly || isOpenNow(v)) && withinDistance(v) && (!outdoorOnly || v.hasClearOutdoor));
-}
 
-function uberLink(lat, lon){
-  const d = encodeURIComponent(`${lat},${lon}`);
-  return `https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${lat}&dropoff[longitude]=${lon}`;
-}
-
-
-async function enhanceAndUpdateCard(v, el){
-  const data = await enrichVenue(v);
-  if (!data) return;
-  let phone = v.phone || data.phone || '';
-  let website = v.website || data.website || '';
-  let attrib = '';
-  if (data) console.debug('Enriched', v.name, data);
-  if (data && data.source && data.source.length) {
-    attrib = `<div class="tiny">ⓘ data via ${data.source.join(', ')}</div>`;
-  }
-  // Update actions
-  const callLink = el.querySelector('a[data-call]');
-  const webLink = el.querySelector('a[data-web]');
-  if (phone && callLink){ callLink.href = `tel:${phone}`; callLink.style.display = 'inline-block'; }
-  if (website && webLink){ webLink.href = website; webLink.style.display = 'inline-block'; }
-  // Hours label update
-  const hoursLabel = labelFromEnrichedHours(data && data.hours);
-  if (hoursLabel) {
-    const hs = el.querySelector('[data-hours]'); if (hs) hs.textContent = hoursLabel;
-  }
-  // Attribution
-  const foot = el.querySelector('.card-foot');
-  if (foot) foot.innerHTML = attrib;
-}
-
-function buildCard(v){
-  let dist = userLoc ? formatDistanceKm(kmBetween(userLoc, {lat:v.lat, lon:v.lon})) : '';
-  const state = openStateLabel(v);
-  const stateSpan = `<span data-hours>${state}</span>`;
-  const sunBadge = preference==='full' ? '<span class="badge b-sun-full">Full sun</span>' :
-                  preference==='partial' ? '<span class="badge b-sun-some">Some sun</span>' :
-                  '<span class="badge">Shade</span>';
-  const outdoor = v.hasClearOutdoor ? '<span class="badge b-outdoor">Outdoor</span>' : '';
-  const addr = v.addr ? `<div class="tiny">${v.addr}</div>` : '';
-  const phone = v.phone ? `<a href="tel:${v.phone}" data-call>Call</a>` : `<a href="#" style="display:none" data-call>Call</a>`;
-  const website = v.website ? `<a href="${v.website}" target="_blank" rel="noopener" data-web>Website</a>` : `<a href="#" style="display:none" target="_blank" rel="noopener" data-web>Website</a>`;
-  const uber = `<a href="${uberLink(v.lat,v.lon)}" target="_blank" rel="noopener">Uber</a>`;
-  return `<article class="card" data-id="${v.id}">
-    <h3>${v.name}</h3>
-    <div class="meta">${dist ? dist + ' • ' : ''}${stateSpan}</div>
-    ${addr}
-    <div class="badges">${sunBadge} ${outdoor}</div>
-    <div class="actions">
-      <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(v.lat+','+v.lon)}" target="_blank" rel="noopener" class="primary">Directions</a>
-      ${uber} ${phone} ${website}
-      <button data-add="${v.id}">+ Add to Crawl</button>
-    </div>
-    <div class="card-foot tiny"></div>
-  </article>`;
-}
-
-function renderCards(list){
-  if (!list.length) {
-    resultHint.textContent = 'No venues match these filters in view. Pan/zoom || adjust filters.';
-    cardsEl.innerHTML = '';
-    listPanel.innerHTML = '';
-    return;
-  }
-  resultHint.textContent = `${list.length} in view`;
-  const subset = list.slice(0, 24);
-  cardsEl.innerHTML = subset.map(v => buildCard(v)).join('');
-  // Enrich top 8 cards lazily
-  Array.from(cardsEl.querySelectorAll('.card')).slice(0,8).forEach((el, i) => {
-    const id = el.getAttribute('data-id');
-    const v = subset.find(x => x.id === id);
-    if (v) enhanceAndUpdateCard(v, el);
-  });
-  listPanel.innerHTML = list.map(v => {
-    const dist = userLoc ? formatDistanceKm(kmBetween(userLoc, {lat:v.lat, lon:v.lon})) : '';
-    const state = openStateLabel(v);
-  const stateSpan = `<span data-hours>${state}</span>`;
-    return `<div class="list-item">
-      <div>
-        <h4>${v.name}</h4>
-        <div class="tiny">${dist ? dist + ' • ' : ''}${state}${v.addr ? ' • ' + v.addr : ''}</div>
-      </div>
-      <div><button data-detail="${v.id}" class="icon-btn">View</button></div>
-    </div>`;
-  }).join('');
-  cardsEl.querySelectorAll('button[data-add]').forEach(btn => btn.addEventListener('click', () => {
-    btn.textContent = 'Added ✓'; btn.disabled = true;
-  }));
-  listPanel.querySelectorAll('button[data-detail]').forEach(btn => btn.addEventListener('click', () => {
-    const v = venues.find(x => x.id === btn.getAttribute('data-detail')); if (v) openDetail(v);
-  }));
-}
-
-function render(){
-  const list = filterList();
-  clearMarkers();
-  addMarkers(list);
-  renderCards(list);
-}
-
-// Fetch on move
-map.on('moveend', () => {
-  clearTimeout(overpassDebounce);
-  overpassDebounce = setTimeout(async () => {
-    try {
-      resultHint.textContent = 'Loading venues…';
-      const json = await fetchOverpassFor(map.getBounds());
-      const fresh = normalizeOverpass(json);
-      const ids = new Set(venues.map(v=>v.id));
-      for (const f of fresh) if (!ids.has(f.id)) venues.push(f);
-      render();
-    } catch {
-      resultHint.textContent = 'Could not load venues. Try again.';
-    }
-  }, 250);
-});
-
-// View toggle
-function setViewMode(mode){
-  if (mode === 'map') {
-    viewMapBtn.classList.add('active'); viewMapBtn.setAttribute('aria-pressed','true');
-    viewListBtn.classList.remove('active'); viewListBtn.setAttribute('aria-pressed','false');
-    listPanel.classList.remove('show'); listPanel.setAttribute('aria-hidden','true');
+  // Ensure DOM is ready
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
   } else {
-    viewListBtn.classList.add('active'); viewListBtn.setAttribute('aria-pressed','true');
-    viewMapBtn.classList.remove('active'); viewMapBtn.setAttribute('aria-pressed','false');
-    listPanel.classList.add('show'); listPanel.setAttribute('aria-hidden','false');
+    boot();
   }
-}
-viewMapBtn.addEventListener('click', () => setViewMode('map'));
-viewListBtn.addEventListener('click', () => setViewMode('list'));
-
-// Detail modal — parity with preview card
-const detailBackdrop = document.getElementById('detailBackdrop');
-const detailModal = document.getElementById('detailModal');
-const closeDetailBtn = document.getElementById('closeDetail');
-function openDetail(v){
-  const dist = userLoc ? formatDistanceKm(kmBetween(userLoc, {lat:v.lat, lon:v.lon})) : '';
-  const state = openStateLabel(v);
-  const stateSpan = `<span data-hours>${state}</span>`;
-  const sunBadge = preference==='full' ? '<span class="badge b-sun-full">Full sun</span>' :
-                  preference==='partial' ? '<span class="badge b-sun-some">Some sun</span>' :
-                  '<span class="badge">Shade</span>';
-  const outdoor = v.hasClearOutdoor ? '<span class="badge b-outdoor">Outdoor</span>' : '';
-  const addr = v.addr ? `<div class="tiny">${v.addr}</div>` : '';
-  document.getElementById('detailTitle').textContent = v.name;
-  document.getElementById('detailInfo').innerHTML = `
-    <div class="meta">${dist ? dist + ' • ' : ''}${stateSpan}</div>
-    ${addr}
-    <div class="badges">${sunBadge} ${outdoor}</div>`;
-  document.getElementById('detailDirections').href = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(v.lat+','+v.lon)}`;
-  document.getElementById('detailUber').href = uberLink(v.lat, v.lon);
-  const web = document.getElementById('detailWebsite'); web.style.display = v.website ? 'inline-block' : 'none'; web.href = v.website || '#';
-  const call = document.getElementById('detailCall'); call.style.display = v.phone ? 'inline-block' : 'none'; call.href = v.phone ? `tel:${v.phone}` : '#';
-  if (window.detailMiniLeaflet) { window.detailMiniLeaflet.remove(); }
-  window.detailMiniLeaflet = L.map('detailMiniMap', { attributionControl:false, zoomControl:false, dragging:false, scrollWheelZoom:false }).setView([v.lat, v.lon], 16);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(window.detailMiniLeaflet);
-  L.marker([v.lat, v.lon], { icon: markerIcon }).addTo(window.detailMiniLeaflet);
-  detailBackdrop.classList.add('show'); detailModal.classList.add('show');
-  
-  // Enrich detail with server data
-  enrichVenue(v).then(data => {
-    if (!data) return;
-    const web = document.getElementById('detailWebsite'); 
-    const call = document.getElementById('detailCall');
-    const uber = document.getElementById('detailUber');
-    if (data.website && (!web.href || web.href === '#')) { web.href = data.website; web.style.display = 'inline-block'; }
-    if (data.phone && (!call.href || call.href === '#')) { call.href = `tel:${data.phone}`; call.style.display = 'inline-block'; }
-    const info = document.getElementById('detailInfo');
-    const attrib = data.source && data.source.length ? `<div class="tiny">ⓘ data via ${data.source.join(', ')}</div>` : '';
-    if (info) info.insertAdjacentHTML('beforeend', attrib);
-    const h2 = labelFromEnrichedHours(data && data.hours);
-    if (h2){ const hs = document.querySelector('[data-hours-detail]'); if (hs) hs.textContent = h2; }
-  });
-
-}
-function closeDetail(){ detailBackdrop.classList.remove('show'); detailModal.classList.remove('show'); }
-detailBackdrop.addEventListener('click', closeDetail);
-closeDetailBtn.addEventListener('click', closeDetail);
-
-
-// Show local preview hint if not http(s)
-if (!(location.protocol === 'http:' || location.protocol === 'https:')) {
-  const b = document.getElementById('enrichHint'); if (b) b.style.display = 'block';
-}
-
-// First run
-if (firstRun) { showLocPrompt(); } else { requestGeo(); }
-setTimeout(()=>{ if (!userLoc) map.fire('moveend'); }, 400);
+})();
