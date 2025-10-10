@@ -187,6 +187,16 @@ a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/opening_hours@3.8.0/opening_hours.js"></script>
   <script> if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js'); </script>
-  <script src="app.js?v={{ site.github.build_revision }}"></script>
+  <script>
+  // Load a version marker first, then inject app.js with ?v=...
+  fetch('version.json', { cache: 'no-store' })
+    .then(r => r.json()).catch(() => ({ version: Date.now() }))
+    .then(v => {
+      const s = document.createElement('script');
+      s.src = `app.js?v=${(v && v.version) || Date.now()}`;
+      document.head.appendChild(s);
+    });
+</script>
+
 </body>
 </html>
