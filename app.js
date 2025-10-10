@@ -1,9 +1,9 @@
 
 /* --------------------------------------------------------------------------
-   Sunny — app.js (icons-only fix)
-   Change: Force a custom marker icon (no async detection).
-   - Uses window.SUNNY_ICON_URL if present, otherwise '/icons/sunny-32.png'.
-   - Everything else remains from the prior build.
+   Sunny — app.js (icons fix -> icons/marker.png)
+   - Forces custom marker icons to use 'icons/marker.png' by default.
+   - Still allows override via window.SUNNY_ICON_URL if you set it before this script.
+   - Rest is same lightweight build.
    -------------------------------------------------------------------------- */
 
 (function () {
@@ -43,8 +43,8 @@
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
 
-  // Marker icon (FORCED custom)
-  const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/sunny-32.png";
+  // Marker icon (FORCED custom) -> icons/marker.png
+  const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   const markerIcon = L.icon({
     iconUrl: MARKER_ICON_URL,
     iconSize: [28, 28],
@@ -56,7 +56,6 @@
   // DOM helpers
   // ---------------------------
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
   function ensureEl(id, html, parent=document.body) {
     let el = document.getElementById(id);
@@ -246,7 +245,7 @@
   }
 
   // ---------------------------
-  // Map + list containers and simple controls wiring
+  // Containers and controls (basic)
   // ---------------------------
   function ensureContainersAndControls() {
     if (!$("#map")) {
