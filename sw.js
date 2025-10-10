@@ -1,10 +1,28 @@
-const CACHE = 'sunny-v2.8.2';
-const CORE = ['index.html','app.js','manifest.webmanifest','privacy.html','icons/icon-192.png','icons/icon-512.png','icons/marker.png'];
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)).then(() => self.skipWaiting())); });
-self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (url.origin === location.origin) {
-    e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+
+// Sunny Service Worker — Option A (network-first for code)
+const CACHE_NAME = 'sunny-v2';
+
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
+self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+
+  // Network-first for critical code so new deploys are picked up immediately
+  if (url.pathname.endsWith('/app.js') || url.pathname.endsWith('/version.json')) {
+    event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+    return;
   }
+
+  // Cache-first for all other requests
+  event.respondWith(
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request).then((resp) => {
+        const copy = resp.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        return resp;
+      });
+    })
+  );
 });
