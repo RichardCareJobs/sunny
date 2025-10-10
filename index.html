@@ -52,6 +52,33 @@
   <!-- Force the custom pin to use icons/marker.png -->
   <script>window.SUNNY_ICON_URL = 'icons/marker.png';</script>
 
+  <!-- Pub Crawl FAB -->
+<style>
+  .crawl-fab {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1100;
+    background: #0f172a;
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 12px 16px;
+    font-weight: 800;
+    box-shadow: 0 10px 24px rgba(0,0,0,.18);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    text-decoration: none;
+  }
+  .crawl-fab:hover { transform: translateY(-1px); }
+</style>
+<a class="crawl-fab" href="crawl.html" aria-label="Plan a pub crawl">
+  <span>🍻</span><span>Plan a pub crawl</span>
+</a>
+
+
   <!-- Versioned loader to always fetch fresh app.js -->
   <script>
     fetch('version.json', { cache: 'no-store' })
