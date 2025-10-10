@@ -1,1 +1,23 @@
-
+name: Stamp version
+on:
+  push:
+    branches: [ main ]
+jobs:
+  stamp:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Write version.json
+        run: |
+          echo "{ \"version\": \"${GITHUB_SHA}\" }" > version.json
+      - name: Commit & push version.json
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add version.json
+          git commit -m "Stamp version ${GITHUB_SHA}" || echo "No changes"
+          git push
