@@ -187,6 +187,6 @@ a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/opening_hours@3.8.0/opening_hours.js"></script>
   <script> if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js'); </script>
-  <script src="app.js"></script>
+  <script src="app.js?v={{ site.github.build_revision }}"></script>
 </body>
 </html>
