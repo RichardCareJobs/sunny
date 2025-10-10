@@ -4,44 +4,21 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Plan a pub crawl — Sunny</title>
-
-  <!-- (Optional) Leaflet CSS only if you’ll show a map on this page later -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
-
   <style>
     :root { --bg:#fff; --fg:#111; --muted:#6b7280; }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: var(--fg); background: var(--bg); }
-
-    .topbar {
-      position: sticky; top: 0; z-index: 1000;
-      display: flex; align-items: center; gap: .75rem;
-      padding: .75rem 1rem; border-bottom: 1px solid #eee; background: #fff;
-    }
+    .topbar { position: sticky; top: 0; z-index: 1000; display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid #eee; background: #fff; }
     .topbar a { color: #111; text-decoration: none; font-weight: 700; }
     .topbar h1 { margin: 0; font-size: 1.1rem; }
-
     .content { padding: 16px; }
     .intro { color: var(--muted); margin: 4px 0 12px; }
-
-    .cards {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 12px; margin-top: 12px;
-    }
-    .card {
-      border: 1px solid #eee; border-radius: 14px; padding: 14px; background: #fff;
-      box-shadow: 0 10px 24px rgba(0,0,0,.05);
-    }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+    .card { border: 1px solid #eee; border-radius: 14px; padding: 14px; background: #fff; box-shadow: 0 10px 24px rgba(0,0,0,.05); }
     .card h2 { margin: .2rem 0 .4rem; font-size: 1rem; }
     .card p { margin: .25rem 0; color: var(--muted); }
-
-    .cta {
-      display: inline-flex; align-items: center; gap: .5rem;
-      padding: 10px 12px; border-radius: 10px; background: #0f172a; color: #fff;
-      text-decoration: none; font-weight: 800;
-    }
-
-    /* Footer note (optional) */
+    .cta { display: inline-flex; align-items: center; gap: .5rem; padding: 10px 12px; border-radius: 10px; background: #0f172a; color: #fff; text-decoration: none; font-weight: 800; }
     .footnote { margin-top: 16px; color: var(--muted); font-size: 12px; }
   </style>
 </head>
@@ -58,30 +35,21 @@
       <div class="card">
         <h2>Let us create one near you</h2>
         <p>Tell us how long you’ve got and how many stops. We’ll optimise the route.</p>
-        <a class="cta" href="crawl-auto.html" id="autoPlan">Start</a>
+        <!-- Link straight to the auto planner -->
+        <a class="cta" href="crawl-auto.html">Start</a>
       </div>
 
       <div class="card">
         <h2>Create your own</h2>
         <p>Add pubs from the map and reorder them. Share a link with friends.</p>
-        <a class="cta" href="#" id="manualPlan">Start</a>
+        <!-- Placeholder for next step; safe no-op or point to future page -->
+        <a class="cta" href="crawl-manual.html">Start</a>
       </div>
     </div>
 
-    <p class="footnote">Next steps: we’ll wire these to the auto-plan flow and the DIY builder.</p>
+    <p class="footnote">We’ll wire up the DIY builder next.</p>
   </div>
 
-  <script>
-    // Placeholder handlers for this sprint step — we’ll replace in the next step.
-    document.getElementById('autoPlan').addEventListener('click', (e) => {
-      e.preventDefault();
-      alert('Auto plan flow coming next 👍');
-    });
-    document.getElementById('manualPlan').addEventListener('click', (e) => {
-      e.preventDefault();
-      alert('Manual plan flow coming next 👍');
-    });
-  </script>
+  <!-- No script here on purpose (nothing intercepts clicks) -->
 </body>
 </html>
-
