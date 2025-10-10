@@ -1,10 +1,10 @@
 
-/* Sunny app.js — Popups Only (build: 2025-10-10-d)
-   - Map-only UI
-   - Enhanced marker popup card
-   - CHANGE: Hide open-status badge when status == "Unknown"
+/* Sunny app.js — Popups Only, No Filters (build: 2025-10-10-e)
+   - Map-only UI with enhanced popups (single card type)
+   - Filters UI removed
+   - Custom pins from icons/marker.png (or window.SUNNY_ICON_URL)
 */
-console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
+console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
 
 (function () {
   const OVERPASS_ENDPOINTS = [
@@ -12,18 +12,19 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass.openstreetmap.ru/api/interpreter"
   ];
+
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
+
   const TILE_URL = window.SUNNY_TILE_URL ||
     "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
   const TILE_ATTR =
     window.SUNNY_TILE_ATTR ||
     '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
   const TILE_CACHE_PREFIX = "sunny-pubs-overpass-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
-  let openNowOnly = false;
-  let outdoorOnly = false;
   let map, markersLayer;
   let allVenues = {};
   let userLocation = null;
@@ -33,16 +34,20 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   const markerIcon = L.icon({
-    iconUrl: MARKER_ICON_URL, iconSize: [28,28], iconAnchor:[14,28], popupAnchor:[0,-28]
+    iconUrl: MARKER_ICON_URL,
+    iconSize: [28, 28],
+    iconAnchor: [14, 28],
+    popupAnchor: [0, -28]
   });
 
-  const $ = (sel) => document.querySelector(sel);
+  // Helpers
   function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify({v,t:Date.now()}));}catch{} }
   function loadLocal(k,maxAge=null){
     try{const raw=localStorage.getItem(k); if(!raw) return null; const {v,t}=JSON.parse(raw); if(maxAge!=null&&Date.now()-t>maxAge) return null; return v;}catch{return null;}
   }
   function toTitle(s=""){ return s ? s.replace(/\b\w/g,c=>c.toUpperCase()) : ""; }
 
+  // Distance
   function haversine(a,b,c,d){ const R=6371,toRad=x=>x*Math.PI/180; const dLat=toRad(c-a), dLon=toRad(d-b);
     const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2;
     const C=2*Math.atan2(Math.sqrt(A),Math.sqrt(1-A)); return R*C; }
@@ -57,6 +62,7 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
     );
   }
 
+  // Sun
   function sunPosition(lat,lng,date=new Date()){
     const rad=Math.PI/180,deg=180/Math.PI,J1970=2440588,J2000=2451545,dayMs=86400000;
     const toJulian=d=>d/dayMs-0.5+J1970, d=toJulian(date.getTime())-J2000;
@@ -71,6 +77,7 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
   function sunBadge(lat,lng){ const alt=sunPosition(lat,lng).altitudeDeg; if(alt>=45) return{icon:"☀️",label:"Full sun"}; if(alt>=15) return{icon:"🌤️",label:"Partial sun"}; return{icon:"⛅",label:"Low sun"}; }
   const compass=a=>["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(a/22.5)%16];
 
+  // Hours
   const DAY_MAP=["Su","Mo","Tu","We","Th","Fr","Sa"];
   function parseOpenStatus(openingHours){
     if(!openingHours) return {status:"Unknown",tone:"muted"};
@@ -98,6 +105,7 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
     return {status:"Closed",tone:"muted"};
   }
 
+  // Overpass
   function buildOverpassQuery(bbox){
     return `[out:json][timeout:25];
       (
@@ -141,6 +149,7 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
   }
   function mergeVenues(list){ let added=0; for(const v of list){ if(!v) continue; if(!allVenues[v.id]){ allVenues[v.id]=v; added++; } else { allVenues[v.id]={...allVenues[v.id],...v}; } } if(added) saveLocal(VENUE_CACHE_KEY,allVenues); }
 
+  // Map
   function setupMap(){
     if(!document.getElementById("map")){ const m=document.createElement("div"); m.id="map"; m.style.position="absolute"; m.style.left="0"; m.style.right="0"; m.style.top="0"; m.style.bottom="0"; document.body.appendChild(m); }
     map=L.map("map").setView([DEFAULT_VIEW.lat,DEFAULT_VIEW.lng],DEFAULT_VIEW.zoom);
@@ -148,20 +157,7 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
     markersLayer=L.layerGroup().addTo(map);
     map.on("moveend",debouncedLoadVisible);
     map.on("zoomend",debouncedLoadVisible);
-
-    const controls=document.createElement("div"); controls.style.position="fixed"; controls.style.right="16px"; controls.style.bottom="16px"; controls.style.zIndex=1000;
-    controls.innerHTML=`<button id="btnFilters" style="background:#111;color:#fff;border:none;border-radius:999px;padding:10px 14px;cursor:pointer">Filters</button>`;
-    document.body.appendChild(controls);
-
-    const panel=document.createElement("div"); panel.id="sunny-filters"; panel.style.position="fixed"; panel.style.right="16px"; panel.style.bottom="64px"; panel.style.zIndex=1001; panel.style.background="#fff"; panel.style.borderRadius="12px"; panel.style.boxShadow="0 10px 30px rgba(0,0,0,.15)"; panel.style.display="none";
-    panel.innerHTML=`<div style="padding:8px 10px;"><label><input type="checkbox" id="toggleOutdoor"> Outdoor only</label><br/><label style="margin-top:6px;display:block;"><input type="checkbox" id="toggleOpenNow"> Open now</label></div>`;
-    document.body.appendChild(panel);
-
-    $("#btnFilters").onclick=()=>{ panel.style.display=(panel.style.display==="none"||!panel.style.display)?"block":"none"; };
-    $("#toggleOutdoor").onchange=()=>{ outdoorOnly=$("#toggleOutdoor").checked; renderMarkers(); };
-    $("#toggleOpenNow").onchange=()=>{ openNowOnly=$("#toggleOpenNow").checked; renderMarkers(); };
   }
-
   function debouncedLoadVisible(){ if(moveTimer) clearTimeout(moveTimer); moveTimer=setTimeout(loadVisibleTiles,MOVE_DEBOUNCE_MS); }
 
   async function loadVisibleTiles(){
@@ -173,14 +169,10 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
     catch(e){ console.error("Overpass error:",e); }
   }
 
-  function isOpenNow(tags){ const p=parseOpenStatus(tags&&tags.opening_hours); return p.status==="Open now"||p.status==="Closing soon"; }
-  function venueMatches(v){ if(outdoorOnly&&!v.hasOutdoor) return false; if(openNowOnly&&!isOpenNow(v.tags)) return false; return true; }
-
   function popupHTML(v){
     const tags=v.tags||{}; const kind=toTitle(tags.amenity||tags.tourism||"");
     const sun=sunBadge(v.lat,v.lng); const s=sunPosition(v.lat,v.lng);
-    const open=parseOpenStatus(tags.opening_hours);
-    const showOpen = open.status !== "Unknown";
+    const open=parseOpenStatus(tags.opening_hours); const showOpen=open.status!=="Unknown";
     const website=(tags.website||tags.contact_website||tags.url)?String(tags.website||tags.contact_website||tags.url).replace(/^http:\/\//,'https://'):null;
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
 
@@ -208,7 +200,6 @@ console.log("Sunny app.js loaded: Popups Only 2025-10-10-d");
     const b=map.getBounds();
     Object.values(allVenues).forEach(v=>{
       if(!b.contains([v.lat,v.lng])) return;
-      if(!venueMatches(v)) return;
       const marker=L.marker([v.lat,v.lng],{icon:markerIcon}).addTo(markersLayer);
       marker.bindPopup(popupHTML(v));
     });
