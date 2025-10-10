@@ -1,14 +1,14 @@
 
-/* --------------------------------------------------------------------------
-   Sunny — app.js (cards-focused sprint)
-   Scope limited to LIST CARD UI + data shown:
-   - Bigger modern cards
-   - Sun status icon (full/partial/no sun)
-   - Open status (open now / opening soon / closing soon / closed) via light parser
+/* Sunny app.js — Cards Refresh (build: 2025-10-10-b)
+   Scope of changes: List *cards* only + uses icons/marker.png for pins.
+   - Bigger, modern cards
+   - Sun status badge (☀️ full / 🌤️ partial / ⛅ low)
+   - Open status (Open now / Opening soon / Closing soon / Closed)
    - Distance from current location
    - Buttons: Uber, Directions, Website (if available)
-   NOTE: Map, fetching, icons, filters remain unchanged from previous build.
-   -------------------------------------------------------------------------- */
+   - No external opening_hours lib required
+*/
+console.log("Sunny app.js loaded: Cards Refresh 2025-10-10-b");
 
 (function () {
   // ---------------------------
@@ -20,8 +20,10 @@
     "https://overpass.openstreetmap.ru/api/interpreter"
   ];
 
+  // Default view (Newcastle). Your own code can set map view after load.
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
+  // Tiles (CartoDB Positron). Override by setting window.SUNNY_TILE_URL before this file loads.
   const TILE_URL = window.SUNNY_TILE_URL ||
     "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
   const TILE_ATTR =
@@ -42,14 +44,14 @@
   let map, markersLayer;
   let allVenues = {};
 
-  // Geolocation
-  let userLocation = null; // {lat,lng} once resolved
+  // Geolocation (for distance)
+  let userLocation = null; // {lat,lng} | false when denied
 
   // Debounce
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
 
-  // Marker icon (forced custom) -> icons/marker.png
+  // Marker icon (forced custom) -> icons/marker.png by default
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   const markerIcon = L.icon({
     iconUrl: MARKER_ICON_URL,
@@ -62,8 +64,9 @@
   // DOM helpers
   // ---------------------------
   const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-  function ensureEl(id, html, parent=document.body) {
+  function ensureEl(id, html, parent = document.body) {
     let el = document.getElementById(id);
     if (!el) {
       el = document.createElement("div");
@@ -94,11 +97,11 @@
   // ---------------------------
   // Sun utils
   // ---------------------------
-  function sunPosition(lat, lng, date=new Date()) {
+  function sunPosition(lat, lng, date = new Date()) {
     const rad = Math.PI/180, deg = 180/Math.PI;
     const J1970 = 2440588, J2000 = 2451545;
     const dayMs = 1000 * 60 * 60 * 24;
-    const toJulian = (d) => d/ dayMs - 0.5 + J1970;
+    const toJulian = (d) => d / dayMs - 0.5 + J1970;
     const dateToJulian = (date) => toJulian(date.getTime());
     const d = dateToJulian(date) - J2000;
 
@@ -119,15 +122,15 @@
     const azimuth = Math.atan2(Math.sin(H), Math.cos(H)*Math.sin(phi) - Math.tan(dec)*Math.cos(phi));
     return { azimuthDeg: (azimuth*deg + 180) % 360, altitudeDeg: altitude*deg };
   }
-  function sunBadge(lat,lng){
-    const alt = sunPosition(lat,lng).altitudeDeg;
-    if (alt >= 45) return { icon:"☀️", label:"Full sun" };
-    if (alt >= 15) return { icon:"🌤️", label:"Partial sun" };
-    return { icon:"⛅", label:"Low sun" };
+  function sunBadge(lat, lng) {
+    const alt = sunPosition(lat, lng).altitudeDeg;
+    if (alt >= 45) return { icon: "☀️", label: "Full sun" };
+    if (alt >= 15) return { icon: "🌤️", label: "Partial sun" };
+    return { icon: "⛅", label: "Low sun" };
   }
 
   // ---------------------------
-  // Opening hours (lightweight parser)
+  // Opening hours (light parser)
   // ---------------------------
   const DAY_MAP = ["Su","Mo","Tu","We","Th","Fr","Sa"];
   function parseOpenStatus(openingHours) {
@@ -135,44 +138,33 @@
     const s = String(openingHours).trim();
     if (/24.?7/i.test(s)) return { status: "Open now", tone: "good" };
 
-    // Try to find today's segment
     const now = new Date();
     const day = DAY_MAP[now.getDay()];
-    // Split by ';' into rules
     const rules = s.split(/\s*;\s*/);
-    let todays = null;
 
-    // helpers
     const dayMatches = (rule, d) => {
-      // matches 'Mo-Su', 'Mo-Fr', 'Sa-Su', 'Mo,Tu,We', or just 'Mo'
       rule = rule.replace(/Mon/gi,"Mo").replace(/Tue/gi,"Tu").replace(/Wed/gi,"We").replace(/Thu/gi,"Th").replace(/Fri/gi,"Fr").replace(/Sat/gi,"Sa").replace(/Sun/gi,"Su");
       if (/daily|every ?day|mo-su/i.test(rule)) return true;
-      // ranges
       const m = rule.match(/\b(Mo|Tu|We|Th|Fr|Sa|Su)\s*-\s*(Mo|Tu|We|Th|Fr|Sa|Su)\b/i);
       if (m){
         const start = DAY_MAP.indexOf(m[1]);
         const end = DAY_MAP.indexOf(m[2]);
         const idx = DAY_MAP.indexOf(d);
         if (start<=end) return idx>=start && idx<=end;
-        // wrap-around (e.g., Fr-Mo)
         return idx>=start || idx<=end;
       }
-      // comma separated
-      if (new RegExp(`\\b${d}\\b`, 'i').test(rule)) return true;
+      if (new RegExp(`\\b${d}\\b`, "i").test(rule)) return true;
       return false;
     };
 
+    let todays = null;
     for (const rule of rules) {
       if (dayMatches(rule, day)) { todays = rule; break; }
     }
-    if (!todays) {
-      // maybe format without days like "10:00-22:00"
-      todays = s;
-    }
+    if (!todays) todays = s;
 
-    // Extract time ranges HH:MM-HH:MM (multiple allowed, comma-separated)
     const ranges = [];
-    todays.replace(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g, (_, a,b)=>{ ranges.push([a,b]); return _; });
+    todays.replace(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g, (_, a, b) => { ranges.push([a, b]); return _; });
     if (!ranges.length) return { status: "Unknown", tone: "muted" };
 
     const nowMin = now.getHours()*60 + now.getMinutes();
@@ -183,9 +175,9 @@
       const [bh,bm] = b.split(':').map(Number);
       let start = ah*60 + am;
       let end = bh*60 + bm;
-      if (end < start) end += 24*60; // passes midnight
+      if (end < start) end += 24*60; // over midnight
       let current = nowMin;
-      if (nowMin < start && end >= 24*60) current += 24*60; // adjust for wrap
+      if (nowMin < start && end >= 24*60) current += 24*60;
 
       if (current >= start && current <= end) {
         open = true;
@@ -233,7 +225,7 @@
   }
 
   // ---------------------------
-  // Overpass (unchanged)
+  // Overpass
   // ---------------------------
   function buildOverpassQuery(bbox) {
     return `
@@ -308,7 +300,7 @@
   }
 
   // ---------------------------
-  // Filters (unchanged core)
+  // Filters
   // ---------------------------
   function isOpenNow(tags) {
     const p = parseOpenStatus(tags && tags.opening_hours);
@@ -425,7 +417,7 @@
   }
 
   // ---------------------------
-  // LIST: modern card design
+  // LIST: modern cards (feature of this sprint)
   // ---------------------------
   function ensureListStyles() {
     if (document.getElementById("sunny-card-style")) return;
@@ -509,11 +501,10 @@
   }
 
   // ---------------------------
-  // UI shells + filters (unchanged lightweight)
+  // UI shells + filters (minimal wiring)
   // ---------------------------
   function ensureUI() {
     ensureBottomBar();
-    // Controls minimal creation if missing
     if (!$("#btnMap") && !$("#btnList") && !$("#btnFilters")) {
       const controls = document.createElement("div");
       controls.style.position = "fixed";
@@ -548,8 +539,8 @@
     filtersPanel.style.boxShadow = "0 10px 30px rgba(0,0,0,.15)";
     filtersPanel.style.display = "none";
 
-    $("#btnMap").onclick = ()=>{ currentView = "map"; document.getElementById("map").style.display="block"; document.getElementById("list").style.display="none"; renderMarkers(); };
-    $("#btnList").onclick = ()=>{ currentView = "list"; document.getElementById("map").style.display="none"; document.getElementById("list").style.display="block"; renderList(); };
+    $("#btnMap").onclick = ()=>{ currentView = "map"; $("#map").style.display="block"; $("#list").style.display="none"; renderMarkers(); };
+    $("#btnList").onclick = ()=>{ currentView = "list"; $("#map").style.display="none"; $("#list").style.display="block"; renderList(); };
     $("#btnFilters").onclick = ()=>{ filtersPanel.style.display = (filtersPanel.style.display==="none"||!filtersPanel.style.display) ? "block":"none"; };
 
     $("#toggleOutdoor").checked = outdoorOnly;
@@ -578,5 +569,4 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
-
 })();
