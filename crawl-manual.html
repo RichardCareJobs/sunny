@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Create your own crawl — Sunny</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+
+  <style>
+    :root { --bg:#fff; --fg:#111; --muted:#6b7280; --brand:#0f172a; }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:#fff;color:#111}
+
+    .topbar{position:sticky;top:0;z-index:1000;display:flex;align-items:center;gap:.75rem;padding:.75rem 1rem;border-bottom:1px solid #eee;background:#fff}
+    .topbar a{color:#111;text-decoration:none;font-weight:700}
+    .topbar h1{margin:0;font-size:1.05rem}
+
+    .layout{display:grid;grid-template-columns: 380px 1fr; height: calc(100dvh - 52px);}
+    @media (max-width: 960px){ .layout{grid-template-columns: 1fr; grid-template-rows: auto 1fr;} .panel{border-right:none;border-bottom:1px solid #eee} }
+
+    .panel{padding:14px;border-right:1px solid #eee;overflow:auto}
+    .note{font-size:12px;color:var(--muted)}
+
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    .field{margin:8px 0;flex:1 1 auto}
+    .field label{display:block;font-weight:700;margin-bottom:6px}
+    .field input,.field select{width:100%;padding:10px;border-radius:10px;border:1px solid #e5e7eb}
+
+    .btn{appearance:none;border:none;border-radius:12px;padding:10px 12px;font-weight:800;cursor:pointer}
+    .btn.primary{background:var(--brand);color:#fff}
+    .btn.secondary{background:#f1f5f9;color:#111}
+    .btn.link{background:#fff;border:1px solid #e5e7eb;color:#0a66c2}
+
+    .list{margin-top:8px}
+    .stop{display:flex;align-items:center;gap:8px;border:1px solid #eee;border-radius:12px;padding:8px;margin:8px 0;background:#fff}
+    .handle{cursor:grab;font-size:18px;user-select:none}
+    .title{flex:1 1 auto;font-weight:700}
+    .minor{color:var(--muted);font-size:12px}
+    .del{background:#fff;border:1px solid #fee2e2;color:#b91c1c}
+    .del:hover{background:#fee2e2}
+
+    #map{width:100%;height:100%}
+    .summary{margin-top:8px;color:#374151}
+    .sep{height:1px;background:#eee;margin:10px 0}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="crawl.html">← Back</a>
+    <h1>Create your own crawl</h1>
+    <div style="margin-left:auto" class="note">Click pins to add · drag to reorder</div>
+  </div>
+
+  <div class="layout">
+    <!-- LEFT: builder -->
+    <div class="panel">
+      <div class="row">
+        <button id="locate" class="btn secondary">📍 Locate me</button>
+        <button id="useCenter" class="btn secondary">Use map center</button>
+        <button id="clearSel" class="btn del">Clear all</button>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Start time</label>
+          <input type="time" id="startTime">
+        </div>
+        <div class="field">
+          <label>Dwell time (min)</label>
+          <input type="number" id="dwell" min="10" max="120" value="35">
+        </div>
+        <div class="field">
+          <label>Travel mode</label>
+          <select id="mode">
+            <option value="walk">Walk</option>
+            <option value="ride">Ride (est.)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="summary" id="summary">No stops yet — click a pin to add.</div>
+
+      <div class="list" id="selectedList"></div>
+
+      <div class="row" style="margin-top:8px">
+        <button id="preview" class="btn primary" style="flex:1">Preview crawl</button>
+        <button id="fit" class="btn secondary">Fit to route</button>
+      </div>
+
+      <div class="sep"></div>
+
+      <div id="itinerary"></div>
+    </div>
+
+    <!-- RIGHT: map -->
+    <div id="map"></div>
+  </div>
+
+<script>
+/* ---------- Map setup ---------- */
+const TILE_URL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
+const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+const OVERPASS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.openstreetmap.ru/api/interpreter"
+];
+const MARKER_ICON_URL = "icons/marker.png";
+const markerIcon = L.icon({ iconUrl: MARKER_ICON_URL, iconSize:[28,28], iconAnchor:[14,28], popupAnchor:[0,-28] });
+
+let map = L.map('map').setView([-32.9267, 151.7789], 13);
+L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTR }).addTo(map);
+let centerMarker = L.circleMarker(map.getCenter(), { radius:6, color:'#0f172a' }).addTo(map);
+map.on('move', ()=> centerMarker.setLatLng(map.getCenter()));
+
+let allMarkers = L.layerGroup().addTo(map);
+let routeLayer = L.layerGroup().addTo(map);
+
+/* ---------- Utils ---------- */
+function toTitle(s=""){return s? s.replace(/\b\w/g,c=>c.toUpperCase()):"";}
+function looksOutdoor(tags = {}){
+  const t = (x)=> (x||"").toLowerCase();
+  const name = t(tags.name);
+  const desc = t(tags.description || tags.note || "");
+  const outdoor = tags.outdoor_seating==="yes" || tags.terrace==="yes" || tags.roof_terrace==="yes" || tags.garden==="yes" || tags.patio==="yes";
+  const nameHints = /beer ?garden|courtyard|terrace|rooftop|roof ?top|outdoor|al ?fresco/.test(name);
+  const textHints = /courtyard|terrace|rooftop|beer ?garden|patio|alfresco/.test(desc);
+  return !!(outdoor || nameHints || textHints);
+}
+function haversine(lat1, lon1, lat2, lon2){ const R=6371, toRad=x=>x*Math.PI/180;
+  const dLat=toRad(lat2-lat1), dLon=toRad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function minsWalk(km){ return (km/4.5)*60; }
+function minsRide(km){ return 5 + (km/25)*60; }
+function parseStartTime(t){ if(!t){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),d.getDate(), d.getHours(), d.getMinutes()); }
+  const [hh,mm]=t.split(':').map(Number); const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),d.getDate(),hh,mm||0); }
+function addMinutes(d,m){ return new Date(d.getTime()+m*60000); }
+function fmtTime(d){ return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+
+/* ---------- Overpass ---------- */
+function buildQueryBBox(bbox){
+  // bbox: south,west,north,east
+  return `[out:json][timeout:25];
+  (
+    node["amenity"~"^(pub|bar|biergarten)$"](${bbox});
+    way["amenity"~"^(pub|bar|biergarten)$"](${bbox});
+    relation["amenity"~"^(pub|bar|biergarten)$"](${bbox});
+
+    node["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
+    way["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
+    relation["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
+
+    node["amenity"="restaurant"]["garden"="yes"](${bbox});
+    way["amenity"="restaurant"]["garden"="yes"](${bbox});
+    relation["amenity"="restaurant"]["garden"="yes"](${bbox});
+
+    node["amenity"="restaurant"]["terrace"="yes"](${bbox});
+    way["amenity"="restaurant"]["terrace"="yes"](${bbox});
+    relation["amenity"="restaurant"]["terrace"="yes"](${bbox});
+  );
+  out center tags;`;
+}
+async function overpass(query){
+  const body = new URLSearchParams({ data: query });
+  for (const url of OVERPASS){
+    try{
+      const r = await fetch(url, { method:'POST', body });
+      if(!r.ok) continue;
+      const j = await r.json();
+      if (j && j.elements) return j.elements;
+    }catch{}
+  }
+  return [];
+}
+function normalize(el){
+  const tags = el.tags || {};
+  let lat = el.lat, lng = el.lon;
+  if ((!lat || !lng) && el.center){ lat = el.center.lat; lng = el.center.lon; }
+  return { id:`${el.type}/${el.id}`, name: tags.name || tags.brand || toTitle(tags.operator) || 'Unnamed', lat, lng, tags, outdoor: looksOutdoor(tags) };
+}
+
+/* ---------- Selection & DnD ---------- */
+const selected = []; // array of venue objects in order
+
+function renderSelected(){
+  const list = document.getElementById('selectedList');
+  list.innerHTML = selected.map((v, i)=>`
+    <div class="stop" draggable="true" data-id="${v.id}">
+      <div class="handle" title="Drag">≡</div>
+      <div class="title">${i+1}. ${v.name}<div class="minor">${toTitle(v.tags.amenity || 'Pub')}${v.outdoor?' · 🌿 Outdoor':''}</div></div>
+      <button class="btn del" data-action="remove" data-id="${v.id}">Remove</button>
+    </div>
+  `).join('');
+
+  document.getElementById('summary').textContent =
+    selected.length ? `${selected.length} stop${selected.length>1?'s':''} selected` : 'No stops yet — click a pin to add.';
+
+  // wire remove
+  list.querySelectorAll('[data-action="remove"]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.getAttribute('data-id');
+      const idx = selected.findIndex(s=>s.id===id);
+      if (idx>=0){ selected.splice(idx,1); renderSelected(); }
+    });
+  });
+
+  // drag & drop
+  list.querySelectorAll('.stop').forEach(el=>{
+    el.addEventListener('dragstart', e=>{
+      e.dataTransfer.setData('text/plain', el.getAttribute('data-id'));
+      el.style.opacity = .5;
+    });
+    el.addEventListener('dragend', ()=> el.style.opacity = '');
+    el.addEventListener('dragover', e=> e.preventDefault());
+    el.addEventListener('drop', e=>{
+      e.preventDefault();
+      const fromId = e.dataTransfer.getData('text/plain');
+      const toId = el.getAttribute('data-id');
+      if (!fromId || !toId || fromId===toId) return;
+      const fromIdx = selected.findIndex(s=>s.id===fromId);
+      const toIdx = selected.findIndex(s=>s.id===toId);
+      const [item] = selected.splice(fromIdx,1);
+      selected.splice(toIdx,0,item);
+      renderSelected();
+    });
+  });
+}
+
+/* ---------- Map render ---------- */
+async function loadAndRenderMarkers(){
+  allMarkers.clearLayers();
+  const b = map.getBounds();
+  const sw = b.getSouthWest(), ne = b.getNorthEast();
+  const bbox = [sw.lat, sw.lng, ne.lat, ne.lng].map(n=>+n.toFixed(5)).join(",");
+  const elements = await overpass(buildQueryBBox(bbox));
+  const venues = elements.map(normalize).filter(v=>v.lat && v.lng);
+
+  venues.forEach(v=>{
+    const added = selected.some(s=>s.id===v.id);
+    const html = `
+      <div style="min-width:220px;max-width:260px">
+        <div style="font-weight:800">${v.name}</div>
+        <div class="note" style="margin:4px 0">${toTitle(v.tags.amenity || 'Pub')}${v.outdoor?' · 🌿 Outdoor':''}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+          ${!added ? `<button class="btn primary" data-add="${v.id}">+ Add to crawl</button>` :
+                      `<button class="btn del" data-remove="${v.id}">Remove</button>`}
+          <a class="btn link" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}">Directions</a>
+        </div>
+      </div>`;
+    const m = L.marker([v.lat,v.lng], { icon: markerIcon }).addTo(allMarkers).bindPopup(html);
+
+    // popup button events (after open)
+    m.on('popupopen', ()=>{
+      const pop = m.getPopup().getElement();
+      const addBtn = pop.querySelector('[data-add]');
+      const remBtn = pop.querySelector('[data-remove]');
+      if (addBtn){
+        addBtn.addEventListener('click', ()=>{
+          if (!selected.some(s=>s.id===v.id)){ selected.push(v); renderSelected(); }
+          m.closePopup();
+        });
+      }
+      if (remBtn){
+        remBtn.addEventListener('click', ()=>{
+          const idx = selected.findIndex(s=>s.id===v.id);
+          if (idx>=0){ selected.splice(idx,1); renderSelected(); }
+          m.closePopup();
+        });
+      }
+    });
+  });
+}
+
+/* ---------- Itinerary / preview ---------- */
+function buildItinerary(){
+  const dwell = Math.max(10, Math.min(120, parseInt(document.getElementById('dwell').value || '35', 10)));
+  const mode = document.getElementById('mode').value;
+  const startStr = document.getElementById('startTime').value;
+  let time = parseStartTime(startStr);
+
+  const parts = [];
+  let prev = null;
+  let totalKm = 0;
+  selected.forEach((v, i)=>{
+    let km = 0, travelMins = 0;
+    if (prev){
+      km = haversine(prev.lat, prev.lng, v.lat, v.lng);
+      totalKm += km;
+      travelMins = Math.max(1, Math.round((mode==='walk' ? minsWalk(km) : minsRide(km))));
+      time = addMinutes(time, travelMins);
+    }
+    const arrive = fmtTime(time);
+    const depart = fmtTime(addMinutes(time, dwell));
+    parts.push({v, i, km: km.toFixed(2), travelMins, arrive, depart});
+    time = addMinutes(time, dwell);
+    prev = v;
+  });
+
+  return { parts, totalKm: totalKm.toFixed(2), finish: fmtTime(time), mode, dwell };
+}
+
+function renderPreview(){
+  const it = document.getElementById('itinerary');
+  it.innerHTML = '';
+  routeLayer.clearLayers();
+
+  if (!selected.length){
+    it.innerHTML = '<div class="note">Add at least 2 stops to preview a route.</div>';
+    return;
+  }
+
+  const plan = buildItinerary();
+
+  // map line
+  const poly = selected.map(v=> [v.lat, v.lng]);
+  L.polyline(poly, { color:'#0f172a', weight:4, opacity:.9 }).addTo(routeLayer);
+  selected.forEach((v, idx)=>{
+    L.marker([v.lat,v.lng], { icon: markerIcon })
+      .addTo(routeLayer)
+      .bindPopup(`<strong>${idx+1}. ${v.name}</strong>`);
+  });
+  map.fitBounds(L.polyline(poly).getBounds(), { padding:[40,40] });
+
+  // itinerary
+  const blocks = plan.parts.map(p=> {
+    const v = p.v, website = v.tags.website ? String(v.tags.website).replace(/^http:\/\//,'https://') : null;
+    return `
+      <div class="stop">
+        <div class="title">${p.i+1}. ${v.name}
+          <div class="minor">${toTitle(v.tags.amenity || 'Pub')}${v.outdoor?' · 🌿 Outdoor':''}</div>
+        </div>
+        <div class="minor" style="min-width:170px">
+          ${p.km>0 ? `${p.km} km · ${p.travelMins} min ${plan.mode}<br>` : ''}
+          Arrive ${p.arrive} · Depart ${p.depart}
+        </div>
+        <div class="row" style="margin-left:auto">
+          <a class="btn link" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}">Directions</a>
+          ${website?`<a class="btn link" target="_blank" rel="noopener" href="${website}">Website</a>`:''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  it.innerHTML = `
+    <div class="summary"><strong>${selected.length} stops</strong> · ~${plan.totalKm} km · finish around <strong>${plan.finish}</strong></div>
+    <div class="sep"></div>
+    ${blocks}
+  `;
+}
+
+/* ---------- Events ---------- */
+document.getElementById('preview').addEventListener('click', renderPreview);
+document.getElementById('fit').addEventListener('click', ()=> {
+  if (!selected.length) return;
+  const poly = L.polyline(selected.map(v=>[v.lat,v.lng]));
+  map.fitBounds(poly.getBounds(), { padding:[40,40] });
+});
+document.getElementById('clearSel').addEventListener('click', ()=>{
+  selected.splice(0, selected.length);
+  renderSelected();
+  document.getElementById('itinerary').innerHTML = '';
+  routeLayer.clearLayers();
+});
+document.getElementById('locate').addEventListener('click', (e)=>{
+  e.preventDefault();
+  if (!navigator.geolocation) return alert('Geolocation not available.');
+  navigator.geolocation.getCurrentPosition(
+    pos => { map.setView([pos.coords.latitude, pos.coords.longitude], 14); loadAndRenderMarkers(); },
+    () => alert('Could not get your location — drag the map and click "Use map center".'),
+    { enableHighAccuracy:true, timeout:8000, maximumAge:600000 }
+  );
+});
+document.getElementById('useCenter').addEventListener('click', (e)=>{
+  e.preventDefault();
+  loadAndRenderMarkers();
+});
+
+// default start time = next 5-minute mark
+(function setDefaultTime(){
+  const d = new Date();
+  d.setMinutes(d.getMinutes() + (5 - (d.getMinutes()%5))%5, 0, 0);
+  document.getElementById('startTime').value = d.toTimeString().slice(0,5);
+})();
+
+// initial load
+loadAndRenderMarkers();
+map.on('moveend', ()=>{ /* optional: live refresh could be too spammy */ });
+</script>
+</body>
+</html>
