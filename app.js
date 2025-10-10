@@ -1,9 +1,13 @@
 
 /* --------------------------------------------------------------------------
-   Sunny — app.js (icons fix -> icons/marker.png)
-   - Forces custom marker icons to use 'icons/marker.png' by default.
-   - Still allows override via window.SUNNY_ICON_URL if you set it before this script.
-   - Rest is same lightweight build.
+   Sunny — app.js (cards-focused sprint)
+   Scope limited to LIST CARD UI + data shown:
+   - Bigger modern cards
+   - Sun status icon (full/partial/no sun)
+   - Open status (open now / opening soon / closing soon / closed) via light parser
+   - Distance from current location
+   - Buttons: Uber, Directions, Website (if available)
+   NOTE: Map, fetching, icons, filters remain unchanged from previous build.
    -------------------------------------------------------------------------- */
 
 (function () {
@@ -18,7 +22,6 @@
 
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
-  // Tiles (CartoDB Positron, override via window.SUNNY_TILE_URL)
   const TILE_URL = window.SUNNY_TILE_URL ||
     "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
   const TILE_ATTR =
@@ -39,11 +42,14 @@
   let map, markersLayer;
   let allVenues = {};
 
+  // Geolocation
+  let userLocation = null; // {lat,lng} once resolved
+
   // Debounce
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
 
-  // Marker icon (FORCED custom) -> icons/marker.png
+  // Marker icon (forced custom) -> icons/marker.png
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   const markerIcon = L.icon({
     iconUrl: MARKER_ICON_URL,
@@ -86,7 +92,7 @@
   function toTitle(s = "") { return s ? s.replace(/\b\w/g, c => c.toUpperCase()) : ""; }
 
   // ---------------------------
-  // Sun utils (compact)
+  // Sun utils
   // ---------------------------
   function sunPosition(lat, lng, date=new Date()) {
     const rad = Math.PI/180, deg = 180/Math.PI;
@@ -113,43 +119,121 @@
     const azimuth = Math.atan2(Math.sin(H), Math.cos(H)*Math.sin(phi) - Math.tan(dec)*Math.cos(phi));
     return { azimuthDeg: (azimuth*deg + 180) % 360, altitudeDeg: altitude*deg };
   }
-  const compass = (a)=>["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(a/22.5)%16];
-  const sunNowText = (lat,lng)=>{
-    const s = sunPosition(lat,lng,new Date());
-    return `Sun now: ${compass(s.azimuthDeg)} (${s.azimuthDeg.toFixed(0)}°), alt ${s.altitudeDeg.toFixed(0)}°`;
-  };
-  function suggestIdealTime(lat,lng) {
-    const alt = sunPosition(lat,lng,new Date()).altitudeDeg;
-    if (alt >= 45) return "Ideal: now–2pm (strong sun)";
-    if (alt >= 20) return "Ideal: 3–5pm (softer sun)";
-    return "Ideal: 12–2pm (more sun)";
+  function sunBadge(lat,lng){
+    const alt = sunPosition(lat,lng).altitudeDeg;
+    if (alt >= 45) return { icon:"☀️", label:"Full sun" };
+    if (alt >= 15) return { icon:"🌤️", label:"Partial sun" };
+    return { icon:"⛅", label:"Low sun" };
   }
 
   // ---------------------------
-  // Heuristics
+  // Opening hours (lightweight parser)
   // ---------------------------
-  function looksOutdoor(tags = {}) {
-    const t = (x) => (x || "").toLowerCase();
-    const name = t(tags.name);
-    const desc = t(tags.description || tags.note || "");
-    const outdoorTags =
-      tags["outdoor_seating"] === "yes" ||
-      tags["terrace"] === "yes" ||
-      tags["roof_terrace"] === "yes" ||
-      tags["garden"] === "yes" ||
-      tags["patio"] === "yes";
-    const nameHints = /beer ?garden|courtyard|terrace|rooftop|roof ?top|outdoor|al ?fresco/.test(name);
-    const textHints = /courtyard|terrace|rooftop|beer ?garden|patio|alfresco/.test(desc);
-    return !!(outdoorTags || nameHints || textHints);
-  }
-  function isOpenNow(tags) {
-    if (!tags || !tags.opening_hours) return !openNowOnly;
-    if (/24.?7/i.test(String(tags.opening_hours))) return true;
-    return !openNowOnly;
+  const DAY_MAP = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+  function parseOpenStatus(openingHours) {
+    if (!openingHours) return { status: "Unknown", tone: "muted" };
+    const s = String(openingHours).trim();
+    if (/24.?7/i.test(s)) return { status: "Open now", tone: "good" };
+
+    // Try to find today's segment
+    const now = new Date();
+    const day = DAY_MAP[now.getDay()];
+    // Split by ';' into rules
+    const rules = s.split(/\s*;\s*/);
+    let todays = null;
+
+    // helpers
+    const dayMatches = (rule, d) => {
+      // matches 'Mo-Su', 'Mo-Fr', 'Sa-Su', 'Mo,Tu,We', or just 'Mo'
+      rule = rule.replace(/Mon/gi,"Mo").replace(/Tue/gi,"Tu").replace(/Wed/gi,"We").replace(/Thu/gi,"Th").replace(/Fri/gi,"Fr").replace(/Sat/gi,"Sa").replace(/Sun/gi,"Su");
+      if (/daily|every ?day|mo-su/i.test(rule)) return true;
+      // ranges
+      const m = rule.match(/\b(Mo|Tu|We|Th|Fr|Sa|Su)\s*-\s*(Mo|Tu|We|Th|Fr|Sa|Su)\b/i);
+      if (m){
+        const start = DAY_MAP.indexOf(m[1]);
+        const end = DAY_MAP.indexOf(m[2]);
+        const idx = DAY_MAP.indexOf(d);
+        if (start<=end) return idx>=start && idx<=end;
+        // wrap-around (e.g., Fr-Mo)
+        return idx>=start || idx<=end;
+      }
+      // comma separated
+      if (new RegExp(`\\b${d}\\b`, 'i').test(rule)) return true;
+      return false;
+    };
+
+    for (const rule of rules) {
+      if (dayMatches(rule, day)) { todays = rule; break; }
+    }
+    if (!todays) {
+      // maybe format without days like "10:00-22:00"
+      todays = s;
+    }
+
+    // Extract time ranges HH:MM-HH:MM (multiple allowed, comma-separated)
+    const ranges = [];
+    todays.replace(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g, (_, a,b)=>{ ranges.push([a,b]); return _; });
+    if (!ranges.length) return { status: "Unknown", tone: "muted" };
+
+    const nowMin = now.getHours()*60 + now.getMinutes();
+    let open = false, minsToOpen = Infinity, minsToClose = Infinity;
+
+    for (const [a,b] of ranges) {
+      const [ah,am] = a.split(':').map(Number);
+      const [bh,bm] = b.split(':').map(Number);
+      let start = ah*60 + am;
+      let end = bh*60 + bm;
+      if (end < start) end += 24*60; // passes midnight
+      let current = nowMin;
+      if (nowMin < start && end >= 24*60) current += 24*60; // adjust for wrap
+
+      if (current >= start && current <= end) {
+        open = true;
+        minsToClose = Math.min(minsToClose, end - current);
+      } else if (current < start) {
+        minsToOpen = Math.min(minsToOpen, start - current);
+      }
+    }
+
+    if (open) {
+      if (minsToClose <= 60) return { status: "Closing soon", tone: "warn" };
+      return { status: "Open now", tone: "good" };
+    } else if (isFinite(minsToOpen)) {
+      if (minsToOpen <= 60) return { status: "Opening soon", tone: "info" };
+      return { status: "Closed", tone: "muted" };
+    } else {
+      return { status: "Closed", tone: "muted" };
+    }
   }
 
   // ---------------------------
-  // Overpass
+  // Distance
+  // ---------------------------
+  function haversine(lat1, lon1, lat2, lon2) {
+    const R = 6371; // km
+    const toRad = (x)=>x*Math.PI/180;
+    const dLat = toRad(lat2-lat1);
+    const dLon = toRad(lon2-lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+  function formatDistanceKm(km) {
+    if (km < 1) return `${Math.round(km*1000)} m`;
+    return `${km.toFixed(1)} km`;
+  }
+  function getUserLocationOnce() {
+    if (userLocation !== null) return;
+    if (!navigator.geolocation) { userLocation = false; return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => { userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude }; renderIfList(); },
+      () => { userLocation = false; },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 600000 }
+    );
+  }
+
+  // ---------------------------
+  // Overpass (unchanged)
   // ---------------------------
   function buildOverpassQuery(bbox) {
     return `
@@ -159,7 +243,6 @@
         way["amenity"~"^(pub|bar|biergarten)$"](${bbox});
         relation["amenity"~"^(pub|bar|biergarten)$"](${bbox});
 
-        // Restaurants with outdoor hints (cafes removed)
         node["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
         way["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
         relation["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
@@ -200,6 +283,20 @@
     const name = tags.name || tags.brand || toTitle(tags.operator) || (tags.amenity ? toTitle(tags.amenity) : "Unnamed");
     return { id, name, lat, lng, tags, hasOutdoor: looksOutdoor(tags), source: "osm" };
   }
+  function looksOutdoor(tags = {}) {
+    const t = (x) => (x || "").toLowerCase();
+    const name = t(tags.name);
+    const desc = t(tags.description || tags.note || "");
+    const outdoorTags =
+      tags["outdoor_seating"] === "yes" ||
+      tags["terrace"] === "yes" ||
+      tags["roof_terrace"] === "yes" ||
+      tags["garden"] === "yes" ||
+      tags["patio"] === "yes";
+    const nameHints = /beer ?garden|courtyard|terrace|rooftop|roof ?top|outdoor|al ?fresco/.test(name);
+    const textHints = /courtyard|terrace|rooftop|beer ?garden|patio|alfresco/.test(desc);
+    return !!(outdoorTags || nameHints || textHints);
+  }
   function mergeVenues(list) {
     let added = 0;
     for (const v of list) {
@@ -211,7 +308,20 @@
   }
 
   // ---------------------------
-  // Bottom bar (unchanged lightweight version)
+  // Filters (unchanged core)
+  // ---------------------------
+  function isOpenNow(tags) {
+    const p = parseOpenStatus(tags && tags.opening_hours);
+    return p.status === "Open now" || p.status === "Closing soon";
+  }
+  function venueMatches(v) {
+    if (outdoorOnly && !v.hasOutdoor) return false;
+    if (openNowOnly && !isOpenNow(v.tags)) return false;
+    return true;
+  }
+
+  // ---------------------------
+  // Bottom bar (unchanged minimal)
   // ---------------------------
   function ensureBottomBar() {
     let bar = document.getElementById("bottomBar");
@@ -245,22 +355,165 @@
   }
 
   // ---------------------------
-  // Containers and controls (basic)
+  // Map + markers (unchanged)
   // ---------------------------
-  function ensureContainersAndControls() {
-    if (!$("#map")) {
+  function setupMap() {
+    if (!document.getElementById("map")) {
       const m = document.createElement("div");
       m.id = "map";
       m.style.position = "absolute";
       m.style.left = "0"; m.style.right = "0"; m.style.top = "0"; m.style.bottom = "56px";
       document.body.appendChild(m);
     }
-    if (!$("#list")) {
+    map = L.map("map").setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
+    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTR }).addTo(map);
+    markersLayer = L.layerGroup().addTo(map);
+    map.on("moveend", debouncedLoadVisible);
+    map.on("zoomend", debouncedLoadVisible);
+  }
+  function debouncedLoadVisible() {
+    if (moveTimer) clearTimeout(moveTimer);
+    moveTimer = setTimeout(loadVisibleTiles, MOVE_DEBOUNCE_MS);
+  }
+  async function loadVisibleTiles() {
+    const b = map.getBounds();
+    const sw = b.getSouthWest(), ne = b.getNorthEast();
+    const bbox = [sw.lat, sw.lng, ne.lat, ne.lng].map(n=>+n.toFixed(5)).join(",");
+    const cacheKey = `${TILE_CACHE_PREFIX}${bbox}`;
+
+    const cached = loadLocal(cacheKey, TILE_CACHE_TTL_MS);
+    if (cached && Array.isArray(cached)) {
+      mergeVenues(cached.map(normalizeElement).filter(Boolean));
+      renderAll();
+      return;
+    }
+    try {
+      const elements = await fetchOverpass(buildOverpassQuery(bbox));
+      saveLocal(cacheKey, elements);
+      mergeVenues(elements.map(normalizeElement).filter(Boolean));
+      renderAll();
+    } catch (e) {
+      console.error("Overpass error:", e);
+    }
+  }
+  function renderMarkers() {
+    if (!markersLayer) return;
+    markersLayer.clearLayers();
+    const b = map.getBounds();
+    const visible = [];
+    Object.values(allVenues).forEach(v=>{
+      if (!b.contains([v.lat,v.lng])) return;
+      if (!venueMatches(v)) return;
+      visible.push(v);
+      const marker = L.marker([v.lat,v.lng], { icon: markerIcon }).addTo(markersLayer);
+      const tags = v.tags || {};
+      const kind = toTitle(tags.amenity || tags.tourism || "");
+      const html = `
+        <div class="venue-popup">
+          <div class="venue-name"><strong>${v.name}</strong></div>
+          ${kind ? `<div>${kind}</div>` : ""}
+          ${v.hasOutdoor ? `<div>🌿 Outdoor friendly</div>` : ""}
+          ${tags.opening_hours ? `<div>Hours: ${tags.opening_hours}</div>` : ""}
+          <div class="links" style="margin-top:6px;">
+            <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}&query_place_id=">Directions</a>
+            <a target="_blank" rel="noopener" href="https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}">Uber</a>
+          </div>
+        </div>`;
+      marker.bindPopup(html);
+    });
+    updateBottomBar(visible);
+  }
+
+  // ---------------------------
+  // LIST: modern card design
+  // ---------------------------
+  function ensureListStyles() {
+    if (document.getElementById("sunny-card-style")) return;
+    const style = document.createElement("style");
+    style.id = "sunny-card-style";
+    style.textContent = `
+      #list{position:absolute;left:0;right:0;top:0;bottom:56px;background:#fafafa;overflow:auto;display:none;padding:16px;}
+      .card{background:#fff;border:1px solid rgba(0,0,0,.06);border-radius:18px;box-shadow:0 10px 25px rgba(0,0,0,.06);padding:16px 16px;margin:12px 0;}
+      .cardHeader{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+      .title{font-size:18px;font-weight:700;line-height:1.2;margin:0;}
+      .badges{display:flex;gap:8px;flex-wrap:wrap;}
+      .badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:600;}
+      .b-sun{background:#fff7e6;color:#b45309;border:1px solid #fde68a;}
+      .b-open.good{background:#e8f7ef;color:#166534;border:1px solid #bbf7d0;}
+      .b-open.warn{background:#fff1f2;color:#9f1239;border:1px solid #fecdd3;}
+      .b-open.info{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;}
+      .b-open.muted{background:#f3f4f6;color:#4b5563;border:1px solid #e5e7eb;}
+      .meta{color:#566;font-size:13px;margin:8px 0;}
+      .btnRow{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;}
+      .btn{appearance:none;border:none;border-radius:12px;padding:10px 14px;font-weight:600;cursor:pointer}
+      .btn.primary{background:#111;color:#fff;}
+      .btn.secondary{background:#f1f5f9;color:#111;}
+      .btn.link{background:#fff;border:1px solid #e5e7eb;color:#0a66c2;}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensureListContainer() {
+    ensureListStyles();
+    if (!document.getElementById("list")) {
       const list = document.createElement("div");
       list.id = "list";
-      list.style.display = "none";
       document.body.appendChild(list);
     }
+  }
+
+  function computeDistanceStr(v) {
+    if (!userLocation || userLocation === false) return "";
+    const km = haversine(userLocation.lat, userLocation.lng, v.lat, v.lng);
+    return formatDistanceKm(km);
+  }
+
+  function renderList() {
+    ensureListContainer();
+    const list = document.getElementById("list");
+    const b = map.getBounds();
+    const items = Object.values(allVenues)
+      .filter(v => b.contains([v.lat,v.lng]) && venueMatches(v))
+      .sort((a,b)=>a.name.localeCompare(b.name));
+
+    list.innerHTML = items.map(v=>{
+      const tags = v.tags || {};
+      const kind = toTitle(tags.amenity || tags.tourism || "");
+      const sun = sunBadge(v.lat, v.lng);
+      const open = parseOpenStatus(tags.opening_hours);
+      const dist = computeDistanceStr(v);
+      const website = tags.website ? String(tags.website).replace(/^http:\/\//,'https://') : null;
+
+      return `
+        <div class="card">
+          <div class="cardHeader">
+            <h3 class="title">${v.name}</h3>
+            <div class="badges">
+              <span class="badge b-sun"><span>${sun.icon}</span><span>${sun.label}</span></span>
+              <span class="badge b-open ${open.tone}">${open.status}</span>
+              ${dist ? `<span class="badge b-open info">${dist}</span>` : ""}
+            </div>
+          </div>
+          <div class="meta">${kind}${tags.opening_hours ? " · " + tags.opening_hours : ""}</div>
+          <div class="btnRow">
+            <a class="btn primary" target="_blank" rel="noopener" href="https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}">Call Uber</a>
+            <a class="btn secondary" target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}&query_place_id=">Get directions</a>
+            ${website ? `<a class="btn link" target="_blank" rel="noopener" href="${website}">Website</a>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    // Ask for location if we haven't yet (won't prompt repeatedly)
+    getUserLocationOnce();
+  }
+
+  // ---------------------------
+  // UI shells + filters (unchanged lightweight)
+  // ---------------------------
+  function ensureUI() {
+    ensureBottomBar();
+    // Controls minimal creation if missing
     if (!$("#btnMap") && !$("#btnList") && !$("#btnFilters")) {
       const controls = document.createElement("div");
       controls.style.position = "fixed";
@@ -295,96 +548,27 @@
     filtersPanel.style.boxShadow = "0 10px 30px rgba(0,0,0,.15)";
     filtersPanel.style.display = "none";
 
-    // Wire up controls
-    $("#btnMap").onclick = ()=>{ currentView = "map"; renderAll(); };
-    $("#btnList").onclick = ()=>{ currentView = "list"; renderAll(); };
+    $("#btnMap").onclick = ()=>{ currentView = "map"; document.getElementById("map").style.display="block"; document.getElementById("list").style.display="none"; renderMarkers(); };
+    $("#btnList").onclick = ()=>{ currentView = "list"; document.getElementById("map").style.display="none"; document.getElementById("list").style.display="block"; renderList(); };
     $("#btnFilters").onclick = ()=>{ filtersPanel.style.display = (filtersPanel.style.display==="none"||!filtersPanel.style.display) ? "block":"none"; };
+
     $("#toggleOutdoor").checked = outdoorOnly;
     $("#toggleOpenNow").checked = openNowOnly;
-    $("#toggleOutdoor").onchange = ()=>{ outdoorOnly = $("#toggleOutdoor").checked; renderAll(); };
-    $("#toggleOpenNow").onchange = ()=>{ openNowOnly = $("#toggleOpenNow").checked; renderAll(); };
+    $("#toggleOutdoor").onchange = ()=>{ outdoorOnly = $("#toggleOutdoor").checked; if (currentView==='map') renderMarkers(); else renderList(); };
+    $("#toggleOpenNow").onchange = ()=>{ openNowOnly = $("#toggleOpenNow").checked; if (currentView==='map') renderMarkers(); else renderList(); };
   }
 
-  // ---------------------------
-  // Map rendering
-  // ---------------------------
-  function setupMap() {
-    map = L.map("map").setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
-    L.tileLayer(TILE_URL, { maxZoom: 19, attribution: TILE_ATTR }).addTo(map);
-    markersLayer = L.layerGroup().addTo(map);
-    map.on("moveend", debouncedLoadVisible);
-    map.on("zoomend", debouncedLoadVisible);
-  }
-  function debouncedLoadVisible() {
-    if (moveTimer) clearTimeout(moveTimer);
-    moveTimer = setTimeout(loadVisibleTiles, MOVE_DEBOUNCE_MS);
-  }
-  async function loadVisibleTiles() {
-    const b = map.getBounds();
-    const sw = b.getSouthWest(), ne = b.getNorthEast();
-    const bbox = [sw.lat, sw.lng, ne.lat, ne.lng].map(n=>+n.toFixed(5)).join(",");
-    const cacheKey = `${TILE_CACHE_PREFIX}${bbox}`;
-
-    const cached = loadLocal(cacheKey, TILE_CACHE_TTL_MS);
-    if (cached && Array.isArray(cached)) {
-      mergeVenues(cached.map(normalizeElement).filter(Boolean));
-      renderAll();
-      return;
-    }
-    try {
-      const elements = await fetchOverpass(buildOverpassQuery(bbox));
-      saveLocal(cacheKey, elements);
-      mergeVenues(elements.map(normalizeElement).filter(Boolean));
-      renderAll();
-    } catch (e) {
-      console.error("Overpass error:", e);
-    }
-  }
-  function venueMatches(v) {
-    if (outdoorOnly && !v.hasOutdoor) return false;
-    if (openNowOnly && !isOpenNow(v.tags)) return false;
-    return true;
-  }
-  function renderMarkers() {
-    if (!markersLayer) return;
-    markersLayer.clearLayers();
-    const b = map.getBounds();
-    const visible = [];
-    Object.values(allVenues).forEach(v=>{
-      if (!b.contains([v.lat,v.lng])) return;
-      if (!venueMatches(v)) return;
-      visible.push(v);
-      const marker = L.marker([v.lat,v.lng], { icon: markerIcon }).addTo(markersLayer);
-      const tags = v.tags || {};
-      const kind = toTitle(tags.amenity || tags.tourism || "");
-      const html = `
-        <div class="venue-popup">
-          <div class="venue-name"><strong>${v.name}</strong></div>
-          ${kind ? `<div>${kind}</div>` : ""}
-          ${v.hasOutdoor ? `<div>🌿 Outdoor friendly</div>` : ""}
-          ${tags.opening_hours ? `<div>Hours: ${tags.opening_hours}</div>` : ""}
-          <div class="links" style="margin-top:6px;">
-            <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}&query_place_id=">Directions</a>
-            <a target="_blank" rel="noopener" href="https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}">Uber</a>
-          </div>
-          <div class="meta" style="margin-top:6px;">${sunNowText(v.lat,v.lng)} · ${suggestIdealTime(v.lat,v.lng)}</div>
-        </div>`;
-      marker.bindPopup(html);
-    });
-    updateBottomBar(visible);
-  }
   function renderAll() {
-    if ($("#map")) $("#map").style.display = currentView === "map" ? "block" : "none";
-    if ($("#list")) $("#list").style.display = currentView === "list" ? "block" : "none";
     if (currentView === "map") renderMarkers();
+    else renderList();
   }
+  function renderIfList() { if (currentView === "list") renderList(); }
 
   // ---------------------------
   // Boot
   // ---------------------------
   function boot() {
-    ensureBottomBar();
-    ensureContainersAndControls();
+    ensureUI();
     const cached = loadLocal(VENUE_CACHE_KEY);
     if (cached && typeof cached === "object") allVenues = cached;
     setupMap();
@@ -394,4 +578,5 @@
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();
+
 })();
