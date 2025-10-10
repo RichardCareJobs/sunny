@@ -92,6 +92,10 @@
 
       <div id="itineraryIntro" class="muted">Your itinerary will appear here.</div>
       <div id="itinerary"></div>
+
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button id="shareCrawl" class="btn secondary">Share crawl</button>
+      </div>
     </div>
 
     <div id="map"></div>
@@ -121,15 +125,8 @@ function haversine(lat1, lon1, lat2, lon2){ const R=6371, toRad=x=>x*Math.PI/180
   const a=Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(a));
 }
-function minsWalk(km){ return (km/4.5)*60; }           // 4.5 km/h walking
-function minsRide(km){ return 5 + (km/25)*60; }        // 5 min buffer + 25 km/h city avg
-
-function openStatusStr(oh){
-  if(!oh) return null;
-  if(/24.?7/i.test(oh)) return "Open 24/7";
-  return null; // keep it simple for this page
-}
-
+function minsWalk(km){ return (km/4.5)*60; }
+function minsRide(km){ return 5 + (km/25)*60; }
 function looksOutdoor(tags = {}){
   const t = (x)=> (x||"").toLowerCase();
   const name = t(tags.name);
@@ -139,7 +136,6 @@ function looksOutdoor(tags = {}){
   const textHints = /courtyard|terrace|rooftop|beer ?garden|patio|alfresco/.test(desc);
   return !!(outdoor || nameHints || textHints);
 }
-
 function buildQuery(lat,lng,km=3){
   const radius = km*1000;
   return `
@@ -163,7 +159,6 @@ function buildQuery(lat,lng,km=3){
     );
     out center tags;`;
 }
-
 async function overpass(query){
   const body = new URLSearchParams({ data: query });
   for (const url of OVERPASS){
@@ -176,25 +171,19 @@ async function overpass(query){
   }
   throw new Error('Overpass failed');
 }
-
 function normalize(el){
   const tags = el.tags || {};
   let lat = el.lat, lng = el.lon;
   if ((!lat || !lng) && el.center){ lat = el.center.lat; lng = el.center.lon; }
   return { id:`${el.type}/${el.id}`, name: tags.name || tags.brand || toTitle(tags.operator) || 'Unnamed', lat, lng, tags, outdoor: looksOutdoor(tags) };
 }
-
 function scoreVenue(v, origin){
-  // prefer closer + outdoors
-  const dist = haversine(origin.lat, origin.lng, v.lat, v.lng); // km
-  const outdoorBonus = v.outdoor ? -0.3 : 0; // lower is better
+  const dist = haversine(origin.lat, origin.lng, v.lat, v.lng);
+  const outdoorBonus = v.outdoor ? -0.3 : 0;
   return dist + outdoorBonus;
 }
-
 function planRoute(origin, venues, count, mode, dwellMins, startTimeStr){
-  // pick best N by greedy; then NN order
   const candidates = [...venues].sort((a,b)=> scoreVenue(a, origin) - scoreVenue(b, origin)).slice(0, Math.max(2, count*2));
-  // start from nearest
   let current = origin;
   const ordered = [];
   const remaining = new Set(candidates.map(v=>v.id));
@@ -212,7 +201,6 @@ function planRoute(origin, venues, count, mode, dwellMins, startTimeStr){
     current = best;
   }
 
-  // build schedule
   const parts = [];
   let time = parseStartTime(startTimeStr);
   let totalKm = 0;
@@ -232,7 +220,6 @@ function planRoute(origin, venues, count, mode, dwellMins, startTimeStr){
 
   return { stops: parts, totalKm: totalKm.toFixed(2), finish: fmtTime(time) };
 }
-
 function parseStartTime(t){
   if (!t){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),d.getDate(), d.getHours(), d.getMinutes()); }
   const [hh,mm] = t.split(':').map(Number);
@@ -240,6 +227,10 @@ function parseStartTime(t){
 }
 function addMinutes(d, m){ return new Date(d.getTime()+m*60000); }
 function fmtTime(d){ return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+function encodeCrawl(obj){
+  const json = JSON.stringify(obj);
+  return btoa(unescape(encodeURIComponent(json))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
 
 async function generate(){
   document.getElementById('itineraryIntro').textContent = 'Finding venues near the map center…';
@@ -262,10 +253,8 @@ async function generate(){
     return;
   }
 
-  // plan
   const plan = planRoute({lat:center.lat,lng:center.lng}, venues, stops, mode, dwell, startTime);
 
-  // map render
   const poly = [];
   let idx = 1;
   for (const part of plan.stops){
@@ -286,7 +275,6 @@ async function generate(){
   L.polyline(poly, { color:'#0f172a', weight:4, opacity:.9 }).addTo(routeLayer);
   map.fitBounds(L.polyline(poly).getBounds(), { padding:[40,40] });
 
-  // itinerary render
   document.getElementById('itineraryIntro').innerHTML = `
     <strong>${plan.stops.length} stops</strong> · ~${plan.totalKm} km total · finish around <strong>${plan.finish}</strong>
   `;
@@ -311,18 +299,38 @@ async function generate(){
       </div>
     `;
   }).join('');
+
+  const shareBtn = document.getElementById('shareCrawl');
+  if (shareBtn) {
+    shareBtn.onclick = ()=>{
+      const crawl = {
+        startTime,
+        dwell,
+        mode,
+        stops: plan.stops.map(p => ({
+          name: p.v.name,
+          lat: p.v.lat,
+          lng: p.v.lng,
+          website: p.v.tags && p.v.tags.website ? String(p.v.tags.website).replace(/^http:\/\//,'https://') : null,
+          amenity: p.v.tags && p.v.tags.amenity,
+          outdoor: !!(p.v.outdoor)
+        }))
+      };
+      const url = new URL(location.origin + location.pathname.replace('crawl-auto.html','crawl-share.html'));
+      url.searchParams.set('c', btoa(unescape(encodeURIComponent(JSON.stringify(crawl)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''));
+      window.open(url.toString(), '_blank');
+    };
+  }
 }
 
 document.getElementById('generate').addEventListener('click', generate);
 
-// set default start time to the next 5-min mark
 (function setDefaultTime(){
   const d = new Date();
   d.setMinutes(d.getMinutes() + (5 - (d.getMinutes()%5))%5, 0, 0);
   document.getElementById('startTime').value = d.toTimeString().slice(0,5);
 })();
 
-// locate helpers
 document.getElementById('locate').addEventListener('click', (e)=>{
   e.preventDefault();
   if (!navigator.geolocation) return alert('Geolocation not available.');
