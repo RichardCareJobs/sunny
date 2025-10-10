@@ -21,7 +21,7 @@
     @media (max-width: 960px){ .layout{grid-template-columns: 1fr; grid-template-rows: auto 1fr;} .panel{border-right:none;border-bottom:1px solid #eee} }
 
     .panel{padding:14px;border-right:1px solid #eee;overflow:auto}
-    .note{font-size:12px;color:var(--muted)}
+    .note{font-size:12px;color:#6b7280}
 
     .row{display:flex;gap:8px;flex-wrap:wrap}
     .field{margin:8px 0;flex:1 1 auto}
@@ -37,7 +37,7 @@
     .stop{display:flex;align-items:center;gap:8px;border:1px solid #eee;border-radius:12px;padding:8px;margin:8px 0;background:#fff}
     .handle{cursor:grab;font-size:18px;user-select:none}
     .title{flex:1 1 auto;font-weight:700}
-    .minor{color:var(--muted);font-size:12px}
+    .minor{color:#6b7280;font-size:12px}
     .del{background:#fff;border:1px solid #fee2e2;color:#b91c1c}
     .del:hover{background:#fee2e2}
 
@@ -54,7 +54,6 @@
   </div>
 
   <div class="layout">
-    <!-- LEFT: builder -->
     <div class="panel">
       <div class="row">
         <button id="locate" class="btn secondary">📍 Locate me</button>
@@ -91,17 +90,17 @@
         <button id="fit" class="btn secondary">Fit to route</button>
       </div>
 
+      <button id="shareCrawl" class="btn secondary" style="margin-top:8px;width:100%">Share crawl</button>
+
       <div class="sep"></div>
 
       <div id="itinerary"></div>
     </div>
 
-    <!-- RIGHT: map -->
     <div id="map"></div>
   </div>
 
 <script>
-/* ---------- Map setup ---------- */
 const TILE_URL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
 const TILE_ATTR = '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
 const OVERPASS = [
@@ -120,7 +119,6 @@ map.on('move', ()=> centerMarker.setLatLng(map.getCenter()));
 let allMarkers = L.layerGroup().addTo(map);
 let routeLayer = L.layerGroup().addTo(map);
 
-/* ---------- Utils ---------- */
 function toTitle(s=""){return s? s.replace(/\b\w/g,c=>c.toUpperCase()):"";}
 function looksOutdoor(tags = {}){
   const t = (x)=> (x||"").toLowerCase();
@@ -143,9 +141,7 @@ function parseStartTime(t){ if(!t){ const d=new Date(); return new Date(d.getFul
 function addMinutes(d,m){ return new Date(d.getTime()+m*60000); }
 function fmtTime(d){ return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
 
-/* ---------- Overpass ---------- */
 function buildQueryBBox(bbox){
-  // bbox: south,west,north,east
   return `[out:json][timeout:25];
   (
     node["amenity"~"^(pub|bar|biergarten)$"](${bbox});
@@ -185,8 +181,7 @@ function normalize(el){
   return { id:`${el.type}/${el.id}`, name: tags.name || tags.brand || toTitle(tags.operator) || 'Unnamed', lat, lng, tags, outdoor: looksOutdoor(tags) };
 }
 
-/* ---------- Selection & DnD ---------- */
-const selected = []; // array of venue objects in order
+const selected = [];
 
 function renderSelected(){
   const list = document.getElementById('selectedList');
@@ -201,7 +196,6 @@ function renderSelected(){
   document.getElementById('summary').textContent =
     selected.length ? `${selected.length} stop${selected.length>1?'s':''} selected` : 'No stops yet — click a pin to add.';
 
-  // wire remove
   list.querySelectorAll('[data-action="remove"]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       const id = btn.getAttribute('data-id');
@@ -210,7 +204,6 @@ function renderSelected(){
     });
   });
 
-  // drag & drop
   list.querySelectorAll('.stop').forEach(el=>{
     el.addEventListener('dragstart', e=>{
       e.dataTransfer.setData('text/plain', el.getAttribute('data-id'));
@@ -232,7 +225,6 @@ function renderSelected(){
   });
 }
 
-/* ---------- Map render ---------- */
 async function loadAndRenderMarkers(){
   allMarkers.clearLayers();
   const b = map.getBounds();
@@ -255,7 +247,6 @@ async function loadAndRenderMarkers(){
       </div>`;
     const m = L.marker([v.lat,v.lng], { icon: markerIcon }).addTo(allMarkers).bindPopup(html);
 
-    // popup button events (after open)
     m.on('popupopen', ()=>{
       const pop = m.getPopup().getElement();
       const addBtn = pop.querySelector('[data-add]');
@@ -277,7 +268,6 @@ async function loadAndRenderMarkers(){
   });
 }
 
-/* ---------- Itinerary / preview ---------- */
 function buildItinerary(){
   const dwell = Math.max(10, Math.min(120, parseInt(document.getElementById('dwell').value || '35', 10)));
   const mode = document.getElementById('mode').value;
@@ -317,7 +307,6 @@ function renderPreview(){
 
   const plan = buildItinerary();
 
-  // map line
   const poly = selected.map(v=> [v.lat, v.lng]);
   L.polyline(poly, { color:'#0f172a', weight:4, opacity:.9 }).addTo(routeLayer);
   selected.forEach((v, idx)=>{
@@ -327,7 +316,6 @@ function renderPreview(){
   });
   map.fitBounds(L.polyline(poly).getBounds(), { padding:[40,40] });
 
-  // itinerary
   const blocks = plan.parts.map(p=> {
     const v = p.v, website = v.tags.website ? String(v.tags.website).replace(/^http:\/\//,'https://') : null;
     return `
@@ -354,9 +342,28 @@ function renderPreview(){
   `;
 }
 
-/* ---------- Events ---------- */
+function parseStartTime(t){ if(!t){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),d.getDate(), d.getHours(), d.getMinutes()); }
+  const [hh,mm]=t.split(':').map(Number); const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),d.getDate(),hh,mm||0); }
+function addMinutes(d,m){ return new Date(d.getTime()+m*60000); }
+function fmtTime(d){ return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }
+
+function encodeCrawl(obj){
+  const json = JSON.stringify(obj);
+  return btoa(unescape(encodeURIComponent(json))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function stopFromVenue(v){
+  return {
+    name: v.name,
+    lat: v.lat,
+    lng: v.lng,
+    website: v.tags && v.tags.website ? String(v.tags.website).replace(/^http:\/\//,'https://') : null,
+    amenity: v.tags && v.tags.amenity,
+    outdoor: !!(v.outdoor)
+  };
+}
+
 document.getElementById('preview').addEventListener('click', renderPreview);
-document.getElementById('fit').addEventListener('click', ()=> {
+document.getElementById('fit').addEventListener('click', ()=>{
   if (!selected.length) return;
   const poly = L.polyline(selected.map(v=>[v.lat,v.lng]));
   map.fitBounds(poly.getBounds(), { padding:[40,40] });
@@ -381,7 +388,24 @@ document.getElementById('useCenter').addEventListener('click', (e)=>{
   loadAndRenderMarkers();
 });
 
-// default start time = next 5-minute mark
+document.getElementById('shareCrawl').addEventListener('click', ()=>{
+  if (!selected.length) { alert('Add at least one stop first.'); return; }
+  const startStr = document.getElementById('startTime').value;
+  const dwell = Math.max(10, Math.min(120, parseInt(document.getElementById('dwell').value || '35', 10)));
+  const mode = document.getElementById('mode').value;
+
+  const crawl = {
+    startTime: startStr,
+    dwell,
+    mode,
+    stops: selected.map(v => stopFromVenue(v))
+  };
+  const url = new URL(location.origin + location.pathname.replace('crawl-manual.html','crawl-share.html'));
+  url.searchParams.set('c', encodeCrawl(crawl));
+  window.open(url.toString(), '_blank');
+});
+
+// default start time
 (function setDefaultTime(){
   const d = new Date();
   d.setMinutes(d.getMinutes() + (5 - (d.getMinutes()%5))%5, 0, 0);
@@ -390,7 +414,6 @@ document.getElementById('useCenter').addEventListener('click', (e)=>{
 
 // initial load
 loadAndRenderMarkers();
-map.on('moveend', ()=>{ /* optional: live refresh could be too spammy */ });
 </script>
 </body>
 </html>
