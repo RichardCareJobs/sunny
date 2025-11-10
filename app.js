@@ -32,6 +32,9 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
 
+  let venueCountToast = null;
+  let venueCountTimer = null;
+
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   const markerIcon = L.icon({
     iconUrl: MARKER_ICON_URL,
@@ -291,17 +294,54 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     </div>`;
   }
 
+  function showVenueCount(count){
+    if(!map) return;
+    if(!venueCountToast){
+      venueCountToast=document.createElement("div");
+      venueCountToast.id="venue-count-toast";
+      Object.assign(venueCountToast.style,{
+        position:"absolute",
+        top:"16px",
+        left:"50%",
+        transform:"translateX(-50%)",
+        zIndex:"1000",
+        background:"#111",
+        color:"#fff",
+        padding:"8px 14px",
+        borderRadius:"999px",
+        fontWeight:"700",
+        fontSize:"14px",
+        boxShadow:"0 10px 25px rgba(15,23,42,0.25)",
+        opacity:"0",
+        transition:"opacity 150ms ease",
+        pointerEvents:"none"
+      });
+      map.getContainer().appendChild(venueCountToast);
+    }
+    venueCountToast.textContent=count===0?"No venues in view":count===1?"1 venue in view":`${count} venues in view`;
+    venueCountToast.style.opacity="1";
+    if(venueCountTimer) clearTimeout(venueCountTimer);
+    venueCountTimer=setTimeout(()=>{
+      if(venueCountToast){
+        venueCountToast.style.opacity="0";
+      }
+    },3000);
+  }
+
   function renderMarkers(){
     if(!markersLayer) return;
     markersLayer.clearLayers();
     const b=map.getBounds();
+    let visibleCount=0;
     Object.values(allVenues).forEach(v=>{
       if(!b.contains([v.lat,v.lng])) return;
+      visibleCount++;
       const weatherId=`weather-${v.id.replace(/[^a-z0-9]+/gi,'-')}`;
       const marker=L.marker([v.lat,v.lng],{icon:markerIcon}).addTo(markersLayer);
       marker.bindPopup(popupHTML(v,weatherId));
       marker.on("popupopen",()=>populateWeatherBadge(weatherId,v.lat,v.lng));
     });
+    showVenueCount(visibleCount);
   }
 
   function boot(){
