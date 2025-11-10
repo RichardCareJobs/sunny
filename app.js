@@ -32,6 +32,9 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
 
+  let openVenueId = null;
+  let isRenderingMarkers = false;
+
   let venueCountToast = null;
   let venueCountTimer = null;
 
@@ -330,6 +333,9 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
 
   function renderMarkers(){
     if(!markersLayer) return;
+    const reopenVenueId=openVenueId;
+    let reopenMarker=null;
+    isRenderingMarkers=true;
     markersLayer.clearLayers();
     const b=map.getBounds();
     let visibleCount=0;
@@ -339,9 +345,23 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
       const weatherId=`weather-${v.id.replace(/[^a-z0-9]+/gi,'-')}`;
       const marker=L.marker([v.lat,v.lng],{icon:markerIcon}).addTo(markersLayer);
       marker.bindPopup(popupHTML(v,weatherId));
-      marker.on("popupopen",()=>populateWeatherBadge(weatherId,v.lat,v.lng));
+      marker.on("popupopen",()=>{
+        openVenueId=v.id;
+        populateWeatherBadge(weatherId,v.lat,v.lng);
+      });
+      marker.on("popupclose",()=>{
+        if(isRenderingMarkers) return;
+        if(openVenueId===v.id) openVenueId=null;
+      });
+      if(reopenVenueId&&reopenVenueId===v.id) reopenMarker=marker;
     });
+    isRenderingMarkers=false;
     showVenueCount(visibleCount);
+    if(reopenVenueId&&reopenMarker){
+      reopenMarker.openPopup();
+    } else if(reopenVenueId){
+      openVenueId=null;
+    }
   }
 
   function boot(){
