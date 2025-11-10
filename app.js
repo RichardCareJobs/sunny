@@ -138,14 +138,62 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   function normalizeElement(el){
     const tags=el.tags||{}; let lat=el.lat,lng=el.lon; if((!lat||!lng)&&el.center){ lat=el.center.lat; lng=el.center.lon; }
     if(!lat||!lng) return null; const id=`${el.type}/${el.id}`; const name=tags.name||tags.brand||toTitle(tags.operator)||(tags.amenity?toTitle(tags.amenity):"Unnamed");
-    return { id,name,lat,lng,tags,hasOutdoor:looksOutdoor(tags),source:"osm" };
+    if(isClosed(tags)) return null;
+    if(lacksOutdoor(tags)) return null;
+    if(isDryVenue(tags)) return null;
+    return { id,name,lat,lng,tags,hasOutdoor:hasOutdoorHints(tags),source:"osm" };
   }
-  function looksOutdoor(tags={}){
-    const t=x=>(x||"").toLowerCase(); const name=t(tags.name); const desc=t(tags.description||tags.note||"");
-    const outdoor=tags.outdoor_seating==="yes"||tags.terrace==="yes"||tags.roof_terrace==="yes"||tags.garden==="yes"||tags.patio==="yes";
-    const nameHints=/beer ?garden|courtyard|terrace|rooftop|roof ?top|outdoor|al ?fresco/.test(name);
-    const textHints=/courtyard|terrace|rooftop|beer ?garden|patio|alfresco/.test(desc);
-    return !!(outdoor||nameHints||textHints);
+  function hasOutdoorHints(tags={}){
+    const t=x=>(x||"").toLowerCase();
+    const name=t(tags.name);
+    const desc=t(tags.description||tags.note||"");
+    const outdoorExplicit=["yes","limited","seasonal"].includes(t(tags.outdoor_seating))||
+      t(tags.terrace)==="yes"||t(tags.roof_terrace)==="yes"||t(tags.garden)==="yes"||
+      t(tags.patio)==="yes"||t(tags.deck)==="yes"||t(tags.outdoor)==="yes";
+    const nameHints=/beer ?garden|courtyard|terrace|rooftop|roof ?top|outdoor|al ?fresco|alfresco/.test(name);
+    const textHints=/courtyard|terrace|rooftop|beer ?garden|patio|alfresco|sun deck/.test(desc);
+    const seatHints=t(tags["seating:outdoor"])==="yes"||t(tags["seating:covered"])==="yes"||t(tags["seating:terrace"])==="yes";
+    return !!(outdoorExplicit||nameHints||textHints||seatHints);
+  }
+  function lacksOutdoor(tags={}){
+    const amenity=(tags.amenity||"").toLowerCase();
+    if(!shouldRequireOutdoor(amenity)) return false;
+    const t=x=>(x||"").toLowerCase();
+    const flag=t(tags.outdoor_seating);
+    if(flag==="no"||flag==="none") return true;
+    if(t(tags["seating:outdoor"])==="no") return true;
+    if(/indoor only|inside only|no outdoor/i.test(tags.description||"")) return true;
+    return false;
+  }
+  function isDryVenue(tags={}){
+    const amenity=(tags.amenity||"").toLowerCase();
+    if(!shouldRequireAlcohol(amenity,tags)) return false;
+    const t=x=>(x||"").toLowerCase();
+    const alcoholFields=[tags.alcohol,tags["serves:alcohol"],tags["alcohol:beer"],tags["drink:beer"],tags["drink:wine"],tags["drink:cocktail"],tags["drink:spirits"],tags["drink:liquor"],tags["drink:alcohol"],tags["alcohol:spirits"]];
+    if(alcoholFields.some(v=>["no","none","0"].includes(t(v)))) return true;
+    if(t(tags.diet)==="no_alcohol"||t(tags["diet:alcohol_free"])==="yes") return true;
+    if(["restaurant","cafe","fast_food","food_court"].includes(amenity)&&t(tags.licensed)==="no") return true;
+    if(t(tags.alcohol)==="permissive"||t(tags.alcohol)==="customers") return false;
+    return false;
+  }
+  function shouldRequireOutdoor(amenity){
+    return ["biergarten","bar","pub","restaurant","cafe","fast_food","food_court","nightclub","ice_cream","brewery"].includes(amenity);
+  }
+  function shouldRequireAlcohol(amenity,tags={}){
+    if(["biergarten","bar","pub","nightclub","brewery","microbrewery"].includes(amenity)) return true;
+    if(amenity==="restaurant"||amenity==="cafe") return hasOutdoorHints(tags);
+    return false;
+  }
+  function isClosed(tags={}){
+    const t=x=>(x||"").toLowerCase();
+    if(t(tags.disused)==="yes"||t(tags.abandoned)==="yes"||t(tags.closed)==="yes") return true;
+    if(tags["disused:amenity"]||tags["abandoned:amenity"]||tags["was:amenity"]) return true;
+    const op=t(tags.operational_status);
+    if(op&&/closed|temporarily closed|permanently closed/.test(op)) return true;
+    const oh=t(tags.opening_hours||"").trim();
+    if(/^\s*closed\s*$/i.test(oh)) return true;
+    if(t(tags["contact:status"])==="closed") return true;
+    return false;
   }
   function mergeVenues(list){ let added=0; for(const v of list){ if(!v) continue; if(!allVenues[v.id]){ allVenues[v.id]=v; added++; } else { allVenues[v.id]={...allVenues[v.id],...v}; } } if(added) saveLocal(VENUE_CACHE_KEY,allVenues); }
 
