@@ -28,6 +28,11 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   let map, markersLayer;
   let allVenues = {};
   let userLocation = null;
+  let locationWatchId = null;
+  let locationWatchTimer = null;
+
+  const MAX_LOCATION_WAIT_MS = 15000;
+  const MAX_LOCATION_ACCURACY_METERS = 50000;
 
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
@@ -58,14 +63,29 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2;
     const C=2*Math.atan2(Math.sqrt(A),Math.sqrt(1-A)); return R*C; }
   function formatDistanceKm(km){ return km<1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`; }
+  function clearLocationWatch(){
+    if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
+    if(locationWatchTimer){ clearTimeout(locationWatchTimer); locationWatchTimer=null; }
+  }
   function requestUserLocationOnce(){
     if(userLocation!==null) return;
     if(!navigator.geolocation){ userLocation=false; return; }
-    navigator.geolocation.getCurrentPosition(
-      p=>{ userLocation={lat:p.coords.latitude,lng:p.coords.longitude}; },
-      ()=>{ userLocation=false; },
-      {enableHighAccuracy:true,timeout:8000,maximumAge:600000}
-    );
+    const opts={enableHighAccuracy:true,timeout:8000,maximumAge:0};
+    const handleFailure=()=>{ clearLocationWatch(); if(userLocation===null) userLocation=false; };
+    const handleSuccess=(p)=>{
+      if(!p||!p.coords){ handleFailure(); return; }
+      const {latitude,longitude,accuracy}=p.coords;
+      if(typeof accuracy==="number"&&accuracy>MAX_LOCATION_ACCURACY_METERS){
+        if(locationWatchId===null&&navigator.geolocation.watchPosition){
+          locationWatchId=navigator.geolocation.watchPosition(handleSuccess,handleFailure,{enableHighAccuracy:true,timeout:20000,maximumAge:0});
+          locationWatchTimer=setTimeout(()=>{ if(userLocation===null) handleFailure(); },MAX_LOCATION_WAIT_MS);
+        }
+        return;
+      }
+      clearLocationWatch();
+      userLocation={lat:latitude,lng:longitude};
+    };
+    navigator.geolocation.getCurrentPosition(handleSuccess,handleFailure,opts);
   }
 
   // Sun
