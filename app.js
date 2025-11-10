@@ -75,7 +75,55 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     return { azimuthDeg:(azimuth*deg+180)%360, altitudeDeg:altitude*deg };
   }
   function sunBadge(lat,lng){ const alt=sunPosition(lat,lng).altitudeDeg; if(alt>=45) return{icon:"☀️",label:"Full sun"}; if(alt>=15) return{icon:"🌤️",label:"Partial sun"}; return{icon:"⛅",label:"Low sun"}; }
-  const compass=a=>["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"][Math.round(a/22.5)%16];
+
+  const WEATHER_CACHE_TTL_MS = 1000 * 60 * 10;
+  const weatherCache = new Map();
+  async function fetchWeather(lat,lng){
+    const key = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+    const cached = weatherCache.get(key);
+    if (cached && Date.now() - cached.t < WEATHER_CACHE_TTL_MS) return cached.v;
+    const params = new URLSearchParams({
+      latitude: lat,
+      longitude: lng,
+      current: "temperature_2m,weather_code"
+    });
+    try {
+      const res = await fetch(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
+      if (!res.ok) throw new Error("Weather request failed");
+      const json = await res.json();
+      const current = json && json.current;
+      if (!current) throw new Error("Weather payload missing current data");
+      const temp = typeof current.temperature_2m === "number" ? Math.round(current.temperature_2m) : null;
+      const code = typeof current.weather_code === "number" ? current.weather_code : null;
+      const icon = weatherIconForCode(code);
+      const value = { tempC: temp, icon: icon.icon, label: icon.label };
+      weatherCache.set(key, { v: value, t: Date.now() });
+      return value;
+    } catch (err) {
+      console.warn("Weather fetch failed", err);
+      const fallback = { tempC: null, icon: "☁️", label: "Weather unavailable" };
+      weatherCache.set(key, { v: fallback, t: Date.now() });
+      return fallback;
+    }
+  }
+  function weatherIconForCode(code){
+    if (code === 0 || code === 1) return { icon: "☀️", label: "Sunny" };
+    if (code === 2 || code === 3) return { icon: "🌤️", label: "Partly cloudy" };
+    return { icon: "☁️", label: "Cloudy" };
+  }
+  async function populateWeatherBadge(id,lat,lng){
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = "Loading weather…";
+    const data = await fetchWeather(lat,lng);
+    const target = document.getElementById(id);
+    if (!target) return;
+    if (data && data.tempC !== null) {
+      target.innerHTML = `<span>${data.icon}</span><span>${data.tempC}&nbsp;°C</span>`;
+    } else {
+      target.innerHTML = `<span>${data.icon}</span><span>${data.label}</span>`;
+    }
+  }
 
   // Hours
   const DAY_MAP=["Su","Mo","Tu","We","Th","Fr","Sa"];
@@ -217,9 +265,9 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     catch(e){ console.error("Overpass error:",e); }
   }
 
-  function popupHTML(v){
+  function popupHTML(v,weatherId){
     const tags=v.tags||{}; const kind=toTitle(tags.amenity||tags.tourism||"");
-    const sun=sunBadge(v.lat,v.lng); const s=sunPosition(v.lat,v.lng);
+    const sun=sunBadge(v.lat,v.lng);
     const open=parseOpenStatus(tags.opening_hours); const showOpen=open.status!=="Unknown";
     const website=(tags.website||tags.contact_website||tags.url)?String(tags.website||tags.contact_website||tags.url).replace(/^http:\/\//,'https://'):null;
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
@@ -231,9 +279,10 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
         <span style="display:inline-flex;align-items:center;gap:6px;background:#fff7e6;border:1px solid #fde68a;color:#b45309;border-radius:999px;padding:4px 8px;font-size:12px;">
           <span>${sun.icon}</span><span>${sun.label}</span>
         </span>
+        <span id="${weatherId}" style="display:inline-flex;align-items:center;gap:6px;background:#eef2ff;border:1px solid #c7d2fe;color:#312e81;border-radius:999px;padding:4px 8px;font-size:12px;">Loading weather…</span>
         ${showOpen ? `<span style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 8px;font-size:12px;${open.tone==='good'?'background:#e8f7ef;border:1px solid #bbf7d0;color:#166534':open.tone==='warn'?'background:#fff1f2;border:1px solid #fecdd3;color:#9f1239':open.tone==='info'?'background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8':'background:#f3f4f6;border:1px solid #e5e7eb;color:#4b5563'}">${open.status}</span>` : ''}
       </div>
-      <div style="color:#6b7280;font-size:12px;margin-bottom:8px">Sun now: ${compass(s.azimuthDeg)} (${s.azimuthDeg.toFixed(0)}°) · alt ${s.altitudeDeg.toFixed(0)}°</div>
+      <div style="color:#6b7280;font-size:12px;margin-bottom:8px">Current sun: ${sun.label}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}&query_place_id=" style="background:#111;color:#fff;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Directions</a>
         <a target="_blank" rel="noopener" href="https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}" style="background:#f1f5f9;color:#111;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Uber</a>
@@ -248,8 +297,10 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     const b=map.getBounds();
     Object.values(allVenues).forEach(v=>{
       if(!b.contains([v.lat,v.lng])) return;
+      const weatherId=`weather-${v.id.replace(/[^a-z0-9]+/gi,'-')}`;
       const marker=L.marker([v.lat,v.lng],{icon:markerIcon}).addTo(markersLayer);
-      marker.bindPopup(popupHTML(v));
+      marker.bindPopup(popupHTML(v,weatherId));
+      marker.on("popupopen",()=>populateWeatherBadge(weatherId,v.lat,v.lng));
     });
   }
 
