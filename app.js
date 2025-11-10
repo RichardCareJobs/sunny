@@ -310,7 +310,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
       </div>
       <div style="color:#6b7280;font-size:12px;margin-bottom:8px">Current sun: ${sun.label}</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <a target="_blank" rel="noopener" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name)}&query_place_id=" style="background:#111;color:#fff;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Directions</a>
+        <a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}" style="background:#111;color:#fff;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Directions</a>
         <a target="_blank" rel="noopener" href="https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}" style="background:#f1f5f9;color:#111;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Uber</a>
         ${website?`<a target="_blank" rel="noopener" href="${website}" style="background:#fff;border:1px solid #e5e7eb;color:#0a66c2;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Website</a>`:''}
       </div>
