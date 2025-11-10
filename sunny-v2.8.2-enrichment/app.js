@@ -16,6 +16,10 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { 
 
 // === Enrichment cache & fetch ===
 
+const ENRICH_ENDPOINT = (window.SUNNY_ENRICH_ENDPOINT || '').trim();
+const ENRICH_ENABLED = ENRICH_ENDPOINT.length > 0;
+let loggedEnrichDisabled = false;
+
 function labelFromEnrichedHours(hoursObj){
   if (!hoursObj) return null;
   if (typeof hoursObj.open_now === 'boolean') return hoursObj.open_now ? 'Open now' : 'Closed';
@@ -38,7 +42,21 @@ function getEnrichCache(id){
 function setEnrichCache(id, data){
   try { localStorage.setItem('sunny:enrich:' + id, JSON.stringify({ ts: Date.now(), data })); } catch {}
 }
+function buildEnrichUrl(base, params){
+  const hasQuery = base.includes('?');
+  const needsSeparator = hasQuery ? !(base.endsWith('?') || base.endsWith('&')) : true;
+  const sep = hasQuery ? (needsSeparator ? '&' : '') : '?';
+  return base + sep + params.toString();
+}
+
 async function enrichVenue(v){
+  if (!ENRICH_ENABLED) {
+    if (!loggedEnrichDisabled) {
+      console.info('Enrichment disabled: no SUNNY_ENRICH_ENDPOINT configured.');
+      loggedEnrichDisabled = true;
+    }
+    return null;
+  }
   if (!(location.protocol === 'http:' || location.protocol === 'https:')) { console.debug('Enrich skipped (not http/https)'); return null; }
 
   const cached = getEnrichCache(v.id);
@@ -47,8 +65,9 @@ async function enrichVenue(v){
   if (v.wikidata) params.set('wikidata', v.wikidata);
   if (v.id) params.set('osm_id', v.id);
   try {
-    console.debug('Enrich fetch →', '/api/enrich?' + params.toString());
-    const res = await fetch('/api/enrich?' + params.toString(), { headers: { 'Accept':'application/json' } });
+    const url = buildEnrichUrl(ENRICH_ENDPOINT, params);
+    console.debug('Enrich fetch →', url);
+    const res = await fetch(url, { headers: { 'Accept':'application/json' } });
     if (!res.ok) throw new Error('enrich fail');
     const json = await res.json();
     setEnrichCache(v.id, json);
