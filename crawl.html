@@ -4,22 +4,47 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Plan a pub crawl — Sunny</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
   <style>
-    :root { --bg:#fff; --fg:#111; --muted:#6b7280; }
+    :root { --bg:#fff; --fg:#0f172a; --muted:#6b7280; --border:#e5e7eb; --accent:#0f172a; }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: var(--fg); background: var(--bg); }
-    .topbar { position: sticky; top: 0; z-index: 1000; display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid #eee; background: #fff; }
-    .topbar a { color: #111; text-decoration: none; font-weight: 700; }
-    .topbar h1 { margin: 0; font-size: 1.1rem; }
-    .content { padding: 16px; }
-    .intro { color: var(--muted); margin: 4px 0 12px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
-    .card { border: 1px solid #eee; border-radius: 14px; padding: 14px; background: #fff; box-shadow: 0 10px 24px rgba(0,0,0,.05); }
-    .card h2 { margin: .2rem 0 .4rem; font-size: 1rem; }
-    .card p { margin: .25rem 0; color: var(--muted); }
-    .cta { display: inline-flex; align-items: center; gap: .5rem; padding: 10px 12px; border-radius: 10px; background: #0f172a; color: #fff; text-decoration: none; font-weight: 800; }
-    .footnote { margin-top: 16px; color: var(--muted); font-size: 12px; }
+    body { display: flex; flex-direction: column; }
+    .topbar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid var(--border); background: #fff; }
+    .topbar a { color: var(--fg); text-decoration: none; font-weight: 700; }
+    .topbar h1 { margin: 0; font-size: 1.05rem; }
+
+    .wrapper { flex: 1; display: flex; justify-content: center; padding: 12px 12px 24px; }
+    .card { width: min(600px, 100%); background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 16px; box-shadow: 0 14px 28px rgba(0,0,0,0.05); display: flex; flex-direction: column; gap: 10px; }
+
+    .step-indicator { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+    .pill { border-radius: 999px; padding: 6px 12px; border: 1px solid var(--border); color: var(--muted); font-weight: 700; font-size: 13px; }
+    .pill.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+    .step { display: none; flex-direction: column; gap: 12px; min-height: 220px; }
+    .step.active { display: flex; }
+    .step h2 { margin: 0; font-size: 1.2rem; }
+    .step p { margin: 0; color: var(--muted); }
+
+    .option { border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; gap: 10px; align-items: flex-start; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+    .option:hover { border-color: #cbd5e1; box-shadow: 0 8px 20px rgba(0,0,0,0.04); }
+    .option input { margin-top: 4px; }
+    .option label { display: flex; gap: 10px; flex: 1; cursor: pointer; align-items: flex-start; }
+    .option strong { display: block; }
+    .muted { color: var(--muted); }
+
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label { font-weight: 700; }
+    .field input, .field select { padding: 12px; border-radius: 12px; border: 1px solid var(--border); font-size: 1rem; }
+
+    .controls { display: flex; justify-content: space-between; gap: 8px; margin-top: auto; }
+    .btn { appearance: none; border: none; padding: 12px 14px; border-radius: 12px; font-weight: 800; cursor: pointer; font-size: 1rem; }
+    .btn.secondary { background: #f1f5f9; color: var(--fg); }
+    .btn.primary { background: var(--accent); color: #fff; flex: 1; }
+    .btn[disabled] { opacity: .5; cursor: not-allowed; }
+
+    .summary { border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+    .summary-row { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+    .summary-row span:last-child { font-weight: 700; }
   </style>
 </head>
 <body>
@@ -28,28 +53,174 @@
     <h1>Plan a pub crawl</h1>
   </div>
 
-  <div class="content">
-    <p class="intro">Pick how you want to plan your crawl.</p>
-
-    <div class="cards">
-      <div class="card">
-        <h2>Let us create one near you</h2>
-        <p>Tell us how long you’ve got and how many stops. We’ll optimise the route.</p>
-        <!-- Link straight to the auto planner -->
-        <a class="cta" href="crawl-auto.html">Start</a>
+  <div class="wrapper">
+    <div class="card">
+      <div class="step-indicator">
+        <span class="pill" id="pill">Step 1 of 5</span>
+        <span class="muted">Tap next to keep going</span>
       </div>
 
-      <div class="card">
-        <h2>Create your own</h2>
-        <p>Add pubs from the map and reorder them. Share a link with friends.</p>
-        <!-- Placeholder for next step; safe no-op or point to future page -->
-        <a class="cta" href="crawl-manual.html">Start</a>
+      <div class="step active" data-step="1">
+        <h2>Where do you want to start?</h2>
+        <p>Pick how we should choose stop one.</p>
+        <div class="option">
+          <input type="radio" id="start-near" name="start" value="nearest" checked>
+          <label for="start-near"><span><strong>Nearest pub</strong><span class="muted">We’ll use your location.</span></span></label>
+        </div>
+        <div class="option">
+          <input type="radio" id="start-specific" name="start" value="specific">
+          <label for="start-specific"><span><strong>Specific pub</strong><span class="muted">Type the pub and we’ll pin it as stop one.</span></span></label>
+        </div>
+        <div class="field" id="specificField" style="display:none;">
+          <label for="specificInput">Pub name</label>
+          <input id="specificInput" type="text" placeholder="e.g. The Royal Oak">
+        </div>
+        <div class="option">
+          <input type="radio" id="start-postcode" name="start" value="postcode">
+          <label for="start-postcode"><span><strong>Input a postcode</strong><span class="muted">We’ll suggest a popular pub there.</span></span></label>
+        </div>
+        <div class="field" id="postcodeField" style="display:none;">
+          <label for="postcodeInput">Postcode</label>
+          <input id="postcodeInput" type="text" inputmode="text" placeholder="e.g. SW1A 1AA">
+        </div>
+      </div>
+
+      <div class="step" data-step="2">
+        <h2>How many pubs do you want to visit?</h2>
+        <p>Enter a number — we’ll shape the route around it.</p>
+        <div class="field">
+          <label for="countInput">Number of stops</label>
+          <input id="countInput" type="number" min="2" max="10" value="4" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="step" data-step="3">
+        <h2>How long do you want to spend at each pub?</h2>
+        <p>Set your average dwell time.</p>
+        <div class="field">
+          <label for="dwellInput">Minutes per pub</label>
+          <input id="dwellInput" type="number" min="10" max="180" value="35" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="step" data-step="4">
+        <h2>What time do you want to start?</h2>
+        <p>Choose your kick-off time.</p>
+        <div class="field">
+          <label for="timeInput">Start time</label>
+          <input id="timeInput" type="time">
+        </div>
+      </div>
+
+      <div class="step" data-step="5">
+        <h2>How do you want to move between pubs?</h2>
+        <p>Pick the travel mode that fits your night.</p>
+        <div class="option">
+          <input type="radio" id="mode-walk" name="mode" value="Walk" checked>
+          <label for="mode-walk"><span><strong>Walk</strong><span class="muted">Keep it close and casual.</span></span></label>
+        </div>
+        <div class="option">
+          <input type="radio" id="mode-ride" name="mode" value="Taxi / ride share">
+          <label for="mode-ride"><span><strong>Taxi / ride share</strong><span class="muted">Hop between spots faster.</span></span></label>
+        </div>
+        <div class="option">
+          <input type="radio" id="mode-transit" name="mode" value="Public transport">
+          <label for="mode-transit"><span><strong>Public transport</strong><span class="muted">Use trains, buses, or trams.</span></span></label>
+        </div>
+        <div class="summary" aria-live="polite">
+          <div class="summary-row"><span>Starting point</span><span id="summaryStart">Nearest pub</span></div>
+          <div class="summary-row"><span>Stops</span><span id="summaryStops">4 pubs</span></div>
+          <div class="summary-row"><span>Time per pub</span><span id="summaryDwell">35 mins</span></div>
+          <div class="summary-row"><span>Start time</span><span id="summaryTime">Not set</span></div>
+          <div class="summary-row"><span>Travel mode</span><span id="summaryMode">Walk</span></div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="btn secondary" id="back">Back</button>
+        <button class="btn primary" id="next">Next</button>
       </div>
     </div>
-
-    <p class="footnote">We’ll wire up the DIY builder next.</p>
   </div>
 
-  <!-- No script here on purpose (nothing intercepts clicks) -->
+  <script>
+    const steps = Array.from(document.querySelectorAll('.step'));
+    const pill = document.getElementById('pill');
+    const nextBtn = document.getElementById('next');
+    const backBtn = document.getElementById('back');
+    const specificField = document.getElementById('specificField');
+    const postcodeField = document.getElementById('postcodeField');
+    const summaryEls = {
+      start: document.getElementById('summaryStart'),
+      stops: document.getElementById('summaryStops'),
+      dwell: document.getElementById('summaryDwell'),
+      time: document.getElementById('summaryTime'),
+      mode: document.getElementById('summaryMode')
+    };
+    let current = 0;
+
+    function showStep(index){
+      steps.forEach((step,i)=> step.classList.toggle('active', i === index));
+      pill.textContent = `Step ${index + 1} of ${steps.length}`;
+      backBtn.disabled = index === 0;
+      nextBtn.textContent = index === steps.length - 1 ? 'Plan my crawl' : 'Next';
+      current = index;
+    }
+
+    function updateStartInputs(){
+      const value = document.querySelector('input[name="start"]:checked')?.value;
+      specificField.style.display = value === 'specific' ? 'flex' : 'none';
+      postcodeField.style.display = value === 'postcode' ? 'flex' : 'none';
+    }
+
+    function updateSummary(){
+      const startValue = document.querySelector('input[name="start"]:checked')?.value;
+      const startLabel = startValue === 'specific'
+        ? (document.getElementById('specificInput').value.trim() || 'Specific pub')
+        : startValue === 'postcode'
+          ? (document.getElementById('postcodeInput').value.trim() ? `Postcode: ${document.getElementById('postcodeInput').value.trim()}` : 'Postcode')
+          : 'Nearest pub';
+      summaryEls.start.textContent = startLabel;
+      const stops = document.getElementById('countInput').value || '—';
+      summaryEls.stops.textContent = `${stops} pub${stops === '1' ? '' : 's'}`;
+      const dwell = document.getElementById('dwellInput').value || '—';
+      summaryEls.dwell.textContent = `${dwell} mins`;
+      const time = document.getElementById('timeInput').value;
+      summaryEls.time.textContent = time ? time : 'Not set';
+      const mode = document.querySelector('input[name="mode"]:checked')?.value || 'Walk';
+      summaryEls.mode.textContent = mode;
+    }
+
+    nextBtn.addEventListener('click', ()=>{
+      if (current < steps.length - 1) {
+        showStep(current + 1);
+        updateSummary();
+      } else {
+        updateSummary();
+        nextBtn.textContent = 'Saved';
+        nextBtn.disabled = true;
+        setTimeout(()=>{ nextBtn.textContent = 'Plan my crawl'; nextBtn.disabled = false; }, 1200);
+      }
+    });
+
+    backBtn.addEventListener('click', ()=>{
+      if (current > 0) showStep(current - 1);
+    });
+
+    document.querySelectorAll('input[name="start"]').forEach(el=> el.addEventListener('change', ()=>{
+      updateStartInputs();
+      updateSummary();
+    }));
+
+    ['specificInput','postcodeInput','countInput','dwellInput','timeInput'].forEach(id=>{
+      const el = document.getElementById(id);
+      el.addEventListener('input', updateSummary);
+    });
+
+    document.querySelectorAll('input[name="mode"]').forEach(el=> el.addEventListener('change', updateSummary));
+
+    updateStartInputs();
+    updateSummary();
+  </script>
 </body>
 </html>
