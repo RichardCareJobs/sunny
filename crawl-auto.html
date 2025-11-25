@@ -331,6 +331,28 @@ document.getElementById('generate').addEventListener('click', generate);
   document.getElementById('startTime').value = d.toTimeString().slice(0,5);
 })();
 
+(function hydrateFromWizard(){
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has('autostart')) return;
+
+  const stops = params.get('stops');
+  if (stops) document.getElementById('stops').value = stops;
+
+  const dwell = params.get('dwell');
+  if (dwell) document.getElementById('dwell').value = dwell;
+
+  const time = params.get('time');
+  if (time) document.getElementById('startTime').value = time;
+
+  const mode = params.get('mode');
+  const modeValue = mode === 'walk' || mode === 'ride' ? mode : mode === 'transit' ? 'ride' : null;
+  if (modeValue) {
+    document.getElementById('mode').value = modeValue;
+  }
+
+  setTimeout(generate, 50);
+})();
+
 document.getElementById('locate').addEventListener('click', (e)=>{
   e.preventDefault();
   if (!navigator.geolocation) return alert('Geolocation not available.');
