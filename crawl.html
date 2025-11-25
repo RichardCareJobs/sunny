@@ -83,7 +83,6 @@
           <label for="postcodeInput">Postcode</label>
           <input id="postcodeInput" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" aria-describedby="postcodeHelp" placeholder="e.g. 2000">
           <div id="postcodeHelp" class="muted" aria-live="polite">Enter a 4-digit Australian postcode (e.g. 2000).</div>
-          <input id="postcodeInput" type="text" inputmode="text" placeholder="e.g. SW1A 1AA">
         </div>
       </div>
 
@@ -127,15 +126,6 @@
         </div>
         <div class="option">
           <input type="radio" id="mode-transit" name="mode" value="transit">
-          <input type="radio" id="mode-walk" name="mode" value="Walk" checked>
-          <label for="mode-walk"><span><strong>Walk</strong><span class="muted">Keep it close and casual.</span></span></label>
-        </div>
-        <div class="option">
-          <input type="radio" id="mode-ride" name="mode" value="Taxi / ride share">
-          <label for="mode-ride"><span><strong>Taxi / ride share</strong><span class="muted">Hop between spots faster.</span></span></label>
-        </div>
-        <div class="option">
-          <input type="radio" id="mode-transit" name="mode" value="Public transport">
           <label for="mode-transit"><span><strong>Public transport</strong><span class="muted">Use trains, buses, or trams.</span></span></label>
         </div>
         <div class="summary" aria-live="polite">
@@ -214,7 +204,8 @@
         dwell: document.getElementById('dwellInput').value,
         time: document.getElementById('timeInput').value,
         mode: modeValue,
-        autostart: '1'
+        autostart: '1',
+        autoshare: '1'
       });
 
       nextBtn.textContent = 'Planning...';
