@@ -81,7 +81,7 @@
         </div>
         <div class="field" id="postcodeField" style="display:none;">
           <label for="postcodeInput">Postcode</label>
-          <input id="postcodeInput" type="text" inputmode="text" placeholder="e.g. 2000">
+          <input id="postcodeInput" type="text" inputmode="text" placeholder="e.g. SW1A 1AA">
         </div>
       </div>
 
@@ -191,30 +191,15 @@
       summaryEls.mode.textContent = mode;
     }
 
-    function planCrawl(){
-      const startValue = document.querySelector('input[name="start"]:checked')?.value || 'nearest';
-      const params = new URLSearchParams({
-        start: startValue,
-        specific: document.getElementById('specificInput').value.trim(),
-        postcode: document.getElementById('postcodeInput').value.trim(),
-        stops: document.getElementById('countInput').value,
-        dwell: document.getElementById('dwellInput').value,
-        time: document.getElementById('timeInput').value,
-        mode: document.querySelector('input[name="mode"]:checked')?.value || 'Walk'
-      });
-
-      nextBtn.textContent = 'Planning...';
-      nextBtn.disabled = true;
-      setTimeout(()=>{ window.location.href = `crawl-auto.html?${params.toString()}`; }, 650);
-    }
-
     nextBtn.addEventListener('click', ()=>{
       if (current < steps.length - 1) {
         showStep(current + 1);
         updateSummary();
       } else {
         updateSummary();
-        planCrawl();
+        nextBtn.textContent = 'Saved';
+        nextBtn.disabled = true;
+        setTimeout(()=>{ nextBtn.textContent = 'Plan my crawl'; nextBtn.disabled = false; }, 1200);
       }
     });
 
