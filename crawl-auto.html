@@ -231,6 +231,11 @@ function encodeCrawl(obj){
   const json = JSON.stringify(obj);
   return btoa(unescape(encodeURIComponent(json))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
+function buildShareUrl(crawl){
+  const url = new URL(location.origin + location.pathname.replace('crawl-auto.html','crawl-share.html'));
+  url.searchParams.set('c', encodeCrawl(crawl));
+  return url.toString();
+}
 
 async function generate(){
   document.getElementById('itineraryIntro').textContent = 'Finding venues near the map center…';
@@ -254,6 +259,19 @@ async function generate(){
   }
 
   const plan = planRoute({lat:center.lat,lng:center.lng}, venues, stops, mode, dwell, startTime);
+  const crawl = {
+    startTime,
+    dwell,
+    mode,
+    stops: plan.stops.map(p => ({
+      name: p.v.name,
+      lat: p.v.lat,
+      lng: p.v.lng,
+      website: p.v.tags && p.v.tags.website ? String(p.v.tags.website).replace(/^http:\/\//,'https://') : null,
+      amenity: p.v.tags && p.v.tags.amenity,
+      outdoor: !!(p.v.outdoor)
+    }))
+  };
 
   const poly = [];
   let idx = 1;
@@ -302,25 +320,10 @@ async function generate(){
 
   const shareBtn = document.getElementById('shareCrawl');
   if (shareBtn) {
-    shareBtn.onclick = ()=>{
-      const crawl = {
-        startTime,
-        dwell,
-        mode,
-        stops: plan.stops.map(p => ({
-          name: p.v.name,
-          lat: p.v.lat,
-          lng: p.v.lng,
-          website: p.v.tags && p.v.tags.website ? String(p.v.tags.website).replace(/^http:\/\//,'https://') : null,
-          amenity: p.v.tags && p.v.tags.amenity,
-          outdoor: !!(p.v.outdoor)
-        }))
-      };
-      const url = new URL(location.origin + location.pathname.replace('crawl-auto.html','crawl-share.html'));
-      url.searchParams.set('c', btoa(unescape(encodeURIComponent(JSON.stringify(crawl)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''));
-      window.open(url.toString(), '_blank');
-    };
+    shareBtn.onclick = ()=> window.open(buildShareUrl(crawl), '_blank');
   }
+
+  return { plan, crawl };
 }
 
 document.getElementById('generate').addEventListener('click', generate);
@@ -333,7 +336,9 @@ document.getElementById('generate').addEventListener('click', generate);
 
 (function hydrateFromWizard(){
   const params = new URLSearchParams(window.location.search);
-  if (!params.has('autostart')) return;
+  const autoStart = params.has('autostart');
+  const autoShare = params.get('autoshare') === '1';
+  if (!autoStart) return;
 
   const stops = params.get('stops');
   if (stops) document.getElementById('stops').value = stops;
@@ -350,7 +355,12 @@ document.getElementById('generate').addEventListener('click', generate);
     document.getElementById('mode').value = modeValue;
   }
 
-  setTimeout(generate, 50);
+  setTimeout(async ()=>{
+    const result = await generate();
+    if (autoShare && result && result.crawl) {
+      window.location.href = buildShareUrl(result.crawl);
+    }
+  }, 50);
 })();
 
 document.getElementById('locate').addEventListener('click', (e)=>{
