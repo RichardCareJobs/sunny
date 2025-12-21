@@ -26,6 +26,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
   let map, markersLayer;
+  let locateButton = null;
   let allVenues = {};
   let userLocation = null;
   let locationWatchId = null;
@@ -279,6 +280,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     markersLayer=L.layerGroup().addTo(map);
     map.on("moveend",debouncedLoadVisible);
     map.on("zoomend",debouncedLoadVisible);
+    addLocateControl();
   }
   function debouncedLoadVisible(){ if(moveTimer) clearTimeout(moveTimer); moveTimer=setTimeout(loadVisibleTiles,MOVE_DEBOUNCE_MS); }
 
@@ -382,6 +384,51 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     } else if(reopenVenueId){
       openVenueId=null;
     }
+  }
+
+  function addLocateControl(){
+    if(!map) return;
+    const LocateControl=L.Control.extend({
+      options:{position:"bottomleft"},
+      onAdd(){
+        const container=L.DomUtil.create("div","locate-control");
+        const button=L.DomUtil.create("button","locate-button",container);
+        button.type="button";
+        button.setAttribute("aria-label","Locate me");
+        button.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 3.06V1h2v2.06A8.01 8.01 0 0 1 20.94 11H23v2h-2.06A8.01 8.01 0 0 1 13 20.94V23h-2v-2.06A8.01 8.01 0 0 1 3.06 13H1v-2h2.06A8.01 8.01 0 0 1 11 3.06ZM12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>`;
+        locateButton=button;
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.on(button,"click",(event)=>{
+          L.DomEvent.stop(event);
+          locateUser();
+        });
+        return container;
+      }
+    });
+    map.addControl(new LocateControl());
+  }
+
+  function setLocateLoading(isLoading){
+    if(!locateButton) return;
+    locateButton.disabled=isLoading;
+    locateButton.classList.toggle("is-loading",isLoading);
+  }
+
+  function locateUser(){
+    if(!navigator.geolocation||!map){ console.warn("Geolocation not available"); return; }
+    setLocateLoading(true);
+    const opts={enableHighAccuracy:true,timeout:10000,maximumAge:0};
+    navigator.geolocation.getCurrentPosition((p)=>{
+      setLocateLoading(false);
+      if(!p||!p.coords) return;
+      const {latitude,longitude}=p.coords;
+      userLocation={lat:latitude,lng:longitude};
+      const targetZoom=Math.max(map.getZoom(),15);
+      map.flyTo([latitude,longitude],targetZoom,{animate:true});
+    },(err)=>{
+      console.warn("Locate failed",err);
+      setLocateLoading(false);
+    },opts);
   }
 
   function boot(){
