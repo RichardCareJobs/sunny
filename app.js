@@ -26,6 +26,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
   let map, markersLayer;
+  let locateButton = null;
   let allVenues = {};
   let userLocation = null;
   let locationWatchId = null;
@@ -279,6 +280,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     markersLayer=L.layerGroup().addTo(map);
     map.on("moveend",debouncedLoadVisible);
     map.on("zoomend",debouncedLoadVisible);
+    addLocateControl();
   }
   function debouncedLoadVisible(){ if(moveTimer) clearTimeout(moveTimer); moveTimer=setTimeout(loadVisibleTiles,MOVE_DEBOUNCE_MS); }
 
@@ -382,6 +384,100 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     } else if(reopenVenueId){
       openVenueId=null;
     }
+  }
+
+  function addLocateControl(){
+    if(!map) return;
+    const LocateControl=L.Control.extend({
+      options:{position:"bottomleft"},
+      onAdd(){
+        const container=L.DomUtil.create("div","locate-control");
+        const button=L.DomUtil.create("button","locate-button",container);
+        button.type="button";
+        button.setAttribute("aria-label","Locate me");
+        const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+        svg.setAttribute("viewBox","0 0 24 24");
+        svg.setAttribute("aria-hidden","true");
+        svg.setAttribute("focusable","false");
+        const outer=document.createElementNS("http://www.w3.org/2000/svg","circle");
+        outer.setAttribute("cx","12");
+        outer.setAttribute("cy","12");
+        outer.setAttribute("r","8");
+        outer.setAttribute("fill","none");
+        outer.setAttribute("stroke","currentColor");
+        outer.setAttribute("stroke-width","2");
+        const inner=document.createElementNS("http://www.w3.org/2000/svg","circle");
+        inner.setAttribute("cx","12");
+        inner.setAttribute("cy","12");
+        inner.setAttribute("r","3");
+        inner.setAttribute("fill","currentColor");
+        const north=document.createElementNS("http://www.w3.org/2000/svg","line");
+        north.setAttribute("x1","12");
+        north.setAttribute("y1","2");
+        north.setAttribute("x2","12");
+        north.setAttribute("y2","5");
+        north.setAttribute("stroke","currentColor");
+        north.setAttribute("stroke-width","2");
+        north.setAttribute("stroke-linecap","round");
+        const south=document.createElementNS("http://www.w3.org/2000/svg","line");
+        south.setAttribute("x1","12");
+        south.setAttribute("y1","19");
+        south.setAttribute("x2","12");
+        south.setAttribute("y2","22");
+        south.setAttribute("stroke","currentColor");
+        south.setAttribute("stroke-width","2");
+        south.setAttribute("stroke-linecap","round");
+        const west=document.createElementNS("http://www.w3.org/2000/svg","line");
+        west.setAttribute("x1","2");
+        west.setAttribute("y1","12");
+        west.setAttribute("x2","5");
+        west.setAttribute("y2","12");
+        west.setAttribute("stroke","currentColor");
+        west.setAttribute("stroke-width","2");
+        west.setAttribute("stroke-linecap","round");
+        const east=document.createElementNS("http://www.w3.org/2000/svg","line");
+        east.setAttribute("x1","19");
+        east.setAttribute("y1","12");
+        east.setAttribute("x2","22");
+        east.setAttribute("y2","12");
+        east.setAttribute("stroke","currentColor");
+        east.setAttribute("stroke-width","2");
+        east.setAttribute("stroke-linecap","round");
+        svg.append(outer,inner,north,south,west,east);
+        button.appendChild(svg);
+        locateButton=button;
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.on(button,"click",(event)=>{
+          L.DomEvent.stop(event);
+          locateUser();
+        });
+        return container;
+      }
+    });
+    map.addControl(new LocateControl());
+  }
+
+  function setLocateLoading(isLoading){
+    if(!locateButton) return;
+    locateButton.disabled=isLoading;
+    locateButton.classList.toggle("is-loading",isLoading);
+  }
+
+  function locateUser(){
+    if(!navigator.geolocation||!map){ console.warn("Geolocation not available"); return; }
+    setLocateLoading(true);
+    const opts={enableHighAccuracy:true,timeout:10000,maximumAge:0};
+    navigator.geolocation.getCurrentPosition((p)=>{
+      setLocateLoading(false);
+      if(!p||!p.coords) return;
+      const {latitude,longitude}=p.coords;
+      userLocation={lat:latitude,lng:longitude};
+      const targetZoom=Math.max(map.getZoom(),15);
+      map.flyTo([latitude,longitude],targetZoom,{animate:true});
+    },(err)=>{
+      console.warn("Locate failed",err);
+      setLocateLoading(false);
+    },opts);
   }
 
   function boot(){
