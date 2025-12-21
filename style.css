@@ -12,6 +12,16 @@ a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
 
 .leaflet-container{position:relative;outline:0;overflow:hidden;-webkit-tap-highlight-color:transparent;}.leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,.leaflet-zoom-box,.leaflet-image-layer,.leaflet-layer{position:absolute;left:0;top:0;}.leaflet-container img{max-width:none !important;}.leaflet-container a{outline:0;}.leaflet-tile{filter:inherit;visibility:hidden;}.leaflet-tile-loaded{visibility:inherit;}.leaflet-zoom-animated{-webkit-transform-origin:0 0;transform-origin:0 0;}.leaflet-zoom-animated .leaflet-zoom-animated{will-change:transform}.leaflet-zoom-hide{visibility:hidden;}.leaflet-control{position:relative;z-index:800;pointer-events:auto;}.leaflet-top,.leaflet-bottom{position:absolute;z-index:1000;pointer-events:none;}.leaflet-top{top:0;}.leaflet-right{right:0;}.leaflet-left{left:0;}.leaflet-control{clear:both;}.leaflet-top .leaflet-control{margin-top:10px;}.leaflet-right .leaflet-control{margin-right:10px;}.leaflet-bottom .leaflet-control{margin-bottom:10px;}.leaflet-left .leaflet-control{margin-left:10px;}
 
+.locate-control{pointer-events:auto;}
+.locate-button{width:44px;height:44px;border-radius:12px;border:1px solid #e5e7eb;background:#fff;box-shadow:0 10px 25px rgba(15,23,42,0.18);display:grid;place-items:center;cursor:pointer;transition:transform 0.15s ease,box-shadow 0.15s ease;color:#111;font-size:0;line-height:0;}
+.locate-button svg{width:24px;height:24px;display:block;fill:currentColor;}
+.locate-button:hover{transform:translateY(-1px);box-shadow:0 12px 28px rgba(15,23,42,0.22);}
+.locate-button:active{transform:translateY(0);}
+.locate-button:disabled{opacity:0.6;cursor:default;}
+.locate-button.is-loading svg{animation:locate-spin 1s linear infinite;}
+.leaflet-bottom .locate-control{margin-bottom:calc(10px + env(safe-area-inset-bottom));}
+@keyframes locate-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+
 
 /* Filters button */
 .fab { position: fixed; right: 12px; bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 1100; border: none; border-radius: 999px; padding: .6rem .9rem; background: var(--brand); color: #fff; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
