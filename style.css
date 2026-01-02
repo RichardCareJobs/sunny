@@ -106,7 +106,28 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .chip-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
 .chip-muted { background:#f3f4f6; border-color:#e5e7eb; color:#4b5563; }
 .venue-card__note { color:#4b5563; font-size:.95rem; }
+.venue-card__rating-row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; flex-wrap:wrap; }
+.venue-card__rating-summary { font-weight:800; color:#111; }
+.venue-card__rating-placeholder { color:var(--muted); font-weight:700; }
+.venue-card__rate-btn { border:1px solid #111; background:#fff; border-radius:12px; padding:.55rem .9rem; font-weight:800; cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,.06); }
+.venue-card__rate-btn:hover { background:#ff6a00; color:#fff; border-color:#ff6a00; }
 .venue-card__actions { display:flex; gap:.5rem; flex-wrap:wrap; }
 .venue-card__actions .action { border:1px solid #e5e7eb; border-radius:12px; padding:.6rem .9rem; text-decoration:none; color:#111; font-weight:700; background:#fff; box-shadow:0 3px 10px rgba(0,0,0,.06); }
 .venue-card__actions .action.primary { background:#111; color:#fff; border-color:#111; }
 .venue-card__actions .action.muted { color:#0a66c2; }
+
+/* Rating card */
+.rating-card { position:fixed; inset:0; display:flex; align-items:flex-end; justify-content:center; padding:0 8px; z-index:1400; opacity:0; pointer-events:none; transform: translateY(12px); transition: opacity .18s ease, transform .18s ease; }
+.rating-card.show { opacity:1; pointer-events:auto; transform: translateY(0); }
+.rating-card__backdrop { position:absolute; inset:0; background:rgba(0,0,0,.35); }
+.rating-card__panel { position:relative; width:min(540px, calc(100% - 16px)); background:#fff; border:2px solid #111; border-radius:16px 16px 0 0; box-shadow:0 -10px 30px rgba(0,0,0,.24); padding:1rem; z-index:1; display:grid; gap:.75rem; }
+.rating-card__header { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+.rating-card__title { font-size:1.05rem; font-weight:800; }
+.rating-card__subtitle { color:#4b5563; font-size:.95rem; }
+.rating-card__close { border:1px solid #e5e7eb; background:#fff; border-radius:12px; width:36px; height:36px; font-size:1.1rem; cursor:pointer; }
+.rating-card__stars { display:flex; gap:.5rem; justify-content:center; }
+.rating-star { width:48px; height:48px; border:2px solid #000; border-radius:12px; background:#fff; display:grid; place-items:center; font-size:24px; color:#111; cursor:pointer; transition: transform .1s ease; }
+.rating-star:hover { transform: translateY(-1px); }
+.rating-star.is-active { color:#ff6a00; }
+.rating-card__submit { border:1px solid #111; background:#111; color:#fff; border-radius:12px; padding:.65rem; font-weight:800; cursor:pointer; }
+.rating-card__submit:disabled { opacity:.5; cursor:default; }
