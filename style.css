@@ -90,7 +90,7 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 /* Venue detail card */
 .venue-card { position: fixed; left:0; right:0; bottom:0; display:flex; justify-content:center; padding:0 8px; z-index:1250; pointer-events:none; opacity:0; transform: translateY(12px); transition: opacity .18s ease, transform .18s ease; }
 .venue-card.show { opacity:1; transform: translateY(0); pointer-events:auto; }
-.venue-card__inner { width:min(640px, calc(100% - 16px)); background:#fff; border:2px solid #ff6a00; border-radius:18px 18px 0 0; box-shadow:0 -10px 30px rgba(0,0,0,.22); padding:1rem 1rem calc(1rem + env(safe-area-inset-bottom)); display:grid; gap:.55rem; }
+.venue-card__inner { position:relative; width:min(640px, calc(100% - 16px)); background:#fff; border:2px solid #ff6a00; border-radius:18px 18px 0 0; box-shadow:0 -10px 30px rgba(0,0,0,.22); padding:1rem 1rem calc(1rem + env(safe-area-inset-bottom)); display:grid; gap:.55rem; }
 .venue-card__handle { width:44px; height:4px; background:#e5e7eb; border-radius:999px; margin:0 auto .15rem; }
 .venue-card__header { display:flex; justify-content:space-between; gap:.75rem; align-items:flex-start; }
 .venue-card__name { font-size:1.15rem; font-weight:800; }
@@ -121,6 +121,17 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .venue-card__actions .action { border:1px solid #e5e7eb; border-radius:12px; padding:.6rem .9rem; text-decoration:none; color:#111; font-weight:700; background:#fff; box-shadow:0 3px 10px rgba(0,0,0,.06); }
 .venue-card__actions .action.primary { background:#111; color:#fff; border-color:#111; }
 .venue-card__actions .action.muted { color:#0a66c2; }
+.venue-card__fab { position:absolute; right:12px; bottom:12px; display:flex; flex-direction:column; align-items:flex-end; gap:.45rem; pointer-events:none; }
+.venue-card__fab-toggle { width:52px; height:52px; border-radius:50%; border:0; background:#111; color:#fff; font-size:28px; font-weight:800; box-shadow:0 10px 28px rgba(0,0,0,.2); cursor:pointer; pointer-events:auto; }
+.venue-card__fab-toggle:active { transform:translateY(1px); }
+.venue-card__fab-menu { display:none; background:#fff; border:1px solid #e5e7eb; border-radius:14px; box-shadow:0 12px 32px rgba(0,0,0,.2); padding:6px; min-width:180px; pointer-events:auto; }
+.venue-card.fab-open .venue-card__fab-menu { display:block; }
+.venue-card__fab-item { width:100%; border:0; background:transparent; text-align:left; padding:10px 12px; border-radius:10px; font-weight:800; cursor:pointer; }
+.venue-card__fab-item:hover { background:#f9fafb; }
+.venue-card__upload-hint { position:absolute; left:12px; right:88px; bottom:84px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:12px; padding:.65rem .75rem; color:#4b5563; font-size:.9rem; box-shadow:0 10px 25px rgba(0,0,0,.12); display:flex; align-items:flex-start; gap:.5rem; }
+.venue-card__upload-hint.hidden { display:none; }
+.venue-card__upload-dismiss { border:0; background:transparent; color:#6b7280; font-size:1rem; cursor:pointer; line-height:1; }
+.venue-card__upload-dismiss:hover { color:#111; }
 
 /* Rating card */
 .rating-card { position:fixed; inset:0; display:flex; align-items:flex-end; justify-content:center; padding:0 8px; z-index:1400; opacity:0; pointer-events:none; transform: translateY(12px); transition: opacity .18s ease, transform .18s ease; }
