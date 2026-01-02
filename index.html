@@ -3,22 +3,91 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Sunny — Rebuild in progress</title>
+  <title>Sunny — Find great outdoor pubs</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
+
+  <!-- PWA bits -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#111111">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
   <style>
-    :root { --bg:#0f172a; --fg:#f8fafc; --muted:#94a3b8; }
+    :root { --bg:#fff; --fg:#111; --muted:#666; --brand:#111; }
     * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background: var(--bg); color: var(--fg); }
-    main { min-height: 100%; display: grid; place-items: center; text-align: center; padding: 24px; }
-    h1 { margin: 0 0 8px; font-size: clamp(1.8rem, 3vw, 2.6rem); }
-    p { margin: 0; color: var(--muted); font-size: 1rem; }
+    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:var(--bg); }
+    #app { display:grid; grid-template-rows: auto 1fr; height: 100dvh; }
+    .toolbar { display:flex; align-items:center; gap:.6rem; padding:.6rem .8rem; border-bottom:1px solid #eee; background:#fff; position:sticky; top:0; z-index:1000; }
+    .toolbar h1 { font-size:1.1rem; font-weight:800; margin:0; }
+    .toolbar .spacer { flex:1; }
+    a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
+
+    /* Map and List containers expected by app.js */
+    #map { width:100%; height:100%; min-height:60vh; }
+    #list { display:none; } /* app.js will toggle and style with its own CSS */
   </style>
 </head>
 <body>
-  <main>
-    <div>
-      <h1>Sunny is rebuilding</h1>
-      <p>The pub crawl experience is being redesigned from the ground up.</p>
+  <div id="app">
+    <div class="toolbar">
+      <h1>Sunny</h1>
+      <div class="spacer"></div>
+      <a class="tiny" href="privacy.html">Privacy</a>
     </div>
-  </main>
+
+    <!-- Containers used by app.js -->
+    <div id="map"></div>
+    <div id="list"></div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+
+  <!-- Service Worker (optional; you already added network-first for app.js/version.json) -->
+  <script>if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');</script>
+
+  <!-- Force the custom pin to use icons/marker.png -->
+  <script>window.SUNNY_ICON_URL = 'icons/marker.png';</script>
+
+  <!-- Pub Crawl FAB -->
+<style>
+  .crawl-fab {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 1100;
+    background: #0f172a;
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 12px 16px;
+    font-weight: 800;
+    box-shadow: 0 10px 24px rgba(0,0,0,.18);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    text-decoration: none;
+  }
+  .crawl-fab:hover { transform: translateY(-1px); }
+</style>
+<a class="crawl-fab" href="crawl.html" aria-label="Plan a pub crawl">
+  <span>🍻</span><span>Plan a pub crawl</span>
+</a>
+
+
+  <!-- Versioned loader to always fetch fresh app.js -->
+  <script>
+    fetch('version.json', { cache: 'no-store' })
+      .then(r => r.json()).catch(() => ({ version: Date.now() }))
+      .then(v => {
+        const s = document.createElement('script');
+        s.src = `app.js?v=${(v && v.version) || Date.now()}`;
+        document.head.appendChild(s);
+      });
+  </script>
 </body>
 </html>
