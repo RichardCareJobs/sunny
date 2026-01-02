@@ -423,10 +423,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!open.status||open.status==="Unknown"){
       card.openChip.textContent="";
       card.openChip.classList.add("hidden");
+      card.openChip.style.display="none";
       applyToneClass(card.openChip,"muted");
     } else {
       card.openChip.textContent=open.status;
       card.openChip.classList.remove("hidden");
+      card.openChip.style.display="inline-flex";
       applyToneClass(card.openChip,open.tone);
     }
 
