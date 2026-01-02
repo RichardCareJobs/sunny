@@ -420,8 +420,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.weatherChip.textContent="Loading weather…";
     populateWeatherBadge("venue-card-weather",v.lat,v.lng);
 
-    if(open.status==="Unknown"){
+    if(!open.status||open.status==="Unknown"){
+      card.openChip.textContent="";
       card.openChip.classList.add("hidden");
+      applyToneClass(card.openChip,"muted");
     } else {
       card.openChip.textContent=open.status;
       card.openChip.classList.remove("hidden");
