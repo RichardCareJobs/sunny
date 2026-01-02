@@ -42,6 +42,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let openVenueId = null;
   let isRenderingMarkers = false;
   let detailCard = null;
+  let ratingCard = null;
 
   let venueCountToast = null;
   let venueCountTimer = null;
@@ -77,6 +78,41 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function clearLocationWatch(){
     if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
     if(locationWatchTimer){ clearTimeout(locationWatchTimer); locationWatchTimer=null; }
+  }
+
+  // Ratings
+  const RATING_STORAGE_KEY = "sunny-outdoor-ratings";
+  let ratingStore = loadLocal(RATING_STORAGE_KEY) || {};
+  if (!ratingStore || typeof ratingStore !== "object") ratingStore = {};
+
+  function getRatingEntry(venueId){
+    const entry = ratingStore && typeof ratingStore === "object" ? ratingStore[venueId] : null;
+    if(!entry || typeof entry !== "object") return { total:0, count:0 };
+    const { total=0, count=0 } = entry;
+    return { total, count };
+  }
+  function persistRatings(){
+    saveLocal(RATING_STORAGE_KEY, ratingStore);
+  }
+  function recordRating(venueId,value){
+    if(!venueId||!value) return;
+    const current=getRatingEntry(venueId);
+    const next={ total: current.total + value, count: current.count + 1 };
+    ratingStore={ ...ratingStore, [venueId]: next };
+    persistRatings();
+    if(openVenueId===venueId) renderVenueRatingSummary(venueId);
+  }
+  function renderVenueRatingSummary(venueId){
+    if(!detailCard||!detailCard.ratingSummary) return;
+    const { total, count } = getRatingEntry(venueId);
+    const average = count ? total / count : null;
+    if(count>=10 && average!==null){
+      detailCard.ratingSummary.textContent=`Outdoor area rating: ${average.toFixed(1)} / 5 (${count} ratings)`;
+      detailCard.ratingSummary.classList.remove("venue-card__rating-placeholder");
+    } else {
+      detailCard.ratingSummary.textContent="Rating coming soon";
+      detailCard.ratingSummary.classList.add("venue-card__rating-placeholder");
+    }
   }
   function centerOnUserIfAvailable(targetZoom=15,{force=false}={}){
     if(!map||!userLocation) return;
@@ -351,6 +387,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <span class="chip chip-open"></span>
         </div>
         <div class="venue-card__note"></div>
+        <div class="venue-card__section-title">Outdoor area rating</div>
+        <div class="venue-card__rating-row">
+          <div class="venue-card__rating-summary venue-card__rating-placeholder">Rating coming soon</div>
+          <button class="venue-card__rate-btn" type="button">Rate outdoor area</button>
+        </div>
         <div class="venue-card__actions">
           <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
           <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
@@ -370,6 +411,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       weatherChip:container.querySelector("#venue-card-weather"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
+      ratingSummary:container.querySelector(".venue-card__rating-summary"),
+      rateButton:container.querySelector(".venue-card__rate-btn"),
       actions:{
         directions:container.querySelector('[data-action="directions"]'),
         uber:container.querySelector('[data-action="uber"]'),
@@ -451,6 +494,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } else {
       card.actions.website.classList.add("hidden");
     }
+
+    if(card.rateButton){
+      card.rateButton.onclick=()=>openRatingCard(v);
+    }
+    renderVenueRatingSummary(v.id);
 
     card.container.classList.remove("hidden");
     card.container.classList.add("show");
@@ -537,6 +585,75 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
     });
     map.addControl(new LocateControl());
+  }
+
+  function ensureRatingCard(){
+    if(ratingCard) return ratingCard;
+    const container=document.createElement("div");
+    container.id="rating-card";
+    container.className="rating-card hidden";
+    container.innerHTML=`
+      <div class="rating-card__backdrop"></div>
+      <div class="rating-card__panel">
+        <div class="rating-card__header">
+          <div>
+            <div class="rating-card__title">Rate the outdoor area</div>
+            <div class="rating-card__subtitle">Tap the stars to rate this outdoor space</div>
+          </div>
+          <button class="rating-card__close" type="button" aria-label="Close rating">×</button>
+        </div>
+        <div class="rating-card__stars" role="radiogroup" aria-label="Outdoor area rating">
+          <button class="rating-star" type="button" data-value="1" aria-label="1 star">★</button>
+          <button class="rating-star" type="button" data-value="2" aria-label="2 stars">★</button>
+          <button class="rating-star" type="button" data-value="3" aria-label="3 stars">★</button>
+          <button class="rating-star" type="button" data-value="4" aria-label="4 stars">★</button>
+          <button class="rating-star" type="button" data-value="5" aria-label="5 stars">★</button>
+        </div>
+        <button class="rating-card__submit" type="button" disabled>Submit rating</button>
+      </div>`;
+    document.body.appendChild(container);
+    const stars=Array.from(container.querySelectorAll(".rating-star"));
+    const submitBtn=container.querySelector(".rating-card__submit");
+    const closeBtn=container.querySelector(".rating-card__close");
+    const backdrop=container.querySelector(".rating-card__backdrop");
+    const titleEl=container.querySelector(".rating-card__title");
+    let selected=0;
+    function setSelected(val){
+      selected=val;
+      stars.forEach(star=>{
+        const value=Number(star.dataset.value);
+        star.classList.toggle("is-active",value<=val);
+      });
+      submitBtn.disabled=val<=0;
+    }
+    stars.forEach(star=>{
+      star.addEventListener("click",()=>setSelected(Number(star.dataset.value)));
+    });
+    const close=()=>{
+      container.classList.add("hidden");
+      container.classList.remove("show");
+      container.removeAttribute("data-venue-id");
+      setSelected(0);
+    };
+    submitBtn.addEventListener("click",()=>{
+      const venueId=container.dataset.venueId;
+      if(!venueId||selected<=0) return;
+      recordRating(venueId,selected);
+      close();
+    });
+    backdrop.addEventListener("click",close);
+    closeBtn.addEventListener("click",close);
+    ratingCard={container,setSelected,titleEl};
+    return ratingCard;
+  }
+
+  function openRatingCard(v){
+    const card=ensureRatingCard();
+    card.container.dataset.venueId=v.id;
+    card.titleEl.textContent=v.name?`Rate the outdoor area at ${v.name}`:"Rate the outdoor area";
+    card.setSelected(0);
+    card.container.classList.remove("hidden");
+    requestAnimationFrame(()=>card.container.classList.add("show"));
   }
 
   function setLocateLoading(isLoading){
