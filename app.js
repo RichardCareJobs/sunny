@@ -344,6 +344,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           </div>
           <button class="venue-card__close" type="button" aria-label="Close details">×</button>
         </div>
+        <div class="venue-card__section-title">Current weather</div>
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
           <span class="chip chip-weather" id="venue-card-weather">Loading weather…</span>
@@ -367,6 +368,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       openChip:container.querySelector(".chip-open"),
       sunChip:container.querySelector(".chip-sun"),
       weatherChip:container.querySelector("#venue-card-weather"),
+      weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
       actions:{
         directions:container.querySelector('[data-action="directions"]'),
@@ -404,7 +406,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.container.dataset.venueId=v.id;
     card.nameEl.textContent=v.name||"Outdoor venue";
     card.metaEl.textContent=[kind,distance].filter(Boolean).join(" · ")||"";
-    card.addressEl.textContent=address||"Outdoor seating likely nearby";
+    if(address){
+      card.addressEl.textContent=address;
+      card.addressEl.classList.remove("hidden");
+    } else {
+      card.addressEl.textContent="";
+      card.addressEl.classList.add("hidden");
+    }
 
     card.sunChip.querySelector(".chip-emoji").textContent=sun.icon;
     card.sunChip.querySelector(".chip-label").textContent=sun.label;
@@ -412,13 +420,26 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.weatherChip.textContent="Loading weather…";
     populateWeatherBadge("venue-card-weather",v.lat,v.lng);
 
-    card.openChip.textContent=open.status;
-    applyToneClass(card.openChip,open.tone);
+    if(open.status==="Unknown"){
+      card.openChip.classList.add("hidden");
+    } else {
+      card.openChip.textContent=open.status;
+      card.openChip.classList.remove("hidden");
+      applyToneClass(card.openChip,open.tone);
+    }
 
     const outdoorHint=hasOutdoorHints(tags);
-    card.noteEl.textContent=outdoorHint?"Marked with outdoor seating hints on the map.":`Current sun: ${sun.label}`;
+    if(outdoorHint){
+      card.noteEl.textContent="Marked with outdoor seating hints on the map.";
+      card.noteEl.classList.remove("hidden");
+    } else {
+      card.noteEl.textContent="";
+      card.noteEl.classList.add("hidden");
+    }
 
+    card.actions.directions.textContent="Google Maps";
     card.actions.directions.href=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}`;
+    card.actions.uber.textContent="Uber";
     card.actions.uber.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}`;
     if(website){
       card.actions.website.classList.remove("hidden");

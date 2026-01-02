@@ -97,6 +97,7 @@ a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
 .venue-card__meta { color:var(--muted); font-size:.9rem; margin:.15rem 0; }
 .venue-card__address { color:#374151; font-size:.95rem; }
 .venue-card__close { border:1px solid #e5e7eb; background:#fff; border-radius:12px; width:36px; height:36px; font-size:1.1rem; cursor:pointer; }
+.venue-card__section-title { font-size:.85rem; font-weight:700; color:#374151; }
 .venue-card__badges { display:flex; gap:.35rem; flex-wrap:wrap; }
 .chip { display:inline-flex; align-items:center; gap:.35rem; border:1px solid #e5e7eb; border-radius:999px; padding:6px 10px; font-size:.85rem; background:#f9fafb; color:#111; }
 .chip-emoji { font-size:1rem; }
