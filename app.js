@@ -127,6 +127,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       detailCard.ratingDisplay.removeAttribute("aria-label");
     }
   }
+  function stripLegacyRating(root){
+    if(!root) return;
+    const legacyTitles=Array.from(root.querySelectorAll(".venue-card__section-title")).filter(el=>/rating/i.test(el.textContent||""));
+    legacyTitles.forEach(el=>el.remove());
+    const legacyRows=root.querySelectorAll(".venue-card__rating-row");
+    legacyRows.forEach(el=>el.remove());
+    Array.from(root.querySelectorAll("button")).forEach(btn=>{
+      if(/rate outdoor area/i.test(btn.textContent||"")) btn.remove();
+    });
+    Array.from(root.querySelectorAll("*")).forEach(el=>{
+      if(/rating coming soon/i.test(el.textContent||"")) el.remove();
+    });
+  }
   function centerOnUserIfAvailable(targetZoom=15,{force=false}={}){
     if(!map||!userLocation) return;
     if(hasCenteredOnUser&&!force) return;
@@ -378,7 +391,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function ensureDetailCard(){
-    if(detailCard) return detailCard;
+    if(detailCard){
+      stripLegacyRating(detailCard.container);
+      return detailCard;
+    }
     const existing=document.getElementById("venue-card");
     if(existing) existing.remove();
     const container=document.createElement("div");
@@ -428,6 +444,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
         </div>
       </div>`;
+    stripLegacyRating(container);
     document.body.appendChild(container);
     const closeBtn=container.querySelector(".venue-card__close");
     closeBtn.addEventListener("click",()=>hideVenueCard());
