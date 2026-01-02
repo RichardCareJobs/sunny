@@ -1,10 +1,10 @@
 
-/* Sunny app.js — Popups Only, No Filters (build: 2025-10-10-e)
-   - Map-only UI with enhanced popups (single card type)
+/* Sunny app.js — Bottom Card, No Filters (build: 2025-10-10-f)
+   - Map-only UI with a bottom detail card (replaces popups)
    - Filters UI removed
    - Custom pins from icons/marker.png (or window.SUNNY_ICON_URL)
 */
-console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
+console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
 (function () {
   const OVERPASS_ENDPOINTS = [
@@ -41,6 +41,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
 
   let openVenueId = null;
   let isRenderingMarkers = false;
+  let detailCard = null;
 
   let venueCountToast = null;
   let venueCountTimer = null;
@@ -65,6 +66,14 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2;
     const C=2*Math.atan2(Math.sqrt(A),Math.sqrt(1-A)); return R*C; }
   function formatDistanceKm(km){ return km<1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`; }
+  function formatAddress(tags={}){
+    if(tags["addr:full"]) return tags["addr:full"];
+    const hn=tags["addr:housenumber"]||"";
+    const street=tags["addr:street"]||tags["addr:place"]||"";
+    const city=tags["addr:city"]||tags["addr:suburb"]||tags["addr:municipality"]||"";
+    const streetLine=[hn,street].filter(Boolean).join(" ").trim();
+    return [streetLine,city].filter(Boolean).join(", ");
+  }
   function clearLocationWatch(){
     if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
     if(locationWatchTimer){ clearTimeout(locationWatchTimer); locationWatchTimer=null; }
@@ -304,6 +313,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     markersLayer=L.layerGroup().addTo(map);
     map.on("moveend",debouncedLoadVisible);
     map.on("zoomend",debouncedLoadVisible);
+    map.on("click",()=>hideVenueCard());
     addLocateControl();
     centerOnUserIfAvailable();
   }
@@ -318,30 +328,132 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     catch(e){ console.error("Overpass error:",e); }
   }
 
-  function popupHTML(v,weatherId){
-    const tags=v.tags||{}; const kind=toTitle(tags.amenity||tags.tourism||"");
-    const sun=sunBadge(v.lat,v.lng);
-    const open=parseOpenStatus(tags.opening_hours); const showOpen=open.status!=="Unknown";
-    const website=(tags.website||tags.contact_website||tags.url)?String(tags.website||tags.contact_website||tags.url).replace(/^http:\/\//,'https://'):null;
+  function ensureDetailCard(){
+    if(detailCard) return detailCard;
+    const container=document.createElement("div");
+    container.id="venue-card";
+    container.className="venue-card hidden";
+    container.innerHTML=`
+      <div class="venue-card__inner">
+        <div class="venue-card__handle"></div>
+        <div class="venue-card__header">
+          <div class="venue-card__title">
+            <div class="venue-card__name"></div>
+            <div class="venue-card__meta"></div>
+            <div class="venue-card__address"></div>
+          </div>
+          <button class="venue-card__close" type="button" aria-label="Close details">×</button>
+        </div>
+        <div class="venue-card__section-title">Current weather</div>
+        <div class="venue-card__badges">
+          <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
+          <span class="chip chip-weather" id="venue-card-weather">Loading weather…</span>
+          <span class="chip chip-open"></span>
+        </div>
+        <div class="venue-card__note"></div>
+        <div class="venue-card__actions">
+          <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
+          <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
+          <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
+        </div>
+      </div>`;
+    document.body.appendChild(container);
+    const closeBtn=container.querySelector(".venue-card__close");
+    closeBtn.addEventListener("click",()=>hideVenueCard());
+    detailCard={
+      container,
+      nameEl:container.querySelector(".venue-card__name"),
+      metaEl:container.querySelector(".venue-card__meta"),
+      addressEl:container.querySelector(".venue-card__address"),
+      openChip:container.querySelector(".chip-open"),
+      sunChip:container.querySelector(".chip-sun"),
+      weatherChip:container.querySelector("#venue-card-weather"),
+      weatherLabel:container.querySelector(".venue-card__section-title"),
+      noteEl:container.querySelector(".venue-card__note"),
+      actions:{
+        directions:container.querySelector('[data-action="directions"]'),
+        uber:container.querySelector('[data-action="uber"]'),
+        website:container.querySelector('[data-action="website"]')
+      }
+    };
+    return detailCard;
+  }
+  function hideVenueCard(){
+    if(!detailCard) return;
+    detailCard.container.classList.add("hidden");
+    detailCard.container.classList.remove("show");
+    detailCard.container.removeAttribute("data-venue-id");
+    openVenueId=null;
+  }
+  function applyToneClass(el,tone){
+    if(!el) return;
+    el.classList.remove("chip-good","chip-warn","chip-info","chip-muted");
+    if(tone==="good") el.classList.add("chip-good");
+    else if(tone==="warn") el.classList.add("chip-warn");
+    else if(tone==="info") el.classList.add("chip-info");
+    else el.classList.add("chip-muted");
+  }
+  function showVenueCard(v){
+    const card=ensureDetailCard();
+    const tags=v.tags||{};
+    const kind=toTitle(tags.amenity||tags.tourism||"");
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
+    const address=formatAddress(tags);
+    const sun=sunBadge(v.lat,v.lng);
+    const open=parseOpenStatus(tags.opening_hours);
+    const website=(tags.website||tags.contact_website||tags.url)?String(tags.website||tags.contact_website||tags.url).replace(/^http:\/\//,'https://'):null;
 
-    return `<div style="min-width:220px;max-width:260px">
-      <div style="font-weight:800;font-size:16px;line-height:1.1">${v.name}</div>
-      ${kind||distance?`<div style="color:#6b7280;margin:.2rem 0 .4rem 0">${[kind,distance].filter(Boolean).join(' · ')}</div>`:''}
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;">
-        <span style="display:inline-flex;align-items:center;gap:6px;background:#fff7e6;border:1px solid #fde68a;color:#b45309;border-radius:999px;padding:4px 8px;font-size:12px;">
-          <span>${sun.icon}</span><span>${sun.label}</span>
-        </span>
-        <span id="${weatherId}" style="display:inline-flex;align-items:center;gap:6px;background:#eef2ff;border:1px solid #c7d2fe;color:#312e81;border-radius:999px;padding:4px 8px;font-size:12px;">Loading weather…</span>
-        ${showOpen ? `<span style="display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 8px;font-size:12px;${open.tone==='good'?'background:#e8f7ef;border:1px solid #bbf7d0;color:#166534':open.tone==='warn'?'background:#fff1f2;border:1px solid #fecdd3;color:#9f1239':open.tone==='info'?'background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8':'background:#f3f4f6;border:1px solid #e5e7eb;color:#4b5563'}">${open.status}</span>` : ''}
-      </div>
-      <div style="color:#6b7280;font-size:12px;margin-bottom:8px">Current sun: ${sun.label}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}" style="background:#111;color:#fff;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Directions</a>
-        <a target="_blank" rel="noopener" href="https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}" style="background:#f1f5f9;color:#111;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Uber</a>
-        ${website?`<a target="_blank" rel="noopener" href="${website}" style="background:#fff;border:1px solid #e5e7eb;color:#0a66c2;text-decoration:none;border-radius:10px;padding:8px 10px;font-weight:700">Website</a>`:''}
-      </div>
-    </div>`;
+    card.container.dataset.venueId=v.id;
+    card.nameEl.textContent=v.name||"Outdoor venue";
+    card.metaEl.textContent=[kind,distance].filter(Boolean).join(" · ")||"";
+    if(address){
+      card.addressEl.textContent=address;
+      card.addressEl.classList.remove("hidden");
+    } else {
+      card.addressEl.textContent="";
+      card.addressEl.classList.add("hidden");
+    }
+
+    card.sunChip.querySelector(".chip-emoji").textContent=sun.icon;
+    card.sunChip.querySelector(".chip-label").textContent=sun.label;
+
+    card.weatherChip.textContent="Loading weather…";
+    populateWeatherBadge("venue-card-weather",v.lat,v.lng);
+
+    if(!open.status||open.status==="Unknown"){
+      card.openChip.textContent="";
+      card.openChip.classList.add("hidden");
+      card.openChip.style.display="none";
+      applyToneClass(card.openChip,"muted");
+    } else {
+      card.openChip.textContent=open.status;
+      card.openChip.classList.remove("hidden");
+      card.openChip.style.display="inline-flex";
+      applyToneClass(card.openChip,open.tone);
+    }
+
+    const outdoorHint=hasOutdoorHints(tags);
+    if(outdoorHint){
+      card.noteEl.textContent="Marked with outdoor seating hints on the map.";
+      card.noteEl.classList.remove("hidden");
+    } else {
+      card.noteEl.textContent="";
+      card.noteEl.classList.add("hidden");
+    }
+
+    card.actions.directions.textContent="Google Maps";
+    card.actions.directions.href=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}`;
+    card.actions.uber.textContent="Uber";
+    card.actions.uber.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}`;
+    if(website){
+      card.actions.website.classList.remove("hidden");
+      card.actions.website.href=website;
+    } else {
+      card.actions.website.classList.add("hidden");
+    }
+
+    card.container.classList.remove("hidden");
+    card.container.classList.add("show");
   }
 
   function showVenueCount(count){
@@ -379,9 +491,9 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   }
 
   function renderMarkers(){
-    if(!markersLayer) return;
+    if(!markersLayer||!map) return;
     const reopenVenueId=openVenueId;
-    let reopenMarker=null;
+    let reopenVenue=null;
     isRenderingMarkers=true;
     markersLayer.clearLayers();
     const b=map.getBounds();
@@ -389,25 +501,19 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     Object.values(allVenues).forEach(v=>{
       if(!b.contains([v.lat,v.lng])) return;
       visibleCount++;
-      const weatherId=`weather-${v.id.replace(/[^a-z0-9]+/gi,'-')}`;
       const marker=L.marker([v.lat,v.lng],{icon:markerIcon}).addTo(markersLayer);
-      marker.bindPopup(popupHTML(v,weatherId));
-      marker.on("popupopen",()=>{
+      marker.on("click",()=>{
         openVenueId=v.id;
-        populateWeatherBadge(weatherId,v.lat,v.lng);
+        showVenueCard(v);
       });
-      marker.on("popupclose",()=>{
-        if(isRenderingMarkers) return;
-        if(openVenueId===v.id) openVenueId=null;
-      });
-      if(reopenVenueId&&reopenVenueId===v.id) reopenMarker=marker;
+      if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
     isRenderingMarkers=false;
     showVenueCount(visibleCount);
-    if(reopenVenueId&&reopenMarker){
-      reopenMarker.openPopup();
+    if(reopenVenue){
+      showVenueCard(reopenVenue);
     } else if(reopenVenueId){
-      openVenueId=null;
+      hideVenueCard();
     }
   }
 
