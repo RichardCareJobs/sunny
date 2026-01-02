@@ -31,9 +31,10 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
   let userLocation = null;
   let locationWatchId = null;
   let locationWatchTimer = null;
+  let hasCenteredOnUser = false;
 
   const MAX_LOCATION_WAIT_MS = 15000;
-  const MAX_LOCATION_ACCURACY_METERS = 50000;
+  const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
   const MOVE_DEBOUNCE_MS = 500;
   let moveTimer = null;
@@ -68,23 +69,46 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
     if(locationWatchTimer){ clearTimeout(locationWatchTimer); locationWatchTimer=null; }
   }
+  function centerOnUserIfAvailable(targetZoom=15,{force=false}={}){
+    if(!map||!userLocation) return;
+    if(hasCenteredOnUser&&!force) return;
+    const zoom=Math.max(map.getZoom(),targetZoom);
+    map.flyTo([userLocation.lat,userLocation.lng],zoom,{animate:true});
+    hasCenteredOnUser=true;
+  }
+  function acceptAccurateLocation(p,{shouldCenter=false,forceCenter=false,onComplete=null}={}){
+    if(!p||!p.coords){ if(onComplete) onComplete(); return false; }
+    const {latitude,longitude,accuracy}=p.coords;
+    if(typeof accuracy==="number"&&accuracy>DESIRED_LOCATION_ACCURACY_METERS){
+      if(locationWatchId===null&&navigator.geolocation.watchPosition){
+        locationWatchId=navigator.geolocation.watchPosition(
+          (next)=>acceptAccurateLocation(next,{shouldCenter,onComplete}),
+          ()=>{ clearLocationWatch(); if(onComplete) onComplete(); },
+          {enableHighAccuracy:true,timeout:20000,maximumAge:0}
+        );
+        locationWatchTimer=setTimeout(()=>{
+          clearLocationWatch();
+          if(onComplete) onComplete();
+        },MAX_LOCATION_WAIT_MS);
+      } else {
+        if(onComplete) onComplete();
+        if(!navigator.geolocation.watchPosition&&userLocation===null) userLocation=false;
+      }
+      return false;
+    }
+    clearLocationWatch();
+    userLocation={lat:latitude,lng:longitude};
+    if(shouldCenter) centerOnUserIfAvailable(15,{force:forceCenter});
+    if(onComplete) onComplete();
+    return true;
+  }
   function requestUserLocationOnce(){
     if(userLocation!==null) return;
     if(!navigator.geolocation){ userLocation=false; return; }
     const opts={enableHighAccuracy:true,timeout:8000,maximumAge:0};
     const handleFailure=()=>{ clearLocationWatch(); if(userLocation===null) userLocation=false; };
     const handleSuccess=(p)=>{
-      if(!p||!p.coords){ handleFailure(); return; }
-      const {latitude,longitude,accuracy}=p.coords;
-      if(typeof accuracy==="number"&&accuracy>MAX_LOCATION_ACCURACY_METERS){
-        if(locationWatchId===null&&navigator.geolocation.watchPosition){
-          locationWatchId=navigator.geolocation.watchPosition(handleSuccess,handleFailure,{enableHighAccuracy:true,timeout:20000,maximumAge:0});
-          locationWatchTimer=setTimeout(()=>{ if(userLocation===null) handleFailure(); },MAX_LOCATION_WAIT_MS);
-        }
-        return;
-      }
-      clearLocationWatch();
-      userLocation={lat:latitude,lng:longitude};
+      if(!acceptAccurateLocation(p,{shouldCenter:true})) return;
     };
     navigator.geolocation.getCurrentPosition(handleSuccess,handleFailure,opts);
   }
@@ -281,6 +305,7 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     map.on("moveend",debouncedLoadVisible);
     map.on("zoomend",debouncedLoadVisible);
     addLocateControl();
+    centerOnUserIfAvailable();
   }
   function debouncedLoadVisible(){ if(moveTimer) clearTimeout(moveTimer); moveTimer=setTimeout(loadVisibleTiles,MOVE_DEBOUNCE_MS); }
 
@@ -469,16 +494,12 @@ console.log("Sunny app.js loaded: Popups Only (No Filters) 2025-10-10-e");
     if(!navigator.geolocation||!map){ console.warn("Geolocation not available"); return; }
     setLocateLoading(true);
     const opts={enableHighAccuracy:true,timeout:10000,maximumAge:0};
+    const onComplete=()=>setLocateLoading(false);
     navigator.geolocation.getCurrentPosition((p)=>{
-      setLocateLoading(false);
-      if(!p||!p.coords) return;
-      const {latitude,longitude}=p.coords;
-      userLocation={lat:latitude,lng:longitude};
-      const targetZoom=Math.max(map.getZoom(),15);
-      map.flyTo([latitude,longitude],targetZoom,{animate:true});
+      if(acceptAccurateLocation(p,{shouldCenter:true,forceCenter:true,onComplete})) return;
     },(err)=>{
       console.warn("Locate failed",err);
-      setLocateLoading(false);
+      onComplete();
     },opts);
   }
 
