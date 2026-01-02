@@ -475,7 +475,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const setFabOpen=(isOpen)=>{
       container.classList.toggle("fab-open",!!isOpen);
       if(fabMenu) fabMenu.classList.toggle("show",!!isOpen);
-      if(fabToggle) fabToggle.setAttribute("aria-expanded",isOpen?"true":"false");
+      if(fabToggle){
+        fabToggle.setAttribute("aria-expanded",isOpen?"true":"false");
+        fabToggle.textContent=isOpen?"×":"+";
+        fabToggle.setAttribute("aria-label",isOpen?"Close actions":"More actions");
+      }
     };
     if(fabToggle){
       fabToggle.addEventListener("click",(event)=>{
@@ -489,6 +493,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(fabMenu){
       fabMenu.addEventListener("click",(event)=>event.stopPropagation());
     }
+    setFabOpen(false);
     if(addImagesButton&&fileInput){
       addImagesButton.addEventListener("click",(event)=>{
         event.stopPropagation();
