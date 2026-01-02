@@ -106,11 +106,17 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .chip-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
 .chip-muted { background:#f3f4f6; border-color:#e5e7eb; color:#4b5563; }
 .venue-card__note { color:#4b5563; font-size:.95rem; }
-.venue-card__rating-row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; flex-wrap:wrap; }
-.venue-card__rating-summary { font-weight:800; color:#111; }
-.venue-card__rating-placeholder { color:var(--muted); font-weight:700; }
-.venue-card__rate-btn { border:1px solid #111; background:#fff; border-radius:12px; padding:.55rem .9rem; font-weight:800; cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,.06); }
+.venue-card__name-row { display:flex; align-items:center; justify-content:space-between; gap:.6rem; flex-wrap:wrap; }
+.venue-card__rating-inline { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; }
+.rating-display { display:flex; align-items:center; gap:.35rem; }
+.rating-display.hidden { display:none; }
+.rating-display__stars { display:flex; gap:.2rem; }
+.rating-star--display { width:34px; height:34px; border:2px solid #000; border-radius:10px; background:#fff; display:grid; place-items:center; font-size:18px; color:#111; }
+.rating-star--display.is-active { color:#ff6a00; }
+.rating-display__label { font-weight:800; color:#111; font-size:.95rem; }
+.venue-card__rate-btn { border:1px solid #111; background:#fff; border-radius:10px; padding:.5rem .8rem; font-weight:800; cursor:pointer; box-shadow:0 3px 10px rgba(0,0,0,.06); }
 .venue-card__rate-btn:hover { background:#ff6a00; color:#fff; border-color:#ff6a00; }
+.venue-card__rate-btn:disabled { opacity:.5; cursor:default; }
 .venue-card__actions { display:flex; gap:.5rem; flex-wrap:wrap; }
 .venue-card__actions .action { border:1px solid #e5e7eb; border-radius:12px; padding:.6rem .9rem; text-decoration:none; color:#111; font-weight:700; background:#fff; box-shadow:0 3px 10px rgba(0,0,0,.06); }
 .venue-card__actions .action.primary { background:#111; color:#fff; border-color:#111; }

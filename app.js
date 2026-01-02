@@ -87,9 +87,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function getRatingEntry(venueId){
     const entry = ratingStore && typeof ratingStore === "object" ? ratingStore[venueId] : null;
-    if(!entry || typeof entry !== "object") return { total:0, count:0 };
-    const { total=0, count=0 } = entry;
-    return { total, count };
+    if(!entry || typeof entry !== "object") return { total:0, count:0, rated:false };
+    const { total=0, count=0, rated=false } = entry;
+    return { total, count, rated:!!rated };
   }
   function persistRatings(){
     saveLocal(RATING_STORAGE_KEY, ratingStore);
@@ -97,21 +97,34 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function recordRating(venueId,value){
     if(!venueId||!value) return;
     const current=getRatingEntry(venueId);
-    const next={ total: current.total + value, count: current.count + 1 };
+    if(current.rated) return;
+    const next={ total: current.total + value, count: current.count + 1, rated:true };
     ratingStore={ ...ratingStore, [venueId]: next };
     persistRatings();
     if(openVenueId===venueId) renderVenueRatingSummary(venueId);
   }
   function renderVenueRatingSummary(venueId){
-    if(!detailCard||!detailCard.ratingSummary) return;
-    const { total, count } = getRatingEntry(venueId);
+    if(!detailCard||!detailCard.ratingDisplay||!detailCard.rateButton) return;
+    const { total, count, rated } = getRatingEntry(venueId);
     const average = count ? total / count : null;
+    const stars=detailCard.ratingDisplay.querySelectorAll(".rating-star--display");
+    const label=detailCard.ratingDisplay.querySelector(".rating-display__label");
+    detailCard.rateButton.disabled=!!rated;
+    detailCard.rateButton.textContent=rated?"Rated":"Rate";
     if(count>=10 && average!==null){
-      detailCard.ratingSummary.textContent=`Outdoor area rating: ${average.toFixed(1)} / 5 (${count} ratings)`;
-      detailCard.ratingSummary.classList.remove("venue-card__rating-placeholder");
+      const filled=Math.round(average);
+      detailCard.ratingDisplay.classList.remove("hidden");
+      stars.forEach(star=>{
+        const value=Number(star.dataset.value);
+        star.classList.toggle("is-active",value<=filled);
+      });
+      if(label) label.textContent=`${average.toFixed(1)} (${count})`;
+      detailCard.ratingDisplay.setAttribute("aria-label",`Outdoor area rating ${average.toFixed(1)} out of 5 from ${count} ratings`);
     } else {
-      detailCard.ratingSummary.textContent="Rating coming soon";
-      detailCard.ratingSummary.classList.add("venue-card__rating-placeholder");
+      detailCard.ratingDisplay.classList.add("hidden");
+      stars.forEach(star=>star.classList.remove("is-active"));
+      if(label) label.textContent="";
+      detailCard.ratingDisplay.removeAttribute("aria-label");
     }
   }
   function centerOnUserIfAvailable(targetZoom=15,{force=false}={}){
@@ -374,7 +387,22 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__handle"></div>
         <div class="venue-card__header">
           <div class="venue-card__title">
-            <div class="venue-card__name"></div>
+            <div class="venue-card__name-row">
+              <div class="venue-card__name"></div>
+              <div class="venue-card__rating-inline">
+                <div class="rating-display hidden" aria-label="Outdoor area rating">
+                  <div class="rating-display__stars">
+                    <span class="rating-star rating-star--display" data-value="1">★</span>
+                    <span class="rating-star rating-star--display" data-value="2">★</span>
+                    <span class="rating-star rating-star--display" data-value="3">★</span>
+                    <span class="rating-star rating-star--display" data-value="4">★</span>
+                    <span class="rating-star rating-star--display" data-value="5">★</span>
+                  </div>
+                  <span class="rating-display__label"></span>
+                </div>
+                <button class="venue-card__rate-btn" type="button">Rate</button>
+              </div>
+            </div>
             <div class="venue-card__meta"></div>
             <div class="venue-card__address"></div>
           </div>
@@ -411,7 +439,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       weatherChip:container.querySelector("#venue-card-weather"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
-      ratingSummary:container.querySelector(".venue-card__rating-summary"),
+      ratingDisplay:container.querySelector(".rating-display"),
       rateButton:container.querySelector(".venue-card__rate-btn"),
       actions:{
         directions:container.querySelector('[data-action="directions"]'),
@@ -648,6 +676,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function openRatingCard(v){
+    const { rated } = getRatingEntry(v.id);
+    if(rated) return;
     const card=ensureRatingCard();
     card.container.dataset.venueId=v.id;
     card.titleEl.textContent=v.name?`Rate the outdoor area at ${v.name}`:"Rate the outdoor area";
