@@ -455,7 +455,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           </div>
         </div>
         <input class="venue-card__file-input" type="file" accept="image/*" capture="environment" multiple hidden>
-        <div class="venue-card__upload-hint hidden" role="status"></div>
+        <div class="venue-card__upload-hint hidden" role="status">
+          <span class="venue-card__upload-text"></span>
+          <button class="venue-card__upload-dismiss" type="button" aria-label="Dismiss photo tip">×</button>
+        </div>
       </div>`;
     stripLegacyRating(container);
     document.body.appendChild(container);
@@ -466,6 +469,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const addImagesButton=container.querySelector('[data-action="add-images"]');
     const fileInput=container.querySelector(".venue-card__file-input");
     const uploadHint=container.querySelector(".venue-card__upload-hint");
+    const uploadHintText=container.querySelector(".venue-card__upload-text");
+    const uploadDismiss=container.querySelector(".venue-card__upload-dismiss");
     const rateButtons=Array.from(container.querySelectorAll(".venue-card__rate-btn"));
     const setFabOpen=(isOpen)=>{
       container.classList.toggle("fab-open",!!isOpen);
@@ -487,8 +492,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(addImagesButton&&fileInput){
       addImagesButton.addEventListener("click",(event)=>{
         event.stopPropagation();
-        if(uploadHint){
-          uploadHint.textContent="Choose or take photos of this venue. Your device may ask for camera or photo permissions.";
+        if(uploadHint&&uploadHintText){
+          uploadHintText.textContent="Choose or take photos of this venue. Your device may ask for camera or photo permissions.";
           uploadHint.classList.remove("hidden");
         }
         fileInput.value="";
@@ -497,14 +502,25 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
       fileInput.addEventListener("change",()=>{
         const count=fileInput.files?fileInput.files.length:0;
-        if(!uploadHint) return;
+        if(!uploadHint||!uploadHintText) return;
         if(count>0){
-          uploadHint.textContent=count===1?"1 photo selected. Thanks for sharing!":`${count} photos selected. Thanks for sharing!`;
+          uploadHintText.textContent=count===1?"1 photo selected. Thanks for sharing!":`${count} photos selected. Thanks for sharing!`;
           uploadHint.classList.remove("hidden");
         } else {
-          uploadHint.textContent="";
+          uploadHintText.textContent="";
           uploadHint.classList.add("hidden");
         }
+      });
+    }
+    const hideUploadHint=()=>{
+      if(!uploadHint||!uploadHintText) return;
+      uploadHintText.textContent="";
+      uploadHint.classList.add("hidden");
+    };
+    if(uploadDismiss){
+      uploadDismiss.addEventListener("click",(event)=>{
+        event.stopPropagation();
+        hideUploadHint();
       });
     }
     detailCard={
@@ -525,6 +541,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       addImagesButton,
       fileInput,
       uploadHint,
+      uploadHintText,
+      uploadDismiss,
+      hideUploadHint,
       setFabOpen,
       currentVenue:null,
       actions:{
@@ -538,6 +557,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function hideVenueCard(){
     if(!detailCard) return;
     if(detailCard.setFabOpen) detailCard.setFabOpen(false);
+    if(detailCard.hideUploadHint) detailCard.hideUploadHint();
     detailCard.container.classList.add("hidden");
     detailCard.container.classList.remove("show");
     detailCard.container.removeAttribute("data-venue-id");
@@ -623,8 +643,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     }
     if(card.uploadHint){
-      card.uploadHint.textContent="";
-      card.uploadHint.classList.add("hidden");
+      if(card.hideUploadHint) card.hideUploadHint();
+      else card.uploadHint.classList.add("hidden");
     }
     renderVenueRatingSummary(v.id);
 
