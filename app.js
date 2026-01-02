@@ -104,13 +104,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(openVenueId===venueId) renderVenueRatingSummary(venueId);
   }
   function renderVenueRatingSummary(venueId){
-    if(!detailCard||!detailCard.ratingDisplay||!detailCard.rateButton) return;
+    if(!detailCard||!detailCard.ratingDisplay) return;
     const { total, count, rated } = getRatingEntry(venueId);
     const average = count ? total / count : null;
     const stars=detailCard.ratingDisplay.querySelectorAll(".rating-star--display");
     const label=detailCard.ratingDisplay.querySelector(".rating-display__label");
-    detailCard.rateButton.disabled=!!rated;
-    detailCard.rateButton.textContent=rated?"Rated":"Rate";
+    const rateBtns=(detailCard.rateButtons&&detailCard.rateButtons.length)?detailCard.rateButtons:(detailCard.rateButton?[detailCard.rateButton]:[]);
+    if(rateBtns.length){
+      rateBtns.forEach(btn=>{
+        btn.disabled=!!rated;
+        btn.textContent=rated?"Rated":"Rate";
+      });
+    }
     if(count>=10 && average!==null){
       const filled=Math.round(average);
       detailCard.ratingDisplay.classList.remove("hidden");
@@ -418,7 +423,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
                   </div>
                   <span class="rating-display__label"></span>
                 </div>
-                <button class="venue-card__rate-btn" type="button">Rate</button>
               </div>
             </div>
             <div class="venue-card__meta"></div>
@@ -436,18 +440,90 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__section-title">Outdoor area rating</div>
         <div class="venue-card__rating-row">
           <div class="venue-card__rating-summary venue-card__rating-placeholder">Rating coming soon</div>
-          <button class="venue-card__rate-btn" type="button">Rate outdoor area</button>
+          <button class="venue-card__fab-item venue-card__rate-btn" type="button" data-action="rate">Rate outdoor area</button>
         </div>
         <div class="venue-card__actions">
           <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
           <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
         </div>
+        <div class="venue-card__fab" aria-haspopup="true">
+          <button class="venue-card__fab-toggle" type="button" aria-label="More actions" aria-expanded="false">+</button>
+          <div class="venue-card__fab-menu" role="menu">
+            <button class="venue-card__fab-item venue-card__rate-btn" type="button" data-action="rate">Rate</button>
+            <button class="venue-card__fab-item" type="button" data-action="add-images">Add images</button>
+          </div>
+        </div>
+        <input class="venue-card__file-input" type="file" accept="image/*" capture="environment" multiple hidden>
+        <div class="venue-card__upload-hint hidden" role="status">
+          <span class="venue-card__upload-text"></span>
+          <button class="venue-card__upload-dismiss" type="button" aria-label="Dismiss photo tip">×</button>
+        </div>
       </div>`;
     stripLegacyRating(container);
     document.body.appendChild(container);
     const closeBtn=container.querySelector(".venue-card__close");
     closeBtn.addEventListener("click",()=>hideVenueCard());
+    const fabToggle=container.querySelector(".venue-card__fab-toggle");
+    const fabMenu=container.querySelector(".venue-card__fab-menu");
+    const addImagesButton=container.querySelector('[data-action="add-images"]');
+    const fileInput=container.querySelector(".venue-card__file-input");
+    const uploadHint=container.querySelector(".venue-card__upload-hint");
+    const uploadHintText=container.querySelector(".venue-card__upload-text");
+    const uploadDismiss=container.querySelector(".venue-card__upload-dismiss");
+    const rateButtons=Array.from(container.querySelectorAll(".venue-card__rate-btn"));
+    const setFabOpen=(isOpen)=>{
+      container.classList.toggle("fab-open",!!isOpen);
+      if(fabMenu) fabMenu.classList.toggle("show",!!isOpen);
+      if(fabToggle) fabToggle.setAttribute("aria-expanded",isOpen?"true":"false");
+    };
+    if(fabToggle){
+      fabToggle.addEventListener("click",(event)=>{
+        event.stopPropagation();
+        setFabOpen(!container.classList.contains("fab-open"));
+      });
+    }
+    document.addEventListener("click",(event)=>{
+      if(!container.contains(event.target)) setFabOpen(false);
+    });
+    if(fabMenu){
+      fabMenu.addEventListener("click",(event)=>event.stopPropagation());
+    }
+    if(addImagesButton&&fileInput){
+      addImagesButton.addEventListener("click",(event)=>{
+        event.stopPropagation();
+        if(uploadHint&&uploadHintText){
+          uploadHintText.textContent="Choose or take photos of this venue. Your device may ask for camera or photo permissions.";
+          uploadHint.classList.remove("hidden");
+        }
+        fileInput.value="";
+        fileInput.click();
+        setFabOpen(false);
+      });
+      fileInput.addEventListener("change",()=>{
+        const count=fileInput.files?fileInput.files.length:0;
+        if(!uploadHint||!uploadHintText) return;
+        if(count>0){
+          uploadHintText.textContent=count===1?"1 photo selected. Thanks for sharing!":`${count} photos selected. Thanks for sharing!`;
+          uploadHint.classList.remove("hidden");
+        } else {
+          uploadHintText.textContent="";
+          uploadHint.classList.add("hidden");
+        }
+      });
+    }
+    const hideUploadHint=()=>{
+      if(!uploadHint||!uploadHintText) return;
+      uploadHintText.textContent="";
+      uploadHint.classList.add("hidden");
+    };
+    if(uploadDismiss){
+      uploadDismiss.addEventListener("click",(event)=>{
+        event.stopPropagation();
+        hideUploadHint();
+      });
+    }
+    hideUploadHint();
     detailCard={
       container,
       nameEl:container.querySelector(".venue-card__name"),
@@ -459,7 +535,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
       ratingDisplay:container.querySelector(".rating-display"),
-      rateButton:container.querySelector(".venue-card__rate-btn"),
+      rateButton:rateButtons[0]||null,
+      rateButtons,
+      fabToggle,
+      fabMenu,
+      addImagesButton,
+      fileInput,
+      uploadHint,
+      uploadHintText,
+      uploadDismiss,
+      hideUploadHint,
+      setFabOpen,
+      currentVenue:null,
       actions:{
         directions:container.querySelector('[data-action="directions"]'),
         uber:container.querySelector('[data-action="uber"]'),
@@ -470,6 +557,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function hideVenueCard(){
     if(!detailCard) return;
+    if(detailCard.setFabOpen) detailCard.setFabOpen(false);
+    if(detailCard.hideUploadHint) detailCard.hideUploadHint();
     detailCard.container.classList.add("hidden");
     detailCard.container.classList.remove("show");
     detailCard.container.removeAttribute("data-venue-id");
@@ -485,6 +574,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function showVenueCard(v){
     const card=ensureDetailCard();
+    openVenueId=v.id;
+    card.currentVenue=v;
+    if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
     const kind=toTitle(tags.amenity||tags.tourism||"");
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
@@ -542,8 +634,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.actions.website.classList.add("hidden");
     }
 
-    if(card.rateButton){
-      card.rateButton.onclick=()=>openRatingCard(v);
+    if(card.rateButtons&&card.rateButtons.length){
+      card.rateButtons.forEach(btn=>{
+        btn.onclick=(event)=>{
+          event.stopPropagation();
+          if(card.currentVenue) openRatingCard(card.currentVenue);
+          if(card.setFabOpen) card.setFabOpen(false);
+        };
+      });
+    }
+    if(card.uploadHint){
+      if(card.hideUploadHint) card.hideUploadHint();
+      else card.uploadHint.classList.add("hidden");
     }
     renderVenueRatingSummary(v.id);
 
