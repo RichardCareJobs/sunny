@@ -523,6 +523,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         hideUploadHint();
       });
     }
+    hideUploadHint();
     detailCard={
       container,
       nameEl:container.querySelector(".venue-card__name"),

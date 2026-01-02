@@ -129,7 +129,7 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .venue-card__fab-item { width:100%; border:0; background:transparent; text-align:left; padding:10px 12px; border-radius:10px; font-weight:800; cursor:pointer; }
 .venue-card__fab-item:hover { background:#f9fafb; }
 .venue-card__upload-hint { position:absolute; left:12px; right:88px; bottom:84px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:12px; padding:.65rem .75rem; color:#4b5563; font-size:.9rem; box-shadow:0 10px 25px rgba(0,0,0,.12); display:flex; align-items:flex-start; gap:.5rem; }
-.venue-card__upload-hint.hidden { display:none; }
+.venue-card__upload-hint.hidden { display:none !important; }
 .venue-card__upload-dismiss { border:0; background:transparent; color:#6b7280; font-size:1rem; cursor:pointer; line-height:1; }
 .venue-card__upload-dismiss:hover { color:#111; }
 
