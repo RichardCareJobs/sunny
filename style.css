@@ -3,10 +3,10 @@
 * { box-sizing: border-box; }
 html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:var(--bg); }
 #app { display:grid; grid-template-rows: auto 1fr; height: 100dvh; }
-.toolbar { display:flex; align-items:center; gap:.6rem; padding:.6rem .8rem; border-bottom:1px solid #eee; background:#fff; position:sticky; top:0; z-index:1000; }
-.toolbar h1 { font-size:1.1rem; font-weight:800; margin:0; }
+.toolbar { display:flex; align-items:center; gap:.6rem; padding:.6rem .8rem; border-bottom:1px solid #b64c00; background:#cc5500; color:#fff; position:sticky; top:0; z-index:1000; }
+.toolbar h1 { font-size:1.1rem; font-weight:800; margin:0; color:#fff; }
 .toolbar .spacer { flex:1; }
-a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
+a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 #map { width:100%; height:100%; min-height:60vh; }
 /* Inline minimal Leaflet CSS to ensure map renders on content:// */
 
@@ -33,7 +33,7 @@ a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
 .view-toggle button { border:1px solid #ddd; background:#fff; border-radius:10px; padding:.35rem .6rem; }
 .view-toggle .active { background:#111; color:#fff; border-color:#111; }
 .cards { display:flex; gap:.5rem; overflow-x:auto; padding:.25rem; scroll-snap-type: x proximity; }
-.card { min-width: 260px; max-width: 280px; flex:0 0 auto; border:1px solid #eee; border-radius:14px; background:#fff; padding:.6rem .7rem; box-shadow: 0 4px 14px rgba(0,0,0,.06); scroll-snap-align: start; }
+.card { min-width: 260px; max-width: 280px; flex:0 0 auto; border:2px solid #cc5500; border-radius:14px; background:#fff; padding:.6rem .7rem; box-shadow: 0 4px 14px rgba(0,0,0,.06); scroll-snap-align: start; }
 .card h3 { margin:.1rem 0 .25rem; font-size:1rem; }
 .badges { display:flex; flex-wrap:wrap; gap:.25rem; margin:.25rem 0 .35rem; }
 .badge { font-size:.75rem; border:1px solid #ddd; border-radius:999px; padding:2px 6px; }
@@ -90,7 +90,7 @@ a.tiny { font-size:.85rem; color:var(--muted); text-decoration:none; }
 /* Venue detail card */
 .venue-card { position: fixed; left:0; right:0; bottom:0; display:flex; justify-content:center; padding:0 8px; z-index:1250; pointer-events:none; opacity:0; transform: translateY(12px); transition: opacity .18s ease, transform .18s ease; }
 .venue-card.show { opacity:1; transform: translateY(0); pointer-events:auto; }
-.venue-card__inner { width:min(640px, calc(100% - 16px)); background:#fff; border:1px solid #e5e7eb; border-radius:18px 18px 0 0; box-shadow:0 -10px 30px rgba(0,0,0,.22); padding:1rem 1rem calc(1rem + env(safe-area-inset-bottom)); display:grid; gap:.55rem; }
+.venue-card__inner { width:min(640px, calc(100% - 16px)); background:#fff; border:2px solid #cc5500; border-radius:18px 18px 0 0; box-shadow:0 -10px 30px rgba(0,0,0,.22); padding:1rem 1rem calc(1rem + env(safe-area-inset-bottom)); display:grid; gap:.55rem; }
 .venue-card__handle { width:44px; height:4px; background:#e5e7eb; border-radius:999px; margin:0 auto .15rem; }
 .venue-card__header { display:flex; justify-content:space-between; gap:.75rem; align-items:flex-start; }
 .venue-card__name { font-size:1.15rem; font-weight:800; }
