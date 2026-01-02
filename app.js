@@ -417,6 +417,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <span class="chip chip-open"></span>
         </div>
         <div class="venue-card__note"></div>
+        <div class="venue-card__section-title">Outdoor area rating</div>
+        <div class="venue-card__rating-row">
+          <div class="venue-card__rating-summary venue-card__rating-placeholder">Rating coming soon</div>
+          <button class="venue-card__rate-btn" type="button">Rate outdoor area</button>
+        </div>
         <div class="venue-card__actions">
           <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
           <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
