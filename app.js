@@ -379,6 +379,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function ensureDetailCard(){
     if(detailCard) return detailCard;
+    const existing=document.getElementById("venue-card");
+    if(existing) existing.remove();
     const container=document.createElement("div");
     container.id="venue-card";
     container.className="venue-card hidden";
