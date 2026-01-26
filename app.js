@@ -100,6 +100,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!(start instanceof Date) || !(end instanceof Date)) return "";
     return `${formatTime(start)} - ${formatTime(end)}`;
   }
+  function estimateUberFare(distanceKm){
+    const base=8;
+    const perKm=2.2;
+    const estimate=base + perKm * Math.max(distanceKm,0.2);
+    return Math.round(estimate);
+  }
   function buildStartDateFromInput(timeValue){
     if(!timeValue) return new Date();
     const [hour,minute]=timeValue.split(":").map(Number);
@@ -530,6 +536,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }));
       crawlState={ venues, startAt };
       updateCrawlSchedule();
+      if(markersLayer) markersLayer.clearLayers();
       renderCrawlMarkers();
       showCrawlControls();
       updateCrawlList();
@@ -865,6 +872,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function renderMarkers(){
     if(!markersLayer||!map) return;
+    if(crawlState&&crawlState.venues&&crawlState.venues.length){
+      markersLayer.clearLayers();
+      return;
+    }
     const reopenVenueId=openVenueId;
     let reopenVenue=null;
     isRenderingMarkers=true;
@@ -946,6 +957,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <span class="crawl-card__toggle-track"></span>
             <span class="crawl-card__toggle-label">Remind me when it is time to move on</span>
           </label>
+          <div class="crawl-card__uber">
+            <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book an Uber</a>
+            <div class="crawl-card__uber-text"></div>
+          </div>
         </div>
       </div>`;
     document.body.appendChild(container);
@@ -963,6 +978,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         hideCrawlCard();
         updateCrawlList();
         hideCrawlControls();
+        showCrawlFab();
+        renderMarkers();
         return;
       }
       crawlState.venues=nextVenues.map((venue,index)=>({ ...venue, crawlIndex:index }));
@@ -1007,7 +1024,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       timeRangeEl:container.querySelector(".crawl-card__time-range"),
       timeLengthEl:container.querySelector(".crawl-card__time-length"),
       removeBtn,
-      toggleInput
+      toggleInput,
+      uberWrap:container.querySelector(".crawl-card__uber"),
+      uberBtn:container.querySelector(".crawl-card__uber-btn"),
+      uberText:container.querySelector(".crawl-card__uber-text")
     };
     return crawlCard;
   }
@@ -1027,6 +1047,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const isLast=venue.crawlIndex===crawlState.venues.length-1;
     card.toggleInput.checked=!!venue.remind;
     card.toggleInput.closest(".crawl-card__toggle").classList.toggle("hidden",isLast);
+    const nextVenue=!isLast ? crawlState.venues[venue.crawlIndex+1] : null;
+    if(nextVenue){
+      card.uberWrap.classList.remove("hidden");
+      card.uberText.textContent=`Book an Uber to ${nextVenue.name || "the next venue"}`;
+      card.uberBtn.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${nextVenue.lat}&dropoff[longitude]=${nextVenue.lng}&dropoff[nickname]=${encodeURIComponent(nextVenue.name || "Next venue")}`;
+    } else {
+      card.uberWrap.classList.add("hidden");
+      card.uberText.textContent="";
+      card.uberBtn.removeAttribute("href");
+    }
     card.container.classList.remove("hidden");
     requestAnimationFrame(()=>card.container.classList.add("show"));
   }
@@ -1048,9 +1078,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const container=document.createElement("div");
     container.className="crawl-controls hidden";
     container.innerHTML=`
-      <button class="crawl-control" type="button" data-action="list">View crawl list</button>
+      <button class="crawl-control crawl-control--icon" type="button" data-action="list" aria-label="View crawl list">
+        <span aria-hidden="true">☰</span>
+      </button>
       <button class="crawl-control crawl-control--add" type="button" data-action="add" aria-label="Add venue">+</button>
-      <button class="crawl-control" type="button" data-action="share">Share crawl</button>
+      <button class="crawl-control crawl-control--icon" type="button" data-action="share" aria-label="Share crawl">
+        <span aria-hidden="true">⤴</span>
+      </button>
     `;
     document.body.appendChild(container);
     container.addEventListener("click",(event)=>{
@@ -1068,6 +1102,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function showCrawlControls(){
     const controls=ensureCrawlControls();
     controls.classList.remove("hidden");
+    hideCrawlFab();
   }
 
   function hideCrawlControls(){
@@ -1102,13 +1137,25 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const subtitle=panel.querySelector(".crawl-list__subtitle");
     subtitle.textContent=`${crawlState.venues.length} venues · Start ${formatTime(crawlState.startAt)}`;
     items.innerHTML="";
-    crawlState.venues.forEach((venue)=>{
+    crawlState.venues.forEach((venue,index)=>{
+      const previous=index>0 ? crawlState.venues[index-1] : null;
+      const distanceKm=previous ? haversine(previous.lat,previous.lng,venue.lat,venue.lng) : null;
+      const distanceLabel=previous ? `${formatDistanceKm(distanceKm)} from ${previous.name || "previous venue"}` : "Start of the crawl";
+      const fare=previous ? estimateUberFare(distanceKm) : null;
+      const uberText=previous ? `$${fare} uber fare from ${previous.name || "previous venue"}` : "No ride needed for the first stop.";
+      const uberLink=previous
+        ? `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${previous.lat}&pickup[longitude]=${previous.lng}&pickup[nickname]=${encodeURIComponent(previous.name || "Previous venue")}&dropoff[latitude]=${venue.lat}&dropoff[longitude]=${venue.lng}&dropoff[nickname]=${encodeURIComponent(venue.name || "Next venue")}`
+        : "";
       const item=document.createElement("div");
       item.className="crawl-list__item";
       item.innerHTML=`
         <div>
           <div class="crawl-list__title">${venue.crawlIndex+1}. ${venue.name||"Venue"}</div>
-          <div class="crawl-list__meta">${venue.address||formatAddress(venue.tags||{})}</div>
+          <div class="crawl-list__meta">${distanceLabel}</div>
+          <div class="crawl-list__uber">
+            <span>${uberText}</span>
+            <a class="crawl-list__uber-btn" target="_blank" rel="noopener" ${previous ? `href="${uberLink}"` : "aria-disabled=\"true\""}>Book Uber</a>
+          </div>
         </div>
         <div class="crawl-list__time">${formatTimeRange(venue.slot?.start,venue.slot?.end)}</div>
       `;
@@ -1236,13 +1283,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       <div class="crawl-builder__backdrop"></div>
       <div class="crawl-builder__panel">
         <div class="crawl-builder__header">
-          <h2>Create a pub crawl</h2>
+          <h2>Plan a pub crawl</h2>
           <button type="button" class="crawl-builder__close" aria-label="Close pub crawl builder">×</button>
         </div>
         <div class="crawl-builder__body">
           <div class="crawl-builder__section">
-            <button type="button" class="crawl-option" data-option="nearby">Create a pub crawl nearby</button>
-            <button type="button" class="crawl-option" data-option="around" disabled>Create a pub crawl around</button>
+            <button type="button" class="crawl-option" data-option="nearby">Plan a pub crawl nearby</button>
+            <button type="button" class="crawl-option" data-option="around">Plan a pub crawl around</button>
             <label class="crawl-builder__label" for="crawl-location-input">Enter an Australian postcode or suburb</label>
             <input id="crawl-location-input" class="crawl-builder__input" type="text" placeholder="e.g. 2000 or Fitzroy">
             <div class="crawl-builder__status" role="status"></div>
@@ -1277,6 +1324,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     function setSelectedOption(option){
       selectedOption=option;
       optionButtons.forEach(btn=>btn.classList.toggle("is-selected",btn.dataset.option===option));
+      input.disabled=option!=="around";
+      if(option==="around") input.focus();
       startSection.classList.remove("hidden");
     }
 
@@ -1288,7 +1337,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         setSelectedOption(option);
         if(option==="around"){
           const query=input.value.trim();
-          if(!query) return;
+          crawlBuilder.locationOverride=null;
+          if(!query){
+            setStatus("Enter a suburb or postcode to build around.","error");
+            return;
+          }
           btn.classList.add("is-loading");
           try{
             const result=await geocodeAustralianLocation(query);
@@ -1336,11 +1389,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
 
     input.addEventListener("input",()=>{
-      const valid=isValidAustralianLocation(input.value);
-      const aroundButton=container.querySelector('.crawl-option[data-option="around"]');
-      aroundButton.disabled=!valid;
-      if(valid) setStatus("","success");
-      else setStatus("");
+      if(!input.disabled){
+        const valid=isValidAustralianLocation(input.value);
+        if(valid) setStatus("","success");
+        else setStatus("");
+      } else {
+        setStatus("");
+      }
     });
 
     closeBtn.addEventListener("click",()=>container.classList.add("hidden"));
@@ -1354,13 +1409,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       input,
       locationOverride:null,
       reset(){
-        selectedOption=null;
-        optionButtons.forEach(btn=>{
-          btn.classList.remove("is-selected","is-loading");
-          if(btn.dataset.option==="around") btn.disabled=!isValidAustralianLocation(input.value);
-        });
+        selectedOption="nearby";
+        optionButtons.forEach(btn=>btn.classList.remove("is-selected","is-loading"));
+        const nearbyButton=container.querySelector('.crawl-option[data-option="nearby"]');
+        nearbyButton?.classList.add("is-selected");
+        input.disabled=true;
+        crawlBuilder.locationOverride=null;
         startButtons.forEach(btn=>btn.classList.remove("is-selected"));
-        startSection.classList.add("hidden");
+        startSection.classList.remove("hidden");
         timeInput.classList.add("hidden");
         setStatus("");
       }
@@ -1390,6 +1446,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     buildCrawlState(venues,startAt);
+    if(markersLayer) markersLayer.clearLayers();
     renderCrawlMarkers();
     updateCrawlList();
     showCrawlControls();
@@ -1404,9 +1461,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     button.id="crawl-fab";
     button.className="crawl-fab";
     button.type="button";
-    button.textContent="Create a pub crawl";
+    button.textContent="Plan a pub crawl";
     button.addEventListener("click",openCrawlBuilder);
     document.body.appendChild(button);
+  }
+
+  function showCrawlFab(){
+    const button=document.getElementById("crawl-fab");
+    if(button) button.classList.remove("hidden");
+  }
+
+  function hideCrawlFab(){
+    const button=document.getElementById("crawl-fab");
+    if(button) button.classList.add("hidden");
   }
 
   function addLocateControl(){
