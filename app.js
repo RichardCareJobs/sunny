@@ -115,23 +115,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(next.getTime()<now.getTime()) next.setDate(next.getDate()+1);
     return next;
   }
-  function isValidAustralianLocation(input=""){
-    const trimmed=input.trim();
-    if(/^\d{4}$/.test(trimmed)) return true;
-    if(/^[a-zA-Z][a-zA-Z\s'-]{2,}$/.test(trimmed)) return true;
-    return false;
-  }
-  async function geocodeAustralianLocation(query){
-    if(!query) return null;
-    const url=`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(`${query} Australia`)}`;
-    const response=await fetch(url,{headers:{Accept:"application/json","Accept-Language":"en-AU"}});
-    if(!response.ok) throw new Error("Geocode failed");
-    const results=await response.json();
-    if(!Array.isArray(results)||results.length===0) return null;
-    const first=results[0];
-    return { lat: Number(first.lat), lng: Number(first.lon), label: first.display_name };
-  }
-
+ 
   // Ratings
   const RATING_STORAGE_KEY = "sunny-outdoor-ratings";
   let ratingStore = loadLocal(RATING_STORAGE_KEY) || {};
@@ -451,7 +435,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return sorted.slice(0,count);
   }
 
-  function buildCrawlState(venues,startAt){
+  function buildCrawlState(venues,startAt,originInfo=null){
     const normalized=venues.map((venue,index)=>({
       ...venue,
       crawlIndex:index,
@@ -459,7 +443,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hangMinutes:CRAWL_DEFAULT_HANG_MINUTES,
       remind:false
     }));
-    crawlState={ venues: normalized, startAt };
+    crawlState={ venues: normalized, startAt, origin: originInfo };
     updateCrawlSchedule();
   }
 
@@ -508,6 +492,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!crawlState||!crawlState.venues) return null;
     const data={
       startAt: crawlState.startAt instanceof Date ? crawlState.startAt.toISOString() : null,
+      origin: crawlState.origin || null,
       venues: crawlState.venues.map(v=>({
         id:v.id,
         name:v.name,
@@ -528,13 +513,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const data=JSON.parse(json);
       if(!data||!Array.isArray(data.venues)) return false;
       const startAt=data.startAt ? new Date(data.startAt) : new Date();
+      const origin=data.origin || null;
       const venues=data.venues.map((v,index)=>({
         ...v,
         crawlIndex:index,
         hangMinutes:Number(v.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES,
         remind:false
       }));
-      crawlState={ venues, startAt };
+      crawlState={ venues, startAt, origin };
       updateCrawlSchedule();
       if(markersLayer) markersLayer.clearLayers();
       renderCrawlMarkers();
@@ -958,8 +944,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <span class="crawl-card__toggle-label">Remind me when it is time to move on</span>
           </label>
           <div class="crawl-card__uber">
-            <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book an Uber</a>
             <div class="crawl-card__uber-text"></div>
+            <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book now</a>
           </div>
         </div>
       </div>`;
@@ -1081,9 +1067,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       <button class="crawl-control crawl-control--icon" type="button" data-action="list" aria-label="View crawl list">
         <span aria-hidden="true">☰</span>
       </button>
-      <button class="crawl-control crawl-control--add" type="button" data-action="add" aria-label="Add venue">+</button>
+      <button class="crawl-control crawl-control--icon" type="button" data-action="add" aria-label="Add venue">
+        <span aria-hidden="true">+</span>
+      </button>
       <button class="crawl-control crawl-control--icon" type="button" data-action="share" aria-label="Share crawl">
-        <span aria-hidden="true">⤴</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M18 8a3 3 0 1 0-2.83-4H15a3 3 0 0 0 .17 1L8.91 8.3a3 3 0 0 0-1.82-.61 3 3 0 1 0 2.65 4.41l5.36 3.09A3 3 0 0 0 15 16a3 3 0 1 0 .17-1l-5.36-3.09a3 3 0 0 0 0-1.82l5.36-3.09A3 3 0 0 0 18 8Z"/>
+        </svg>
       </button>
     `;
     document.body.appendChild(container);
@@ -1139,12 +1129,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     items.innerHTML="";
     crawlState.venues.forEach((venue,index)=>{
       const previous=index>0 ? crawlState.venues[index-1] : null;
-      const distanceKm=previous ? haversine(previous.lat,previous.lng,venue.lat,venue.lng) : null;
-      const distanceLabel=previous ? `${formatDistanceKm(distanceKm)} from ${previous.name || "previous venue"}` : "Start of the crawl";
-      const fare=previous ? estimateUberFare(distanceKm) : null;
-      const uberText=previous ? `$${fare} uber fare from ${previous.name || "previous venue"}` : "No ride needed for the first stop.";
-      const uberLink=previous
-        ? `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${previous.lat}&pickup[longitude]=${previous.lng}&pickup[nickname]=${encodeURIComponent(previous.name || "Previous venue")}&dropoff[latitude]=${venue.lat}&dropoff[longitude]=${venue.lng}&dropoff[nickname]=${encodeURIComponent(venue.name || "Next venue")}`
+      const origin=crawlState.origin && typeof crawlState.origin.lat==="number" ? crawlState.origin : null;
+      const originLabel=origin?.label || "start point";
+      const fromPoint=previous || origin;
+      const fromLabel=previous ? (previous.name || "previous venue") : originLabel;
+      const distanceKm=fromPoint ? haversine(fromPoint.lat,fromPoint.lng,venue.lat,venue.lng) : 0;
+      const distanceLabel=fromPoint ? `${formatDistanceKm(distanceKm)} from ${fromLabel}` : "Start of the crawl";
+      const fare=estimateUberFare(distanceKm);
+      const uberText=`$${fare} uber fare from ${fromLabel}`;
+      const uberLink=fromPoint
+        ? `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${fromPoint.lat}&pickup[longitude]=${fromPoint.lng}&pickup[nickname]=${encodeURIComponent(fromLabel)}&dropoff[latitude]=${venue.lat}&dropoff[longitude]=${venue.lng}&dropoff[nickname]=${encodeURIComponent(venue.name || "Next venue")}`
         : "";
       const item=document.createElement("div");
       item.className="crawl-list__item";
@@ -1154,7 +1148,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <div class="crawl-list__meta">${distanceLabel}</div>
           <div class="crawl-list__uber">
             <span>${uberText}</span>
-            <a class="crawl-list__uber-btn" target="_blank" rel="noopener" ${previous ? `href="${uberLink}"` : "aria-disabled=\"true\""}>Book Uber</a>
+            <a class="crawl-list__uber-btn" target="_blank" rel="noopener" ${fromPoint ? `href="${uberLink}"` : "aria-disabled=\"true\""}>Book now</a>
           </div>
         </div>
         <div class="crawl-list__time">${formatTimeRange(venue.slot?.start,venue.slot?.end)}</div>
@@ -1291,7 +1285,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <button type="button" class="crawl-option" data-option="nearby">Plan a pub crawl nearby</button>
             <button type="button" class="crawl-option" data-option="around">Plan a pub crawl around</button>
             <label class="crawl-builder__label" for="crawl-location-input">Enter an Australian postcode or suburb</label>
-            <input id="crawl-location-input" class="crawl-builder__input" type="text" placeholder="e.g. 2000 or Fitzroy">
+            <input id="crawl-location-input" class="crawl-builder__input" type="text" placeholder="e.g. 2000 or Fitzroy" autocomplete="off">
+            <div class="crawl-builder__suggestions"></div>
             <div class="crawl-builder__status" role="status"></div>
           </div>
           <div class="crawl-builder__section crawl-start hidden">
@@ -1314,11 +1309,48 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const timeInput=container.querySelector(".crawl-builder__time-input");
     const statusEl=container.querySelector(".crawl-builder__status");
     const input=container.querySelector(".crawl-builder__input");
+    const suggestionsEl=container.querySelector(".crawl-builder__suggestions");
+    let suggestionTimer=null;
     let selectedOption=null;
 
     function setStatus(message,type=""){
       statusEl.textContent=message||"";
       statusEl.className=`crawl-builder__status ${type}`.trim();
+    }
+    function renderSuggestions(list){
+      if(!suggestionsEl) return;
+      suggestionsEl.innerHTML="";
+      if(!Array.isArray(list)||list.length===0) return;
+      list.forEach((item)=>{
+        const btn=document.createElement("button");
+        btn.type="button";
+        btn.className="crawl-builder__suggestion";
+        btn.textContent=item.label;
+        btn.addEventListener("click",()=>{
+          input.value=item.label;
+          crawlBuilder.locationOverride={ lat:item.lat, lng:item.lng, label:item.label };
+          suggestionsEl.innerHTML="";
+          setStatus("Location confirmed.","success");
+          if(map) map.flyTo([item.lat,item.lng],13,{ animate:true });
+        });
+        suggestionsEl.appendChild(btn);
+      });
+    }
+    async function fetchSuggestions(query){
+      if(!query) return [];
+      const url=`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=au&q=${encodeURIComponent(query)}`;
+      const response=await fetch(url,{headers:{Accept:"application/json","Accept-Language":"en-AU"}});
+      if(!response.ok) return [];
+      const results=await response.json();
+      if(!Array.isArray(results)) return [];
+      return results.map(result=>{
+        const address=result.address || {};
+        const postcode=address.postcode || "";
+        const suburb=address.suburb || address.town || address.city || address.village || address.locality || "";
+        const state=address.state || "";
+        const label=[postcode,suburb,state].filter(Boolean).join(", ") || result.display_name;
+        return { label, lat:Number(result.lat), lng:Number(result.lon) };
+      });
     }
 
     function setSelectedOption(option){
@@ -1336,29 +1368,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const option=btn.dataset.option;
         setSelectedOption(option);
         if(option==="around"){
-          const query=input.value.trim();
           crawlBuilder.locationOverride=null;
-          if(!query){
-            setStatus("Enter a suburb or postcode to build around.","error");
-            return;
-          }
-          btn.classList.add("is-loading");
-          try{
-            const result=await geocodeAustralianLocation(query);
-            if(!result){
-              setStatus("We could not find that location. Try a different suburb or postcode.","error");
-              return;
-            }
-            crawlBuilder.locationOverride=result;
-            if(map) map.flyTo([result.lat,result.lng],13,{ animate:true });
-          } catch(err){
-            console.warn(err);
-            setStatus("Location lookup failed. Please try again.","error");
-          } finally {
-            btn.classList.remove("is-loading");
+          if(!input.value.trim()){
+            setStatus("Enter a suburb or postcode, then pick a location.","error");
           }
         } else {
           crawlBuilder.locationOverride=null;
+          if(suggestionsEl) suggestionsEl.innerHTML="";
         }
       });
     });
@@ -1389,13 +1405,25 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
 
     input.addEventListener("input",()=>{
-      if(!input.disabled){
-        const valid=isValidAustralianLocation(input.value);
-        if(valid) setStatus("","success");
-        else setStatus("");
-      } else {
+      if(input.disabled){
         setStatus("");
+        if(suggestionsEl) suggestionsEl.innerHTML="";
+        return;
       }
+      const query=input.value.trim();
+      crawlBuilder.locationOverride=null;
+      if(suggestionTimer) clearTimeout(suggestionTimer);
+      if(query.length<2){
+        if(suggestionsEl) suggestionsEl.innerHTML="";
+        setStatus("");
+        return;
+      }
+      suggestionTimer=setTimeout(async()=>{
+        const list=await fetchSuggestions(query);
+        renderSuggestions(list);
+        if(list.length===0) setStatus("No matches yet. Try another suburb or postcode.","error");
+        else setStatus("");
+      },300);
     });
 
     closeBtn.addEventListener("click",()=>container.classList.add("hidden"));
@@ -1415,6 +1443,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         nearbyButton?.classList.add("is-selected");
         input.disabled=true;
         crawlBuilder.locationOverride=null;
+        if(suggestionsEl) suggestionsEl.innerHTML="";
         startButtons.forEach(btn=>btn.classList.remove("is-selected"));
         startSection.classList.remove("hidden");
         timeInput.classList.add("hidden");
@@ -1435,7 +1464,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     let origin=getCrawlOrigin();
     if(option==="around"){
       if(!crawlBuilder?.locationOverride){
-        if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="Enter a suburb or postcode to build around.";
+        if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="Choose a location from the list first.";
         return;
       }
       origin=crawlBuilder.locationOverride;
@@ -1445,7 +1474,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="No venues found yet. Try moving the map.";
       return;
     }
-    buildCrawlState(venues,startAt);
+    buildCrawlState(venues,startAt,origin);
     if(markersLayer) markersLayer.clearLayers();
     renderCrawlMarkers();
     updateCrawlList();
