@@ -3,7 +3,7 @@
 
 ## Setup (static hosting)
 - Deploy the site to any static host (e.g. GitHub Pages). The map and core experience work without any server components.
-- Hours/phone/website enrichment is optional. If you skip it the UI quietly falls back to the OpenStreetMap data.
+- Hours/phone/website enrichment is optional. If you skip it the UI quietly falls back to the Google Places data.
 
 ## Optional enrichment endpoint
 1. Host an HTTPS endpoint that implements the same contract as the former Netlify function (accepts `name`, `lat`, `lon`, `wikidata`, `osm_id` query params and returns enrichment JSON).
