@@ -407,7 +407,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     if(errorStatuses.length){
       const details=errorStatuses.map(entry=>`${entry.type}:${entry.status}`).join(", ");
-      console.warn(`Places lookup warnings: ${details}`);
+      throw new Error(`Places lookup failed (${details})`);
     }
     const merged=new Map();
     responses.forEach(response=>{
@@ -415,7 +415,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
       });
     });
-    return { places: Array.from(merged.values()), hadErrors: errorStatuses.length > 0 };
+    return Array.from(merged.values());
   }
   function hasOutdoorHints(tags={}){
     const t=x=>(x||"").toLowerCase();
@@ -684,15 +684,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     const requestId=++placesRequestId;
     try{
-      const { places, hadErrors }=await fetchPlacesForBounds(b);
+      const places=await fetchPlacesForBounds(b);
       if(requestId!==placesRequestId) return;
       const normalized=places.map(normalizePlace).filter(Boolean);
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
       renderMarkers();
-      if(hadErrors&&normalized.length===0){
-        showPlacesError("Unable to load venues from Google Places.");
-      }
     } catch(e){
       console.error("Places error:",e);
       showPlacesError("Unable to load venues from Google Places.");
