@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sunny — Find great outdoor pubs</title>
 
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous"/>
   <link rel="stylesheet" href="style.css">
 
   <!-- PWA bits -->
@@ -44,8 +42,14 @@
     <div id="list"></div>
   </div>
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+  <script>
+    window.__sunnyMapsReady = false;
+    window.initSunnyMap = () => {
+      window.__sunnyMapsReady = true;
+      if (window.__sunnyBoot) window.__sunnyBoot();
+    };
+  </script>
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAlnfno1wLJPkqpMeUfd9EJYA-Awnz4kAI&libraries=places&callback=initSunnyMap"></script>
 
   <!-- Service Worker (optional; you already added network-first for app.js/version.json) -->
   <script>if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');</script>
