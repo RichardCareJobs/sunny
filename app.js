@@ -743,41 +743,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     try{
       const { places, hadErrors, errorDetails=[] }=await fetchPlacesForBounds(b);
       if(requestId!==placesRequestId) return;
-      let normalized=places.map(normalizePlace).filter(Boolean);
+      const normalized=places.map(normalizePlace).filter(Boolean);
       const uniqueErrors=[...new Set(errorDetails)];
       if(hadErrors&&normalized.length===0){
         showPlacesError(buildPlacesErrorMessage(uniqueErrors));
         renderMarkers();
         return;
-      }
-      if(normalized.length===0&&places.length>0){
-        normalized=places.map((place)=>{
-          if(!place||!place.geometry||!place.geometry.location) return null;
-          const location=place.geometry.location;
-          const lat=typeof location.lat==="function" ? location.lat() : location.lat;
-          const lng=typeof location.lng==="function" ? location.lng() : location.lng;
-          if(typeof lat!=="number"||typeof lng!=="number") return null;
-          const name=place.name||"Unnamed";
-          const tags={
-            name,
-            amenity: getAmenityFromTypes(place.types||[]),
-            types: (place.types||[]).join(","),
-            vicinity: place.vicinity || "",
-            formatted_address: place.formatted_address || ""
-          };
-          return {
-            id: place.place_id,
-            name,
-            lat,
-            lng,
-            address: place.vicinity || place.formatted_address || "",
-            tags,
-            openNow: place.opening_hours?.open_now,
-            hasOutdoor: hasOutdoorHints(tags),
-            source: "google"
-          };
-        }).filter(Boolean);
-        showPlacesError("Outdoor filters returned no venues. Showing all venues in view.");
       }
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
