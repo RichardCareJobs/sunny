@@ -1082,7 +1082,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.timeRangeEl.textContent=formatTimeRange(venue.slot?.start,venue.slot?.end);
     card.timeLengthEl.textContent=`${venue.hangMinutes} min`;
     const isLast=venue.crawlIndex===crawlState.venues.length-1;
-    card.toggleInput.checked=!!venue.remind;
+    if(isLast){
+      venue.remind=false;
+      card.toggleInput.checked=false;
+    } else {
+      card.toggleInput.checked=!!venue.remind;
+    }
     card.toggleInput.closest(".crawl-card__toggle").classList.toggle("hidden",isLast);
     if(card.continueBtn){
       card.continueBtn.classList.toggle("hidden",!isLast);
