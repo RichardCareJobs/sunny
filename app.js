@@ -989,7 +989,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           </button>
           <div class="crawl-card__uber">
             <div class="crawl-card__uber-text"></div>
-            <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book now</a>
+            <div class="crawl-card__uber-actions">
+              <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book an Uber now</a>
+              <a class="crawl-card__didi-btn" target="_blank" rel="noopener">Book a Didi now</a>
+            </div>
           </div>
         </div>
       </div>`;
@@ -1064,6 +1067,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       continueBtn,
       uberWrap:container.querySelector(".crawl-card__uber"),
       uberBtn:container.querySelector(".crawl-card__uber-btn"),
+      didiBtn:container.querySelector(".crawl-card__didi-btn"),
       uberText:container.querySelector(".crawl-card__uber-text")
     };
     return crawlCard;
@@ -1095,12 +1099,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const nextVenue=!isLast ? crawlState.venues[venue.crawlIndex+1] : null;
     if(nextVenue){
       card.uberWrap.classList.remove("hidden");
-      card.uberText.textContent=`Book an Uber to ${nextVenue.name || "the next venue"}`;
-      card.uberBtn.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${nextVenue.lat}&dropoff[longitude]=${nextVenue.lng}&dropoff[nickname]=${encodeURIComponent(nextVenue.name || "Next venue")}`;
+      card.uberText.textContent=`Up next: ${nextVenue.name || "the next venue"}, need a ride?`;
+      const uberUrl=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${nextVenue.lat}&dropoff[longitude]=${nextVenue.lng}&dropoff[nickname]=${encodeURIComponent(nextVenue.name || "Next venue")}`;
+      card.uberBtn.href=uberUrl;
+      if(card.didiBtn){
+        card.didiBtn.href=uberUrl;
+      }
     } else {
       card.uberWrap.classList.add("hidden");
       card.uberText.textContent="";
       card.uberBtn.removeAttribute("href");
+      if(card.didiBtn){
+        card.didiBtn.removeAttribute("href");
+      }
     }
     card.container.classList.remove("hidden");
     requestAnimationFrame(()=>card.container.classList.add("show"));

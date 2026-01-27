@@ -221,10 +221,12 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .crawl-card__continue { display: flex; align-items: center; justify-content: space-between; gap: .5rem; border: 1px solid #ff6a00; background: #fff7ed; color: #9a3412; border-radius: 12px; padding: .6rem .75rem; font-weight: 800; cursor: pointer; text-align: left; }
 .crawl-card__continue.hidden { display: none; }
 .crawl-card__continue-icon { width: 28px; height: 28px; border-radius: 999px; background: #ff6a00; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 1.1rem; }
-.crawl-card__uber { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+.crawl-card__uber { display: grid; gap: .4rem; }
 .crawl-card__uber.hidden { display: none; }
-.crawl-card__uber-btn { border: 1px solid #111; background: #111; color: #fff; border-radius: 12px; padding: .45rem .75rem; font-weight: 800; text-decoration: none; }
-.crawl-card__uber-text { color: #374151; font-size: .95rem; }
+.crawl-card__uber-text { color: #111; font-size: .95rem; font-weight: 800; }
+.crawl-card__uber-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.crawl-card__uber-btn,
+.crawl-card__didi-btn { border: 1px solid #111; background: #111; color: #fff; border-radius: 999px; padding: .4rem .8rem; font-weight: 800; text-decoration: none; }
 
 .crawl-list { position: fixed; left: 0; right: 0; bottom: 0; max-height: 50vh; background: #fff; z-index: 1340; border-top: 1px solid #eee; box-shadow: 0 -10px 30px rgba(0,0,0,.2); overflow: auto; }
 .crawl-list.hidden { display: none; }
