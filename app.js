@@ -321,6 +321,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   // Google Places
   function getAmenityFromTypes(types=[]){
+    if(types.includes("pub")) return "pub";
     if(types.includes("bar")) return "bar";
     if(types.includes("night_club")) return "nightclub";
     if(types.includes("cafe")) return "cafe";
@@ -441,7 +442,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
     if(merged.size===0){
-      const fallbackQueries=["bar","night club","cafe","restaurant"];
+      const fallbackQueries=["pub","bar","night club","cafe","restaurant"];
       const queryResponses=await Promise.all(
         fallbackQueries.map(query=>fetchPlacesByQuery({ center: centerLocation, radius, query }))
       );
@@ -732,12 +733,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const bbox=[sw.lat(),sw.lng(),ne.lat(),ne.lng()].map(n=>+n.toFixed(5)).join(","), cacheKey=`${TILE_CACHE_PREFIX}${bbox}`;
     const cached=loadLocal(cacheKey,TILE_CACHE_TTL_MS);
     if(cached&&Array.isArray(cached)){
-      if(cached.length>0){
-        mergeVenues(cached);
-        renderMarkers();
-        return;
-      }
-      try{ localStorage.removeItem(cacheKey); }catch{}
+      mergeVenues(cached);
+      renderMarkers();
+      return;
     }
     const requestId=++placesRequestId;
     try{
