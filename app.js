@@ -387,32 +387,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       placesService.nearbySearch(request,handlePage);
     });
   }
-  async function fetchPlacesByQuery({ center, radius, query }){
-    if(!placesService){
-      return { results: [], status: google.maps.places.PlacesServiceStatus.INVALID_REQUEST, query };
-    }
-    const collected=[];
-    let finalStatus=google.maps.places.PlacesServiceStatus.ZERO_RESULTS;
-    const request={
-      location: center,
-      radius,
-      query
-    };
-    return new Promise((resolve)=>{
-      const handlePage=(results,status,pagination)=>{
-        finalStatus=status;
-        if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
-          collected.push(...results);
-        }
-        if(pagination&&pagination.hasNextPage){
-          setTimeout(()=>pagination.nextPage(),2000);
-        } else {
-          resolve({ results: collected, status: finalStatus, query });
-        }
-      };
-      placesService.textSearch(request,handlePage);
-    });
-  }
   function calculateRadiusFromBounds(bounds){
     const center=bounds.getCenter();
     const ne=bounds.getNorthEast();
@@ -441,36 +415,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
       });
     });
-    if(merged.size===0){
-      const fallbackQueries=["pub","bar","night club","cafe","restaurant"];
-      const queryResponses=await Promise.all(
-        fallbackQueries.map(query=>fetchPlacesByQuery({ center: centerLocation, radius, query }))
-      );
-      const queryErrors=queryResponses.filter(response=>{
-        const status=response?.status;
-        return status&&status!==google.maps.places.PlacesServiceStatus.OK&&status!==google.maps.places.PlacesServiceStatus.ZERO_RESULTS;
-      });
-      if(queryErrors.length){
-        const details=queryErrors.map(entry=>`${entry.query}:${entry.status}`).join(", ");
-        console.warn(`Places textSearch warnings: ${details}`);
-      }
-      queryResponses.forEach(response=>{
-        response.results.forEach(place=>{
-          if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
-        });
-      });
-      const combinedErrors=errorStatuses.length>0||queryErrors.length>0;
-      return {
-        places: Array.from(merged.values()),
-        hadErrors: combinedErrors,
-        errorDetails: [...errorStatuses, ...queryErrors].map(entry=>entry.status).filter(Boolean)
-      };
-    }
-    return {
-      places: Array.from(merged.values()),
-      hadErrors: errorStatuses.length > 0,
-      errorDetails: errorStatuses.map(entry=>entry.status).filter(Boolean)
-    };
+    return { places: Array.from(merged.values()), hadErrors: errorStatuses.length > 0 };
   }
   function hasOutdoorHints(tags={}){
     const t=x=>(x||"").toLowerCase();
@@ -739,15 +684,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     const requestId=++placesRequestId;
     try{
-      const { places, hadErrors, errorDetails=[] }=await fetchPlacesForBounds(b);
+      const { places, hadErrors }=await fetchPlacesForBounds(b);
       if(requestId!==placesRequestId) return;
       const normalized=places.map(normalizePlace).filter(Boolean);
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
       renderMarkers();
       if(hadErrors&&normalized.length===0){
-        const detailText=errorDetails.length?` (${[...new Set(errorDetails)].join(", ")})`:"";
-        showPlacesError(`Unable to load venues from Google Places${detailText}.`);
+        showPlacesError("Unable to load venues from Google Places.");
       }
     } catch(e){
       console.error("Places error:",e);
