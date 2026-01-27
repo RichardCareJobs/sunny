@@ -321,7 +321,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   // Google Places
   function getAmenityFromTypes(types=[]){
-    if(types.includes("pub")) return "pub";
     if(types.includes("bar")) return "bar";
     if(types.includes("night_club")) return "nightclub";
     if(types.includes("cafe")) return "cafe";
@@ -442,7 +441,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
     if(merged.size===0){
-      const fallbackQueries=["pub","bar","night club","cafe","restaurant"];
+      const fallbackQueries=["bar","night club","cafe","restaurant"];
       const queryResponses=await Promise.all(
         fallbackQueries.map(query=>fetchPlacesByQuery({ center: centerLocation, radius, query }))
       );
@@ -733,22 +732,56 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const bbox=[sw.lat(),sw.lng(),ne.lat(),ne.lng()].map(n=>+n.toFixed(5)).join(","), cacheKey=`${TILE_CACHE_PREFIX}${bbox}`;
     const cached=loadLocal(cacheKey,TILE_CACHE_TTL_MS);
     if(cached&&Array.isArray(cached)){
-      mergeVenues(cached);
-      renderMarkers();
-      return;
+      if(cached.length>0){
+        mergeVenues(cached);
+        renderMarkers();
+        return;
+      }
+      try{ localStorage.removeItem(cacheKey); }catch{}
     }
     const requestId=++placesRequestId;
     try{
       const { places, hadErrors, errorDetails=[] }=await fetchPlacesForBounds(b);
       if(requestId!==placesRequestId) return;
-      const normalized=places.map(normalizePlace).filter(Boolean);
+      let normalized=places.map(normalizePlace).filter(Boolean);
+      const uniqueErrors=[...new Set(errorDetails)];
+      if(hadErrors&&normalized.length===0){
+        showPlacesError(buildPlacesErrorMessage(uniqueErrors));
+        renderMarkers();
+        return;
+      }
+      if(normalized.length===0&&places.length>0){
+        normalized=places.map((place)=>{
+          if(!place||!place.geometry||!place.geometry.location) return null;
+          const location=place.geometry.location;
+          const lat=typeof location.lat==="function" ? location.lat() : location.lat;
+          const lng=typeof location.lng==="function" ? location.lng() : location.lng;
+          if(typeof lat!=="number"||typeof lng!=="number") return null;
+          const name=place.name||"Unnamed";
+          const tags={
+            name,
+            amenity: getAmenityFromTypes(place.types||[]),
+            types: (place.types||[]).join(","),
+            vicinity: place.vicinity || "",
+            formatted_address: place.formatted_address || ""
+          };
+          return {
+            id: place.place_id,
+            name,
+            lat,
+            lng,
+            address: place.vicinity || place.formatted_address || "",
+            tags,
+            openNow: place.opening_hours?.open_now,
+            hasOutdoor: hasOutdoorHints(tags),
+            source: "google"
+          };
+        }).filter(Boolean);
+        showPlacesError("Outdoor filters returned no venues. Showing all venues in view.");
+      }
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
       renderMarkers();
-      if(hadErrors&&normalized.length===0){
-        const detailText=errorDetails.length?` (${[...new Set(errorDetails)].join(", ")})`:"";
-        showPlacesError(`Unable to load venues from Google Places${detailText}.`);
-      }
     } catch(e){
       console.error("Places error:",e);
       showPlacesError("Unable to load venues from Google Places.");
@@ -1083,6 +1116,26 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         venueCountToast.style.opacity="0";
       }
     },4000);
+  }
+
+  function buildPlacesErrorMessage(errorDetails){
+    if(!Array.isArray(errorDetails)||errorDetails.length===0){
+      return "Unable to load venues from Google Places.";
+    }
+    const errors=new Set(errorDetails);
+    if(errors.has(google.maps.places.PlacesServiceStatus.REQUEST_DENIED)){
+      return "Google Places denied the request. Check that the Maps JavaScript + Places APIs are enabled and the API key billing/referrers are correct.";
+    }
+    if(errors.has(google.maps.places.PlacesServiceStatus.OVER_QUERY_LIMIT)){
+      return "Google Places quota exceeded. Try again shortly or review API limits.";
+    }
+    if(errors.has(google.maps.places.PlacesServiceStatus.INVALID_REQUEST)){
+      return "Google Places reported an invalid request. Try refreshing the map.";
+    }
+    if(errors.has(google.maps.places.PlacesServiceStatus.UNKNOWN_ERROR)){
+      return "Google Places had a temporary error. Try again.";
+    }
+    return `Unable to load venues from Google Places (${Array.from(errors).join(", ")}).`;
   }
 
   function renderMarkers(){
