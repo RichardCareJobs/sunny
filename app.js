@@ -47,6 +47,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let venueCountToast = null;
   let venueCountTimer = null;
 
+  const CRAWL_DEFAULT_HANG_MINUTES = 45;
+  const CRAWL_TIME_STEP_MINUTES = 15;
+  const MAX_CRAWL_VENUES = 12;
+
+  let crawlLayer = null;
+  let crawlState = null;
+  let crawlBuilder = null;
+  let crawlControls = null;
+  let crawlCard = null;
+  let crawlListPanel = null;
+  let crawlAddPanel = null;
+  let crawlNotifications = new Map();
+
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   const markerIcon = L.icon({
     iconUrl: MARKER_ICON_URL,
@@ -79,7 +92,30 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
     if(locationWatchTimer){ clearTimeout(locationWatchTimer); locationWatchTimer=null; }
   }
-
+  function formatTime(date){
+    if(!(date instanceof Date)) return "";
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  function formatTimeRange(start,end){
+    if(!(start instanceof Date) || !(end instanceof Date)) return "";
+    return `${formatTime(start)} - ${formatTime(end)}`;
+  }
+  function estimateUberFare(distanceKm){
+    const base=8;
+    const perKm=2.2;
+    const estimate=base + perKm * Math.max(distanceKm,0.2);
+    return Math.round(estimate);
+  }
+  function buildStartDateFromInput(timeValue){
+    if(!timeValue) return new Date();
+    const [hour,minute]=timeValue.split(":").map(Number);
+    const now=new Date();
+    if(Number.isNaN(hour)||Number.isNaN(minute)) return now;
+    const next=new Date(now.getFullYear(),now.getMonth(),now.getDate(),hour,minute,0,0);
+    if(next.getTime()<now.getTime()) next.setDate(next.getDate()+1);
+    return next;
+  }
+ 
   // Ratings
   const RATING_STORAGE_KEY = "sunny-outdoor-ratings";
   let ratingStore = loadLocal(RATING_STORAGE_KEY) || {};
@@ -372,6 +408,171 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function mergeVenues(list){ let added=0; for(const v of list){ if(!v) continue; if(!allVenues[v.id]){ allVenues[v.id]=v; added++; } else { allVenues[v.id]={...allVenues[v.id],...v}; } } if(added) saveLocal(VENUE_CACHE_KEY,allVenues); }
 
+  function ensureCrawlLayer(){
+    if(crawlLayer||!map) return crawlLayer;
+    crawlLayer=L.layerGroup().addTo(map);
+    return crawlLayer;
+  }
+
+  function getMapCenter(){
+    if(!map) return { lat: DEFAULT_VIEW.lat, lng: DEFAULT_VIEW.lng };
+    const center=map.getCenter();
+    return { lat: center.lat, lng: center.lng };
+  }
+
+  function getCrawlOrigin(){
+    if(userLocation&&typeof userLocation.lat==="number") return userLocation;
+    return getMapCenter();
+  }
+
+  function chooseCrawlVenues(origin,count=4){
+    const venues=Object.values(allVenues).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number");
+    if(venues.length===0) return [];
+    const sorted=venues
+      .map(v=>({ venue:v, distance:haversine(origin.lat,origin.lng,v.lat,v.lng) }))
+      .sort((a,b)=>a.distance-b.distance)
+      .map(item=>item.venue);
+    return sorted.slice(0,count);
+  }
+
+  function buildCrawlState(venues,startAt,originInfo=null,orderMode="location"){
+    const normalized=venues.map((venue,index)=>({
+      ...venue,
+      crawlIndex:index,
+      address: venue.address || formatAddress(venue.tags||{}),
+      hangMinutes:CRAWL_DEFAULT_HANG_MINUTES,
+      remind:false
+    }));
+    crawlState={ venues: normalized, startAt, origin: originInfo, orderMode };
+    updateCrawlSchedule();
+  }
+
+  function updateCrawlSchedule(){
+    if(!crawlState||!crawlState.venues) return;
+    let cursor=crawlState.startAt instanceof Date ? new Date(crawlState.startAt) : new Date();
+    crawlState.venues.forEach((venue)=>{
+      const start=new Date(cursor);
+      const end=new Date(cursor.getTime()+venue.hangMinutes*60000);
+      venue.slot={ start, end };
+      cursor=end;
+    });
+  }
+
+  function getSunScore(venue,time){
+    if(!venue||!time) return -Infinity;
+    const { altitudeDeg }=sunPosition(venue.lat,venue.lng,time);
+    return altitudeDeg;
+  }
+
+  function orderVenues(venues,origin,mode,startAt){
+    if(!Array.isArray(venues)) return [];
+    if(mode==="sun"){
+      return [...venues].sort((a,b)=>{
+        const aScore=getSunScore(a,startAt);
+        const bScore=getSunScore(b,startAt);
+        if(aScore===bScore){
+          return haversine(origin.lat,origin.lng,a.lat,a.lng) - haversine(origin.lat,origin.lng,b.lat,b.lng);
+        }
+        return bScore - aScore;
+      });
+    }
+    const remaining=[...venues];
+    const ordered=[];
+    let current=origin;
+    while(remaining.length){
+      let bestIndex=0;
+      let bestDistance=Infinity;
+      remaining.forEach((venue,index)=>{
+        const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
+        if(distance<bestDistance){
+          bestDistance=distance;
+          bestIndex=index;
+        }
+      });
+      const [next]=remaining.splice(bestIndex,1);
+      ordered.push(next);
+      current=next;
+    }
+    return ordered;
+  }
+
+  function clearCrawlNotifications(){
+    crawlNotifications.forEach((timeoutId)=>clearTimeout(timeoutId));
+    crawlNotifications.clear();
+  }
+
+  function scheduleCrawlReminder(venue){
+    if(!venue||!venue.slot||!venue.slot.end) return;
+    if(!("Notification" in window)) return;
+    if(Notification.permission!=="granted") return;
+    const delay=venue.slot.end.getTime()-Date.now();
+    if(delay<=0) return;
+    const timeoutId=setTimeout(()=>{
+      new Notification("Time to move on",{
+        body:`Head to the next venue after ${venue.name||"this stop"}.`,
+        icon:"icons/apple-touch-icon.png"
+      });
+      crawlNotifications.delete(venue.id);
+    },delay);
+    crawlNotifications.set(venue.id,timeoutId);
+  }
+
+  function refreshCrawlReminders(){
+    clearCrawlNotifications();
+    if(!crawlState) return;
+    crawlState.venues.forEach((venue,index)=>{
+      if(index===crawlState.venues.length-1) return;
+      if(venue.remind) scheduleCrawlReminder(venue);
+    });
+  }
+
+  function serializeCrawl(){
+    if(!crawlState||!crawlState.venues) return null;
+      const data={
+      startAt: crawlState.startAt instanceof Date ? crawlState.startAt.toISOString() : null,
+      origin: crawlState.origin || null,
+      orderMode: crawlState.orderMode || "location",
+      venues: crawlState.venues.map(v=>({
+        id:v.id,
+        name:v.name,
+        lat:v.lat,
+        lng:v.lng,
+        address: v.address || formatAddress(v.tags || {}),
+        hangMinutes:v.hangMinutes
+      }))
+    };
+    const json=JSON.stringify(data);
+    return btoa(unescape(encodeURIComponent(json)));
+  }
+
+  function hydrateCrawlFromLink(encoded){
+    if(!encoded) return false;
+    try{
+      const json=decodeURIComponent(escape(atob(encoded)));
+      const data=JSON.parse(json);
+      if(!data||!Array.isArray(data.venues)) return false;
+      const startAt=data.startAt ? new Date(data.startAt) : new Date();
+      const origin=data.origin || null;
+      const orderMode=data.orderMode || "location";
+      const venues=data.venues.map((v,index)=>({
+        ...v,
+        crawlIndex:index,
+        hangMinutes:Number(v.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES,
+        remind:false
+      }));
+      crawlState={ venues, startAt, origin, orderMode };
+      updateCrawlSchedule();
+      if(markersLayer) markersLayer.clearLayers();
+      renderCrawlMarkers();
+      showCrawlControls();
+      updateCrawlList();
+      return true;
+    } catch(err){
+      console.warn("Unable to hydrate crawl link",err);
+      return false;
+    }
+  }
+
   // Map
   function setupMap(){
     if(!document.getElementById("map")){ const m=document.createElement("div"); m.id="map"; m.style.position="absolute"; m.style.left="0"; m.style.right="0"; m.style.top="0"; m.style.bottom="0"; document.body.appendChild(m); }
@@ -380,7 +581,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     markersLayer=L.layerGroup().addTo(map);
     map.on("moveend",debouncedLoadVisible);
     map.on("zoomend",debouncedLoadVisible);
-    map.on("click",()=>hideVenueCard());
+    map.on("click",()=>{
+      hideVenueCard();
+      hideCrawlCard();
+    });
     addLocateControl();
     centerOnUserIfAvailable();
   }
@@ -694,6 +898,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function renderMarkers(){
     if(!markersLayer||!map) return;
+    if(crawlState&&crawlState.venues&&crawlState.venues.length){
+      markersLayer.clearLayers();
+      return;
+    }
     const reopenVenueId=openVenueId;
     let reopenVenue=null;
     isRenderingMarkers=true;
@@ -717,6 +925,661 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } else if(reopenVenueId){
       hideVenueCard();
     }
+  }
+
+  function createCrawlMarkerIcon(number){
+    return L.divIcon({
+      className:"crawl-marker",
+      html:`<div class="crawl-marker__pin"><span>${number}</span></div>`,
+      iconSize:[36,44],
+      iconAnchor:[18,44]
+    });
+  }
+
+  function renderCrawlMarkers(){
+    if(!map) return;
+    ensureCrawlLayer();
+    crawlLayer.clearLayers();
+    if(!crawlState||!crawlState.venues||crawlState.venues.length===0) return;
+    crawlState.venues.forEach((venue,index)=>{
+      const marker=L.marker([venue.lat,venue.lng],{ icon:createCrawlMarkerIcon(index+1) }).addTo(crawlLayer);
+      marker.on("click",()=>{
+        openCrawlCard(venue.id);
+      });
+    });
+  }
+
+  function ensureCrawlCard(){
+    if(crawlCard) return crawlCard;
+    const container=document.createElement("div");
+    container.id="crawl-card";
+    container.className="crawl-card hidden";
+    container.innerHTML=`
+      <div class="crawl-card__inner">
+        <div class="crawl-card__handle"></div>
+        <div class="crawl-card__header">
+          <div>
+            <div class="crawl-card__title"></div>
+            <div class="crawl-card__subtitle"></div>
+            <div class="crawl-card__address"></div>
+          </div>
+          <button class="crawl-card__close" type="button" aria-label="Close crawl venue">×</button>
+        </div>
+        <div class="crawl-card__section">
+          <div class="crawl-card__section-title">Time slot</div>
+          <div class="crawl-card__time-row">
+            <span class="crawl-card__time-range"></span>
+            <div class="crawl-card__time-controls">
+              <button type="button" class="crawl-card__time-btn" data-action="decrease">−</button>
+              <span class="crawl-card__time-length"></span>
+              <button type="button" class="crawl-card__time-btn" data-action="increase">+</button>
+            </div>
+          </div>
+        </div>
+        <div class="crawl-card__section crawl-card__controls">
+          <button type="button" class="crawl-card__remove-btn">− Remove venue</button>
+          <label class="crawl-card__toggle">
+            <input type="checkbox" class="crawl-card__toggle-input">
+            <span class="crawl-card__toggle-track"></span>
+            <span class="crawl-card__toggle-label">Remind me when it is time to move on</span>
+          </label>
+          <button type="button" class="crawl-card__continue hidden">
+            <span>Keen to keep going? Add more places</span>
+            <span class="crawl-card__continue-icon">+</span>
+          </button>
+          <div class="crawl-card__uber">
+            <div class="crawl-card__uber-text"></div>
+            <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book now</a>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(container);
+    const closeBtn=container.querySelector(".crawl-card__close");
+    closeBtn.addEventListener("click",hideCrawlCard);
+    const removeBtn=container.querySelector(".crawl-card__remove-btn");
+    const toggleInput=container.querySelector(".crawl-card__toggle-input");
+    const continueBtn=container.querySelector(".crawl-card__continue");
+    const timeButtons=Array.from(container.querySelectorAll(".crawl-card__time-btn"));
+    removeBtn.addEventListener("click",()=>{
+      if(!crawlState||!crawlCard.currentVenueId) return;
+      const nextVenues=crawlState.venues.filter(v=>v.id!==crawlCard.currentVenueId);
+      if(nextVenues.length===0){
+        crawlState=null;
+        renderCrawlMarkers();
+        hideCrawlCard();
+        updateCrawlList();
+        hideCrawlControls();
+        showCrawlFab();
+        renderMarkers();
+        return;
+      }
+      crawlState.venues=nextVenues.map((venue,index)=>({ ...venue, crawlIndex:index }));
+      updateCrawlSchedule();
+      renderCrawlMarkers();
+      updateCrawlCard(crawlCard.currentVenueId);
+      updateCrawlList();
+    });
+    toggleInput.addEventListener("change",async()=>{
+      if(!crawlState||!crawlCard.currentVenueId) return;
+      const venue=crawlState.venues.find(v=>v.id===crawlCard.currentVenueId);
+      if(!venue) return;
+      if(toggleInput.checked&&("Notification" in window)&&Notification.permission==="default"){
+        try{
+          await Notification.requestPermission();
+        } catch (err){
+          console.warn("Notification permission failed",err);
+        }
+      }
+      venue.remind=toggleInput.checked;
+      refreshCrawlReminders();
+    });
+    if(continueBtn){
+      continueBtn.addEventListener("click",()=>{
+        openCrawlAddPanel();
+      });
+    }
+    timeButtons.forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        if(!crawlState||!crawlCard.currentVenueId) return;
+        const venue=crawlState.venues.find(v=>v.id===crawlCard.currentVenueId);
+        if(!venue) return;
+        const delta=btn.dataset.action==="increase" ? CRAWL_TIME_STEP_MINUTES : -CRAWL_TIME_STEP_MINUTES;
+        const next=Math.max(15,venue.hangMinutes+delta);
+        venue.hangMinutes=next;
+        updateCrawlSchedule();
+        updateCrawlCard(crawlCard.currentVenueId);
+        updateCrawlList();
+        refreshCrawlReminders();
+      });
+    });
+    crawlCard={
+      container,
+      titleEl:container.querySelector(".crawl-card__title"),
+      subtitleEl:container.querySelector(".crawl-card__subtitle"),
+      addressEl:container.querySelector(".crawl-card__address"),
+      timeRangeEl:container.querySelector(".crawl-card__time-range"),
+      timeLengthEl:container.querySelector(".crawl-card__time-length"),
+      removeBtn,
+      toggleInput,
+      continueBtn,
+      uberWrap:container.querySelector(".crawl-card__uber"),
+      uberBtn:container.querySelector(".crawl-card__uber-btn"),
+      uberText:container.querySelector(".crawl-card__uber-text")
+    };
+    return crawlCard;
+  }
+
+  function updateCrawlCard(venueId){
+    const card=ensureCrawlCard();
+    if(!crawlState||!crawlState.venues) return;
+    const venue=crawlState.venues.find(v=>v.id===venueId);
+    if(!venue) return;
+    card.currentVenueId=venueId;
+    const position=venue.crawlIndex+1;
+    card.titleEl.textContent=venue.name || `Crawl stop ${position}`;
+    card.subtitleEl.textContent=`Stop ${position} of ${crawlState.venues.length}`;
+    card.addressEl.textContent=venue.address || formatAddress(venue.tags||{});
+    card.timeRangeEl.textContent=formatTimeRange(venue.slot?.start,venue.slot?.end);
+    card.timeLengthEl.textContent=`${venue.hangMinutes} min`;
+    const isLast=venue.crawlIndex===crawlState.venues.length-1;
+    card.toggleInput.checked=!!venue.remind;
+    card.toggleInput.closest(".crawl-card__toggle").classList.toggle("hidden",isLast);
+    if(card.continueBtn){
+      card.continueBtn.classList.toggle("hidden",!isLast);
+    }
+    const nextVenue=!isLast ? crawlState.venues[venue.crawlIndex+1] : null;
+    if(nextVenue){
+      card.uberWrap.classList.remove("hidden");
+      card.uberText.textContent=`Book an Uber to ${nextVenue.name || "the next venue"}`;
+      card.uberBtn.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${nextVenue.lat}&dropoff[longitude]=${nextVenue.lng}&dropoff[nickname]=${encodeURIComponent(nextVenue.name || "Next venue")}`;
+    } else {
+      card.uberWrap.classList.add("hidden");
+      card.uberText.textContent="";
+      card.uberBtn.removeAttribute("href");
+    }
+    card.container.classList.remove("hidden");
+    requestAnimationFrame(()=>card.container.classList.add("show"));
+  }
+
+  function openCrawlCard(venueId){
+    hideVenueCard();
+    updateCrawlCard(venueId);
+  }
+
+  function hideCrawlCard(){
+    if(!crawlCard) return;
+    crawlCard.container.classList.remove("show");
+    crawlCard.container.classList.add("hidden");
+    crawlCard.currentVenueId=null;
+  }
+
+  function ensureCrawlControls(){
+    if(crawlControls) return crawlControls;
+    const container=document.createElement("div");
+    container.className="crawl-controls hidden";
+    container.innerHTML=`
+      <button class="crawl-control crawl-control--icon" type="button" data-action="list" aria-label="View crawl list">
+        <span aria-hidden="true">☰</span>
+      </button>
+      <button class="crawl-control crawl-control--icon" type="button" data-action="add" aria-label="Add venue">
+        <span aria-hidden="true">+</span>
+      </button>
+      <button class="crawl-control crawl-control--icon" type="button" data-action="share" aria-label="Share crawl">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M18 8a3 3 0 1 0-2.83-4H15a3 3 0 0 0 .17 1L8.91 8.3a3 3 0 0 0-1.82-.61 3 3 0 1 0 2.65 4.41l5.36 3.09A3 3 0 0 0 15 16a3 3 0 1 0 .17-1l-5.36-3.09a3 3 0 0 0 0-1.82l5.36-3.09A3 3 0 0 0 18 8Z"/>
+        </svg>
+      </button>
+    `;
+    document.body.appendChild(container);
+    container.addEventListener("click",(event)=>{
+      const btn=event.target.closest(".crawl-control");
+      if(!btn) return;
+      const action=btn.dataset.action;
+      if(action==="list") toggleCrawlList();
+      if(action==="add") openCrawlAddPanel();
+      if(action==="share") shareCrawl();
+    });
+    crawlControls=container;
+    return crawlControls;
+  }
+
+  function showCrawlControls(){
+    const controls=ensureCrawlControls();
+    controls.classList.remove("hidden");
+    hideCrawlFab();
+  }
+
+  function hideCrawlControls(){
+    if(!crawlControls) return;
+    crawlControls.classList.add("hidden");
+  }
+
+  function ensureCrawlListPanel(){
+    if(crawlListPanel) return crawlListPanel;
+    const panel=document.createElement("div");
+    panel.className="crawl-list hidden";
+    panel.innerHTML=`
+      <div class="crawl-list__header">
+        <div>
+          <h3>Pub crawl stops</h3>
+          <p class="crawl-list__subtitle"></p>
+        </div>
+        <button type="button" class="crawl-list__close" aria-label="Close list">×</button>
+      </div>
+      <div class="crawl-list__items"></div>
+    `;
+    document.body.appendChild(panel);
+    panel.querySelector(".crawl-list__close").addEventListener("click",()=>panel.classList.add("hidden"));
+    crawlListPanel=panel;
+    return panel;
+  }
+
+  function updateCrawlList(){
+    if(!crawlState||!crawlState.venues) return;
+    const panel=ensureCrawlListPanel();
+    const items=panel.querySelector(".crawl-list__items");
+    const subtitle=panel.querySelector(".crawl-list__subtitle");
+    subtitle.textContent=`${crawlState.venues.length} venues · Start ${formatTime(crawlState.startAt)}`;
+    items.innerHTML="";
+    crawlState.venues.forEach((venue,index)=>{
+      const previous=index>0 ? crawlState.venues[index-1] : null;
+      const origin=crawlState.origin && typeof crawlState.origin.lat==="number" ? crawlState.origin : null;
+      const originLabel=origin?.label || "start point";
+      const fromPoint=previous || origin;
+      const fromLabel=previous ? (previous.name || "previous venue") : originLabel;
+      const distanceKm=fromPoint ? haversine(fromPoint.lat,fromPoint.lng,venue.lat,venue.lng) : 0;
+      const distanceLabel=fromPoint ? `${formatDistanceKm(distanceKm)} from ${fromLabel}` : "Start of the crawl";
+      const fare=estimateUberFare(distanceKm);
+      const uberText=`$${fare} uber fare from ${fromLabel}`;
+      const uberLink=fromPoint
+        ? `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${fromPoint.lat}&pickup[longitude]=${fromPoint.lng}&pickup[nickname]=${encodeURIComponent(fromLabel)}&dropoff[latitude]=${venue.lat}&dropoff[longitude]=${venue.lng}&dropoff[nickname]=${encodeURIComponent(venue.name || "Next venue")}`
+        : "";
+      const item=document.createElement("div");
+      item.className="crawl-list__item";
+      item.innerHTML=`
+        <div>
+          <div class="crawl-list__title">${venue.crawlIndex+1}. ${venue.name||"Venue"}</div>
+          <div class="crawl-list__meta">${distanceLabel}</div>
+          <div class="crawl-list__uber">
+            <span>${uberText}</span>
+            <a class="crawl-list__uber-btn" target="_blank" rel="noopener" ${fromPoint ? `href="${uberLink}"` : "aria-disabled=\"true\""}>Book now</a>
+          </div>
+        </div>
+        <div class="crawl-list__time">${formatTimeRange(venue.slot?.start,venue.slot?.end)}</div>
+      `;
+      item.addEventListener("click",()=>{
+        if(map) map.flyTo([venue.lat,venue.lng],Math.max(map.getZoom(),15),{ animate:true });
+        openCrawlCard(venue.id);
+      });
+      items.appendChild(item);
+    });
+  }
+
+  function toggleCrawlList(){
+    if(!crawlState) return;
+    const panel=ensureCrawlListPanel();
+    updateCrawlList();
+    panel.classList.toggle("hidden");
+  }
+
+  function ensureCrawlAddPanel(){
+    if(crawlAddPanel) return crawlAddPanel;
+    const panel=document.createElement("div");
+    panel.className="crawl-add hidden";
+    panel.innerHTML=`
+      <div class="crawl-add__panel">
+        <div class="crawl-add__header">
+          <h3>Add venues</h3>
+          <button type="button" class="crawl-add__close" aria-label="Close add venues">×</button>
+        </div>
+        <input class="crawl-add__input" type="search" placeholder="Search by venue name">
+        <div class="crawl-add__results"></div>
+      </div>
+    `;
+    document.body.appendChild(panel);
+    panel.querySelector(".crawl-add__close").addEventListener("click",()=>panel.classList.add("hidden"));
+    panel.addEventListener("click",(event)=>{
+      if(event.target===panel) panel.classList.add("hidden");
+    });
+    const input=panel.querySelector(".crawl-add__input");
+    input.addEventListener("input",()=>renderCrawlAddResults(input.value));
+    crawlAddPanel=panel;
+    return panel;
+  }
+
+  function openCrawlAddPanel(){
+    if(!crawlState) return;
+    const panel=ensureCrawlAddPanel();
+    panel.classList.remove("hidden");
+    const input=panel.querySelector(".crawl-add__input");
+    input.value="";
+    input.focus();
+    renderCrawlAddResults("");
+  }
+
+  function renderCrawlAddResults(query=""){
+    if(!crawlState||!crawlAddPanel) return;
+    const resultsEl=crawlAddPanel.querySelector(".crawl-add__results");
+    resultsEl.innerHTML="";
+    const term=query.trim().toLowerCase();
+    if(term.length<2){
+      resultsEl.innerHTML=`<div class="crawl-add__empty">Type at least 2 letters to search.</div>`;
+      return;
+    }
+    const existingIds=new Set(crawlState.venues.map(v=>v.id));
+    const matches=Object.values(allVenues)
+      .filter(v=>v&&v.name&&v.name.toLowerCase().includes(term))
+      .filter(v=>!existingIds.has(v.id))
+      .slice(0,10);
+    if(matches.length===0){
+      resultsEl.innerHTML=`<div class="crawl-add__empty">No matches found.</div>`;
+      return;
+    }
+    matches.forEach((venue)=>{
+      const row=document.createElement("button");
+      row.type="button";
+      row.className="crawl-add__row";
+      row.innerHTML=`
+        <span>
+          <strong>${venue.name}</strong>
+          <span class="crawl-add__meta">${formatAddress(venue.tags||{})}</span>
+        </span>
+        <span class="crawl-add__action">Add</span>
+      `;
+      row.addEventListener("click",()=>{
+        if(crawlState.venues.length>=MAX_CRAWL_VENUES) return;
+        const nextVenue={
+          ...venue,
+          crawlIndex:crawlState.venues.length,
+          address: venue.address || formatAddress(venue.tags||{}),
+          hangMinutes:CRAWL_DEFAULT_HANG_MINUTES,
+          remind:false
+        };
+        crawlState.venues.push(nextVenue);
+        updateCrawlSchedule();
+        renderCrawlMarkers();
+        updateCrawlList();
+        crawlAddPanel.classList.add("hidden");
+      });
+      resultsEl.appendChild(row);
+    });
+  }
+
+  function shareCrawl(){
+    if(!crawlState) return;
+    const encoded=serializeCrawl();
+    if(!encoded) return;
+    const url=new URL(window.location.href);
+    url.searchParams.set("crawl",encoded);
+    if(navigator.share){
+      navigator.share({ title:"Sunny pub crawl", text:"Join my pub crawl", url:url.toString() }).catch(()=>{});
+      return;
+    }
+    navigator.clipboard?.writeText(url.toString()).then(()=>{
+      alert("Crawl link copied to clipboard!");
+    }).catch(()=>{
+      prompt("Copy this crawl link:",url.toString());
+    });
+  }
+
+  function ensureCrawlBuilder(){
+    if(crawlBuilder) return crawlBuilder;
+    const container=document.createElement("div");
+    container.id="crawl-builder";
+    container.className="crawl-builder hidden";
+    container.innerHTML=`
+      <div class="crawl-builder__backdrop"></div>
+      <div class="crawl-builder__panel">
+        <div class="crawl-builder__header">
+          <h2>Plan a pub crawl</h2>
+          <button type="button" class="crawl-builder__close" aria-label="Close pub crawl builder">×</button>
+        </div>
+        <div class="crawl-builder__body">
+          <div class="crawl-builder__section">
+            <button type="button" class="crawl-option" data-option="nearby">Plan a pub crawl nearby</button>
+            <button type="button" class="crawl-option" data-option="around">Plan a pub crawl around</button>
+            <label class="crawl-builder__label" for="crawl-location-input">Enter an Australian postcode or suburb</label>
+            <input id="crawl-location-input" class="crawl-builder__input" type="text" placeholder="e.g. 2000 or Fitzroy" autocomplete="off">
+            <div class="crawl-builder__suggestions"></div>
+            <div class="crawl-builder__status" role="status"></div>
+          </div>
+          <div class="crawl-builder__section crawl-order">
+            <h3>Order places based on sun or location?</h3>
+            <div class="crawl-builder__order-options">
+              <button type="button" class="crawl-order-option" data-order="sun">Sun</button>
+              <button type="button" class="crawl-order-option" data-order="location">Location</button>
+            </div>
+          </div>
+          <div class="crawl-builder__section crawl-start hidden">
+            <h3>When do you want to start?</h3>
+            <div class="crawl-builder__start-options">
+              <button type="button" class="crawl-start-option" data-start="now">Now</button>
+              <button type="button" class="crawl-start-option" data-start="time">Select a time</button>
+            </div>
+            <input class="crawl-builder__time-input hidden" type="time">
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(container);
+    const closeBtn=container.querySelector(".crawl-builder__close");
+    const backdrop=container.querySelector(".crawl-builder__backdrop");
+    const optionButtons=Array.from(container.querySelectorAll(".crawl-option"));
+    const startSection=container.querySelector(".crawl-start");
+    const startButtons=Array.from(container.querySelectorAll(".crawl-start-option"));
+    const orderButtons=Array.from(container.querySelectorAll(".crawl-order-option"));
+    const timeInput=container.querySelector(".crawl-builder__time-input");
+    const statusEl=container.querySelector(".crawl-builder__status");
+    const input=container.querySelector(".crawl-builder__input");
+    const suggestionsEl=container.querySelector(".crawl-builder__suggestions");
+    let suggestionTimer=null;
+    let selectedOption=null;
+    let orderMode="location";
+
+    function setStatus(message,type=""){
+      statusEl.textContent=message||"";
+      statusEl.className=`crawl-builder__status ${type}`.trim();
+    }
+    function renderSuggestions(list){
+      if(!suggestionsEl) return;
+      suggestionsEl.innerHTML="";
+      if(!Array.isArray(list)||list.length===0) return;
+      list.forEach((item)=>{
+        const btn=document.createElement("button");
+        btn.type="button";
+        btn.className="crawl-builder__suggestion";
+        btn.textContent=item.label;
+        btn.addEventListener("click",()=>{
+          input.value=item.label;
+          crawlBuilder.locationOverride={ lat:item.lat, lng:item.lng, label:item.label };
+          suggestionsEl.innerHTML="";
+          setStatus("Location confirmed.","success");
+          if(map) map.flyTo([item.lat,item.lng],13,{ animate:true });
+        });
+        suggestionsEl.appendChild(btn);
+      });
+    }
+    async function fetchSuggestions(query){
+      if(!query) return [];
+      const url=`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=au&q=${encodeURIComponent(query)}`;
+      const response=await fetch(url,{headers:{Accept:"application/json","Accept-Language":"en-AU"}});
+      if(!response.ok) return [];
+      const results=await response.json();
+      if(!Array.isArray(results)) return [];
+      return results.map(result=>{
+        const address=result.address || {};
+        const postcode=address.postcode || "";
+        const suburb=address.suburb || address.town || address.city || address.village || address.locality || "";
+        const state=address.state || "";
+        const label=[postcode,suburb,state].filter(Boolean).join(", ") || result.display_name;
+        return { label, lat:Number(result.lat), lng:Number(result.lon) };
+      });
+    }
+
+    function setSelectedOption(option){
+      selectedOption=option;
+      optionButtons.forEach(btn=>btn.classList.toggle("is-selected",btn.dataset.option===option));
+      input.disabled=option!=="around";
+      if(option==="around") input.focus();
+      startSection.classList.remove("hidden");
+    }
+    function setOrderMode(mode){
+      orderMode=mode;
+      orderButtons.forEach(btn=>btn.classList.toggle("is-selected",btn.dataset.order===mode));
+    }
+
+    optionButtons.forEach(btn=>{
+      btn.addEventListener("click",async()=>{
+        if(btn.disabled) return;
+        setStatus("");
+        const option=btn.dataset.option;
+        setSelectedOption(option);
+        if(option==="around"){
+          crawlBuilder.locationOverride=null;
+          if(!input.value.trim()){
+            setStatus("Enter a suburb or postcode, then pick a location.","error");
+          }
+        } else {
+          crawlBuilder.locationOverride=null;
+          if(suggestionsEl) suggestionsEl.innerHTML="";
+        }
+      });
+    });
+
+    orderButtons.forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        setOrderMode(btn.dataset.order);
+      });
+    });
+
+    startButtons.forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        if(!selectedOption){
+          setStatus("Choose where you'd like to crawl first.","error");
+          return;
+        }
+        startButtons.forEach(b=>b.classList.toggle("is-selected",b===btn));
+        const startType=btn.dataset.start;
+        if(startType==="time"){
+          timeInput.classList.remove("hidden");
+          timeInput.focus();
+          return;
+        }
+        timeInput.classList.add("hidden");
+        const startAt=new Date();
+        buildCrawlFromBuilder(selectedOption,startAt);
+      });
+    });
+
+    timeInput.addEventListener("change",()=>{
+      if(!selectedOption) return;
+      const startAt=buildStartDateFromInput(timeInput.value);
+      buildCrawlFromBuilder(selectedOption,startAt);
+    });
+
+    input.addEventListener("input",()=>{
+      if(input.disabled){
+        setStatus("");
+        if(suggestionsEl) suggestionsEl.innerHTML="";
+        return;
+      }
+      const query=input.value.trim();
+      crawlBuilder.locationOverride=null;
+      if(suggestionTimer) clearTimeout(suggestionTimer);
+      if(query.length<2){
+        if(suggestionsEl) suggestionsEl.innerHTML="";
+        setStatus("");
+        return;
+      }
+      suggestionTimer=setTimeout(async()=>{
+        const list=await fetchSuggestions(query);
+        renderSuggestions(list);
+        if(list.length===0) setStatus("No matches yet. Try another suburb or postcode.","error");
+        else setStatus("");
+      },300);
+    });
+
+    closeBtn.addEventListener("click",()=>container.classList.add("hidden"));
+    backdrop.addEventListener("click",()=>container.classList.add("hidden"));
+
+    crawlBuilder={
+      container,
+      startSection,
+      timeInput,
+      statusEl,
+      input,
+      locationOverride:null,
+      get orderMode(){ return orderMode; },
+      reset(){
+        selectedOption="nearby";
+        optionButtons.forEach(btn=>btn.classList.remove("is-selected","is-loading"));
+        const nearbyButton=container.querySelector('.crawl-option[data-option="nearby"]');
+        nearbyButton?.classList.add("is-selected");
+        input.disabled=true;
+        crawlBuilder.locationOverride=null;
+        if(suggestionsEl) suggestionsEl.innerHTML="";
+        setOrderMode("location");
+        startButtons.forEach(btn=>btn.classList.remove("is-selected"));
+        startSection.classList.remove("hidden");
+        timeInput.classList.add("hidden");
+        setStatus("");
+      }
+    };
+    return crawlBuilder;
+  }
+
+  function openCrawlBuilder(){
+    const builder=ensureCrawlBuilder();
+    builder.container.classList.remove("hidden");
+    builder.reset();
+  }
+
+  function buildCrawlFromBuilder(option,startAt){
+    if(!option) return;
+    let origin=getCrawlOrigin();
+    if(option==="around"){
+      if(!crawlBuilder?.locationOverride){
+        if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="Choose a location from the list first.";
+        return;
+      }
+      origin=crawlBuilder.locationOverride;
+    }
+    const venues=chooseCrawlVenues(origin,4);
+    if(venues.length===0){
+      if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="No venues found yet. Try moving the map.";
+      return;
+    }
+    const orderMode=crawlBuilder?.orderMode || "location";
+    const orderedVenues=orderVenues(venues,origin,orderMode,startAt);
+    buildCrawlState(orderedVenues,startAt,origin,orderMode);
+    if(markersLayer) markersLayer.clearLayers();
+    renderCrawlMarkers();
+    updateCrawlList();
+    showCrawlControls();
+    refreshCrawlReminders();
+    if(map) map.flyTo([origin.lat,origin.lng],14,{ animate:true });
+    if(crawlBuilder?.container) crawlBuilder.container.classList.add("hidden");
+  }
+
+  function ensureCrawlFab(){
+    if(document.getElementById("crawl-fab")) return;
+    const button=document.createElement("button");
+    button.id="crawl-fab";
+    button.className="crawl-fab";
+    button.type="button";
+    button.textContent="Plan a pub crawl";
+    button.addEventListener("click",openCrawlBuilder);
+    document.body.appendChild(button);
+  }
+
+  function showCrawlFab(){
+    const button=document.getElementById("crawl-fab");
+    if(button) button.classList.remove("hidden");
+  }
+
+  function hideCrawlFab(){
+    const button=document.getElementById("crawl-fab");
+    if(button) button.classList.add("hidden");
   }
 
   function addLocateControl(){
@@ -838,6 +1701,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
+    ensureCrawlFab();
+    const params=new URLSearchParams(window.location.search);
+    const crawlParam=params.get("crawl");
+    if(crawlParam) hydrateCrawlFromLink(crawlParam);
   }
 
   if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", boot);
