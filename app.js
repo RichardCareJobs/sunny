@@ -7,25 +7,18 @@
 console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
 (function () {
-  const OVERPASS_ENDPOINTS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass.openstreetmap.ru/api/interpreter"
-  ];
-
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
-  const TILE_URL = window.SUNNY_TILE_URL ||
-    "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
-  const TILE_ATTR =
-    window.SUNNY_TILE_ATTR ||
-    '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
-
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
-  const TILE_CACHE_PREFIX = "sunny-pubs-overpass-tiles-v1:";
+  const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
-  let map, markersLayer;
+  const GOOGLE_PLACES_TYPES = ["bar", "pub", "restaurant", "cafe", "night_club"];
+  const PLACES_QUERY_RADIUS_MIN_M = 1000;
+  const PLACES_QUERY_RADIUS_MAX_M = 50000;
+
+  let map;
+  let markersLayer = [];
   let locateButton = null;
   let allVenues = {};
   let userLocation = null;
@@ -51,7 +44,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const CRAWL_TIME_STEP_MINUTES = 15;
   const MAX_CRAWL_VENUES = 12;
 
-  let crawlLayer = null;
+  let crawlLayer = [];
   let crawlState = null;
   let crawlBuilder = null;
   let crawlControls = null;
@@ -59,14 +52,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let crawlListPanel = null;
   let crawlAddPanel = null;
   let crawlNotifications = new Map();
+  let placesService = null;
+  let autocompleteService = null;
+  let placesRequestId = 0;
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
-  const markerIcon = L.icon({
-    iconUrl: MARKER_ICON_URL,
-    iconSize: [28, 28],
-    iconAnchor: [14, 28],
-    popupAnchor: [0, -28]
-  });
+  let markerIcon = null;
 
   // Helpers
   function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify({v,t:Date.now()}));}catch{} }
@@ -185,8 +176,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!map||!userLocation) return;
     if(hasCenteredOnUser&&!force) return;
     const zoom=Math.max(map.getZoom(),targetZoom);
-    map.flyTo([userLocation.lat,userLocation.lng],zoom,{animate:true});
+    panToLocation(userLocation.lat,userLocation.lng,zoom);
     hasCenteredOnUser=true;
+  }
+  function panToLocation(lat,lng,zoom=null){
+    if(!map) return;
+    map.panTo({lat,lng});
+    if(typeof zoom==="number") map.setZoom(zoom);
   }
   function acceptAccurateLocation(p,{shouldCenter=false,forceCenter=false,onComplete=null}={}){
     if(!p||!p.coords){ if(onComplete) onComplete(); return false; }
@@ -315,44 +311,97 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(isFinite(openIn)){ if(openIn<=60) return {status:"Opening soon",tone:"info"}; return {status:"Closed",tone:"muted"}; }
     return {status:"Closed",tone:"muted"};
   }
-
-  // Overpass
-  function buildOverpassQuery(bbox){
-    return `[out:json][timeout:25];
-      (
-        node["amenity"~"^(pub|bar|biergarten)$"](${bbox});
-        way["amenity"~"^(pub|bar|biergarten)$"](${bbox});
-        relation["amenity"~"^(pub|bar|biergarten)$"](${bbox});
-        node["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
-        way["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
-        relation["amenity"="restaurant"]["outdoor_seating"="yes"](${bbox});
-        node["amenity"="restaurant"]["garden"="yes"](${bbox});
-        way["amenity"="restaurant"]["garden"="yes"](${bbox});
-        relation["amenity"="restaurant"]["garden"="yes"](${bbox});
-        node["amenity"="restaurant"]["terrace"="yes"](${bbox});
-        way["amenity"="restaurant"]["terrace"="yes"](${bbox});
-        relation["amenity"="restaurant"]["terrace"="yes"](${bbox});
-        node["tourism"="hotel"]["terrace"="yes"](${bbox});
-        way["tourism"="hotel"]["terrace"="yes"](${bbox});
-        relation["tourism"="hotel"]["terrace"="yes"](${bbox});
-      );
-      out center tags;`;
-  }
-  async function fetchOverpass(q){
-    const body=new URLSearchParams({data:q});
-    for(const url of OVERPASS_ENDPOINTS){
-      try{ const res=await fetch(url,{method:"POST",body}); if(!res.ok) continue; const json=await res.json(); if(json&&json.elements) return json.elements; }
-      catch{}
+  function resolveOpenStatus(venue){
+    if(venue && typeof venue.openNow==="boolean"){
+      return venue.openNow ? {status:"Open now",tone:"good"} : {status:"Closed",tone:"muted"};
     }
-    throw new Error("All Overpass endpoints failed");
+    const tags=venue?.tags||{};
+    return parseOpenStatus(tags.opening_hours);
   }
-  function normalizeElement(el){
-    const tags=el.tags||{}; let lat=el.lat,lng=el.lon; if((!lat||!lng)&&el.center){ lat=el.center.lat; lng=el.center.lon; }
-    if(!lat||!lng) return null; const id=`${el.type}/${el.id}`; const name=tags.name||tags.brand||toTitle(tags.operator)||(tags.amenity?toTitle(tags.amenity):"Unnamed");
+
+  // Google Places
+  function getAmenityFromTypes(types=[]){
+    if(types.includes("pub")) return "pub";
+    if(types.includes("bar")) return "bar";
+    if(types.includes("night_club")) return "nightclub";
+    if(types.includes("cafe")) return "cafe";
+    if(types.includes("restaurant")) return "restaurant";
+    return "";
+  }
+  function normalizePlace(place){
+    if(!place||!place.geometry||!place.geometry.location) return null;
+    if(place.business_status==="CLOSED_PERMANENTLY") return null;
+    if(place.permanently_closed) return null;
+    const location=place.geometry.location;
+    const lat=typeof location.lat==="function" ? location.lat() : location.lat;
+    const lng=typeof location.lng==="function" ? location.lng() : location.lng;
+    if(typeof lat!=="number"||typeof lng!=="number") return null;
+    const id=place.place_id;
+    const name=place.name||"Unnamed";
+    const amenity=getAmenityFromTypes(place.types||[]);
+    const tags={
+      name,
+      amenity,
+      types: (place.types||[]).join(","),
+      vicinity: place.vicinity || "",
+      formatted_address: place.formatted_address || ""
+    };
     if(isClosed(tags)) return null;
     if(lacksOutdoor(tags)) return null;
     if(isDryVenue(tags)) return null;
-    return { id,name,lat,lng,tags,hasOutdoor:hasOutdoorHints(tags),source:"osm" };
+    return {
+      id,
+      name,
+      lat,
+      lng,
+      address: place.vicinity || place.formatted_address || "",
+      tags,
+      openNow: place.opening_hours?.open_now,
+      hasOutdoor: hasOutdoorHints(tags),
+      source: "google"
+    };
+  }
+  async function fetchPlacesByType({ center, radius, type }){
+    if(!placesService) return [];
+    const collected=[];
+    const request={
+      location: center,
+      radius,
+      type
+    };
+    return new Promise((resolve)=>{
+      const handlePage=(results,status,pagination)=>{
+        if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
+          collected.push(...results);
+        }
+        if(pagination&&pagination.hasNextPage){
+          setTimeout(()=>pagination.nextPage(),200);
+        } else {
+          resolve(collected);
+        }
+      };
+      placesService.nearbySearch(request,handlePage);
+    });
+  }
+  function calculateRadiusFromBounds(bounds){
+    const center=bounds.getCenter();
+    const ne=bounds.getNorthEast();
+    const radiusKm=haversine(center.lat(),center.lng(),ne.lat(),ne.lng());
+    const radiusMeters=Math.min(PLACES_QUERY_RADIUS_MAX_M,Math.max(PLACES_QUERY_RADIUS_MIN_M,Math.round(radiusKm*1000)));
+    return radiusMeters;
+  }
+  async function fetchPlacesForBounds(bounds){
+    const center=bounds.getCenter();
+    const radius=calculateRadiusFromBounds(bounds);
+    const centerLocation={lat:center.lat(),lng:center.lng()};
+    const responses=await Promise.all(
+      GOOGLE_PLACES_TYPES.map(type=>fetchPlacesByType({ center: centerLocation, radius, type }))
+    );
+    const merged=new Map();
+    responses.flat().forEach(place=>{
+      if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
+    });
+    return Array.from(merged.values());
   }
   function hasOutdoorHints(tags={}){
     const t=x=>(x||"").toLowerCase();
@@ -408,16 +457,25 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function mergeVenues(list){ let added=0; for(const v of list){ if(!v) continue; if(!allVenues[v.id]){ allVenues[v.id]=v; added++; } else { allVenues[v.id]={...allVenues[v.id],...v}; } } if(added) saveLocal(VENUE_CACHE_KEY,allVenues); }
 
+  function clearMarkersLayer(){
+    markersLayer.forEach(marker=>marker.setMap(null));
+    markersLayer=[];
+  }
+
+  function clearCrawlLayer(){
+    crawlLayer.forEach(marker=>marker.setMap(null));
+    crawlLayer=[];
+  }
+
   function ensureCrawlLayer(){
-    if(crawlLayer||!map) return crawlLayer;
-    crawlLayer=L.layerGroup().addTo(map);
+    if(!map) return [];
     return crawlLayer;
   }
 
   function getMapCenter(){
     if(!map) return { lat: DEFAULT_VIEW.lat, lng: DEFAULT_VIEW.lng };
     const center=map.getCenter();
-    return { lat: center.lat, lng: center.lng };
+    return { lat: center.lat(), lng: center.lng() };
   }
 
   function getCrawlOrigin(){
@@ -562,7 +620,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }));
       crawlState={ venues, startAt, origin, orderMode };
       updateCrawlSchedule();
-      if(markersLayer) markersLayer.clearLayers();
+      clearMarkersLayer();
       renderCrawlMarkers();
       showCrawlControls();
       updateCrawlList();
@@ -576,12 +634,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   // Map
   function setupMap(){
     if(!document.getElementById("map")){ const m=document.createElement("div"); m.id="map"; m.style.position="absolute"; m.style.left="0"; m.style.right="0"; m.style.top="0"; m.style.bottom="0"; document.body.appendChild(m); }
-    map=L.map("map").setView([DEFAULT_VIEW.lat,DEFAULT_VIEW.lng],DEFAULT_VIEW.zoom);
-    L.tileLayer(TILE_URL,{maxZoom:19,attribution:TILE_ATTR}).addTo(map);
-    markersLayer=L.layerGroup().addTo(map);
-    map.on("moveend",debouncedLoadVisible);
-    map.on("zoomend",debouncedLoadVisible);
-    map.on("click",()=>{
+    map=new google.maps.Map(document.getElementById("map"),{
+      center:{ lat: DEFAULT_VIEW.lat, lng: DEFAULT_VIEW.lng },
+      zoom: DEFAULT_VIEW.zoom
+    });
+    markerIcon={
+      url: MARKER_ICON_URL,
+      scaledSize: new google.maps.Size(28,28),
+      anchor: new google.maps.Point(14,28)
+    };
+    placesService=new google.maps.places.PlacesService(map);
+    autocompleteService=new google.maps.places.AutocompleteService();
+    map.addListener("idle",debouncedLoadVisible);
+    map.addListener("zoom_changed",debouncedLoadVisible);
+    map.addListener("click",()=>{
       hideVenueCard();
       hideCrawlCard();
     });
@@ -591,12 +657,28 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function debouncedLoadVisible(){ if(moveTimer) clearTimeout(moveTimer); moveTimer=setTimeout(loadVisibleTiles,MOVE_DEBOUNCE_MS); }
 
   async function loadVisibleTiles(){
-    const b=map.getBounds(); const sw=b.getSouthWest(), ne=b.getNorthEast();
-    const bbox=[sw.lat,sw.lng,ne.lat,ne.lng].map(n=>+n.toFixed(5)).join(","), cacheKey=`${TILE_CACHE_PREFIX}${bbox}`;
+    if(!map||!placesService) return;
+    const b=map.getBounds();
+    if(!b) return;
+    const sw=b.getSouthWest(), ne=b.getNorthEast();
+    const bbox=[sw.lat(),sw.lng(),ne.lat(),ne.lng()].map(n=>+n.toFixed(5)).join(","), cacheKey=`${TILE_CACHE_PREFIX}${bbox}`;
     const cached=loadLocal(cacheKey,TILE_CACHE_TTL_MS);
-    if(cached&&Array.isArray(cached)){ mergeVenues(cached.map(normalizeElement).filter(Boolean)); renderMarkers(); return; }
-    try{ const els=await fetchOverpass(buildOverpassQuery(bbox)); saveLocal(cacheKey,els); mergeVenues(els.map(normalizeElement).filter(Boolean)); renderMarkers(); }
-    catch(e){ console.error("Overpass error:",e); }
+    if(cached&&Array.isArray(cached)){
+      mergeVenues(cached);
+      renderMarkers();
+      return;
+    }
+    const requestId=++placesRequestId;
+    try{
+      const places=await fetchPlacesForBounds(b);
+      if(requestId!==placesRequestId) return;
+      const normalized=places.map(normalizePlace).filter(Boolean);
+      saveLocal(cacheKey,normalized);
+      mergeVenues(normalized);
+      renderMarkers();
+    } catch(e){
+      console.error("Places error:",e);
+    }
   }
 
   function ensureDetailCard(){
@@ -789,9 +871,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const tags=v.tags||{};
     const kind=toTitle(tags.amenity||tags.tourism||"");
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
-    const address=formatAddress(tags);
+    const address=v.address||formatAddress(tags);
     const sun=sunBadge(v.lat,v.lng);
-    const open=parseOpenStatus(tags.opening_hours);
+    const open=resolveOpenStatus(v);
     const website=(tags.website||tags.contact_website||tags.url)?String(tags.website||tags.contact_website||tags.url).replace(/^http:\/\//,'https://'):null;
 
     card.container.dataset.venueId=v.id;
@@ -884,7 +966,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         transition:"opacity 150ms ease",
         pointerEvents:"none"
       });
-      map.getContainer().appendChild(venueCountToast);
+      map.getDiv().appendChild(venueCountToast);
     }
     venueCountToast.textContent=count===0?"No venues in view":count===1?"1 venue in view":`${count} venues in view`;
     venueCountToast.style.opacity="1";
@@ -897,25 +979,31 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function renderMarkers(){
-    if(!markersLayer||!map) return;
+    if(!map) return;
     if(crawlState&&crawlState.venues&&crawlState.venues.length){
-      markersLayer.clearLayers();
+      clearMarkersLayer();
       return;
     }
     const reopenVenueId=openVenueId;
     let reopenVenue=null;
     isRenderingMarkers=true;
-    markersLayer.clearLayers();
+    clearMarkersLayer();
     const b=map.getBounds();
+    if(!b){ isRenderingMarkers=false; return; }
     let visibleCount=0;
     Object.values(allVenues).forEach(v=>{
-      if(!b.contains([v.lat,v.lng])) return;
+      if(!b.contains(new google.maps.LatLng(v.lat,v.lng))) return;
       visibleCount++;
-      const marker=L.marker([v.lat,v.lng],{icon:markerIcon}).addTo(markersLayer);
-      marker.on("click",()=>{
+      const marker=new google.maps.Marker({
+        position:{ lat: v.lat, lng: v.lng },
+        map,
+        icon: markerIcon
+      });
+      marker.addListener("click",()=>{
         openVenueId=v.id;
         showVenueCard(v);
       });
+      markersLayer.push(marker);
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
     isRenderingMarkers=false;
@@ -928,24 +1016,37 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function createCrawlMarkerIcon(number){
-    return L.divIcon({
-      className:"crawl-marker",
-      html:`<div class="crawl-marker__pin"><span>${number}</span></div>`,
-      iconSize:[36,44],
-      iconAnchor:[18,44]
-    });
+    return {
+      path: "M0-48c-9.9 0-18 8.1-18 18 0 13.5 18 30 18 30s18-16.5 18-30c0-9.9-8.1-18-18-18z",
+      fillColor: "#ff6a00",
+      fillOpacity: 1,
+      strokeColor: "#ffffff",
+      strokeWeight: 1.5,
+      scale: 1,
+      labelOrigin: new google.maps.Point(0,-28)
+    };
   }
 
   function renderCrawlMarkers(){
     if(!map) return;
     ensureCrawlLayer();
-    crawlLayer.clearLayers();
+    clearCrawlLayer();
     if(!crawlState||!crawlState.venues||crawlState.venues.length===0) return;
     crawlState.venues.forEach((venue,index)=>{
-      const marker=L.marker([venue.lat,venue.lng],{ icon:createCrawlMarkerIcon(index+1) }).addTo(crawlLayer);
-      marker.on("click",()=>{
+      const marker=new google.maps.Marker({
+        position:{ lat: venue.lat, lng: venue.lng },
+        map,
+        icon: createCrawlMarkerIcon(index+1),
+        label: {
+          text: String(index+1),
+          color: "#ffffff",
+          fontWeight: "700"
+        }
+      });
+      marker.addListener("click",()=>{
         openCrawlCard(venue.id);
       });
+      crawlLayer.push(marker);
     });
   }
 
@@ -1224,7 +1325,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="crawl-list__time">${formatTimeRange(venue.slot?.start,venue.slot?.end)}</div>
       `;
       item.addEventListener("click",()=>{
-        if(map) map.flyTo([venue.lat,venue.lng],Math.max(map.getZoom(),15),{ animate:true });
+        if(map) panToLocation(venue.lat,venue.lng,Math.max(map.getZoom(),15));
         openCrawlCard(venue.id);
       });
       items.appendChild(item);
@@ -1410,26 +1511,40 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           crawlBuilder.locationOverride={ lat:item.lat, lng:item.lng, label:item.label };
           suggestionsEl.innerHTML="";
           setStatus("Location confirmed.","success");
-          if(map) map.flyTo([item.lat,item.lng],13,{ animate:true });
+          if(map) panToLocation(item.lat,item.lng,13);
         });
         suggestionsEl.appendChild(btn);
       });
     }
     async function fetchSuggestions(query){
-      if(!query) return [];
-      const url=`https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=au&q=${encodeURIComponent(query)}`;
-      const response=await fetch(url,{headers:{Accept:"application/json","Accept-Language":"en-AU"}});
-      if(!response.ok) return [];
-      const results=await response.json();
-      if(!Array.isArray(results)) return [];
-      return results.map(result=>{
-        const address=result.address || {};
-        const postcode=address.postcode || "";
-        const suburb=address.suburb || address.town || address.city || address.village || address.locality || "";
-        const state=address.state || "";
-        const label=[postcode,suburb,state].filter(Boolean).join(", ") || result.display_name;
-        return { label, lat:Number(result.lat), lng:Number(result.lon) };
+      if(!query||!autocompleteService||!placesService) return [];
+      const predictions=await new Promise(resolve=>{
+        autocompleteService.getPlacePredictions({
+          input: query,
+          componentRestrictions: { country: "au" }
+        },(results,status)=>{
+          if(status!==google.maps.places.PlacesServiceStatus.OK||!Array.isArray(results)) return resolve([]);
+          resolve(results.slice(0,5));
+        });
       });
+      if(predictions.length===0) return [];
+      const detailPromises=predictions.map(prediction=>new Promise(resolve=>{
+        placesService.getDetails({
+          placeId: prediction.place_id,
+          fields: ["geometry","formatted_address","name"]
+        },(place,status)=>{
+          if(status!==google.maps.places.PlacesServiceStatus.OK||!place||!place.geometry){
+            return resolve(null);
+          }
+          const location=place.geometry.location;
+          const lat=location.lat();
+          const lng=location.lng();
+          const label=place.formatted_address||place.name||prediction.description;
+          resolve({ label, lat, lng });
+        });
+      }));
+      const results=await Promise.all(detailPromises);
+      return results.filter(Boolean);
     }
 
     function setSelectedOption(option){
@@ -1568,12 +1683,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const orderMode=crawlBuilder?.orderMode || "location";
     const orderedVenues=orderVenues(venues,origin,orderMode,startAt);
     buildCrawlState(orderedVenues,startAt,origin,orderMode);
-    if(markersLayer) markersLayer.clearLayers();
+    clearMarkersLayer();
     renderCrawlMarkers();
     updateCrawlList();
     showCrawlControls();
     refreshCrawlReminders();
-    if(map) map.flyTo([origin.lat,origin.lng],14,{ animate:true });
+    if(map) panToLocation(origin.lat,origin.lng,14);
     if(crawlBuilder?.container) crawlBuilder.container.classList.add("hidden");
   }
 
@@ -1600,24 +1715,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function addLocateControl(){
     if(!map) return;
-    const LocateControl=L.Control.extend({
-      options:{position:"bottomleft"},
-      onAdd(){
-        const container=L.DomUtil.create("div","locate-control");
-        const button=L.DomUtil.create("button","locate-button",container);
-        button.type="button";
-        button.setAttribute("aria-label","Locate me");
-        button.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 3.06V1h2v2.06A8.01 8.01 0 0 1 20.94 11H23v2h-2.06A8.01 8.01 0 0 1 13 20.94V23h-2v-2.06A8.01 8.01 0 0 1 3.06 13H1v-2h2.06A8.01 8.01 0 0 1 11 3.06ZM12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>`;
-        locateButton=button;
-        L.DomEvent.disableClickPropagation(container);
-        L.DomEvent.on(button,"click",(event)=>{
-          L.DomEvent.stop(event);
-          locateUser();
-        });
-        return container;
-      }
+    const container=document.createElement("div");
+    container.className="locate-control";
+    const button=document.createElement("button");
+    button.type="button";
+    button.className="locate-button";
+    button.setAttribute("aria-label","Locate me");
+    button.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M11 3.06V1h2v2.06A8.01 8.01 0 0 1 20.94 11H23v2h-2.06A8.01 8.01 0 0 1 13 20.94V23h-2v-2.06A8.01 8.01 0 0 1 3.06 13H1v-2h2.06A8.01 8.01 0 0 1 11 3.06ZM12 5a7 7 0 1 0 0 14 7 7 0 0 0 0-14Zm0 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z"/></svg>`;
+    locateButton=button;
+    container.appendChild(button);
+    button.addEventListener("click",(event)=>{
+      event.stopPropagation();
+      locateUser();
     });
-    map.addControl(new LocateControl());
+    map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(container);
   }
 
   function ensureRatingCard(){
@@ -1723,6 +1834,28 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(crawlParam) hydrateCrawlFromLink(crawlParam);
   }
 
-  if(document.readyState==="loading") document.addEventListener("DOMContentLoaded", boot);
-  else boot();
+  let domReady=false;
+  let mapsReady=false;
+  let hasBooted=false;
+  function tryBoot(){
+    if(hasBooted||!domReady||!mapsReady) return;
+    hasBooted=true;
+    boot();
+  }
+  window.__sunnyBoot=()=>{
+    mapsReady=true;
+    tryBoot();
+  };
+  if(window.__sunnyMapsReady){
+    mapsReady=true;
+  }
+  if(document.readyState==="loading"){
+    document.addEventListener("DOMContentLoaded",()=>{
+      domReady=true;
+      tryBoot();
+    });
+  } else {
+    domReady=true;
+    tryBoot();
+  }
 })();
