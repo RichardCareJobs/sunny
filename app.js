@@ -9,8 +9,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 (function () {
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
-  const VENUE_CACHE_KEY = "sunny-pubs-venues-v2";
-  const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v2:";
+  const VENUE_CACHE_KEY = "sunny-pubs-venues";
+  const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
   const GOOGLE_PLACES_TYPES = ["bar", "restaurant", "cafe", "night_club"];
@@ -1931,15 +1931,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function boot(){
     requestUserLocationOnce();
     const cached=loadLocal(VENUE_CACHE_KEY);
-    if(cached&&typeof cached==="object"){
-      const filtered=Object.values(cached).filter(v=>v&&v.source==="google");
-      if(filtered.length){
-        allVenues=filtered.reduce((acc,venue)=>{
-          acc[venue.id]=venue;
-          return acc;
-        },{});
-      }
-    }
+    if(cached&&typeof cached==="object") allVenues=cached;
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
