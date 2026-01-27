@@ -742,13 +742,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { places, hadErrors, errorDetails=[] }=await fetchPlacesForBounds(b);
       if(requestId!==placesRequestId) return;
       const normalized=places.map(normalizePlace).filter(Boolean);
+      const uniqueErrors=[...new Set(errorDetails)];
+      if(hadErrors&&normalized.length===0){
+        showPlacesError(buildPlacesErrorMessage(uniqueErrors));
+        renderMarkers();
+        return;
+      }
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
       renderMarkers();
-      if(hadErrors&&normalized.length===0){
-        const detailText=errorDetails.length?` (${[...new Set(errorDetails)].join(", ")})`:"";
-        showPlacesError(`Unable to load venues from Google Places${detailText}.`);
-      }
     } catch(e){
       console.error("Places error:",e);
       showPlacesError("Unable to load venues from Google Places.");
@@ -1083,6 +1085,26 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         venueCountToast.style.opacity="0";
       }
     },4000);
+  }
+
+  function buildPlacesErrorMessage(errorDetails){
+    if(!Array.isArray(errorDetails)||errorDetails.length===0){
+      return "Unable to load venues from Google Places.";
+    }
+    const errors=new Set(errorDetails);
+    if(errors.has(google.maps.places.PlacesServiceStatus.REQUEST_DENIED)){
+      return "Google Places denied the request. Check that the Maps JavaScript + Places APIs are enabled and the API key billing/referrers are correct.";
+    }
+    if(errors.has(google.maps.places.PlacesServiceStatus.OVER_QUERY_LIMIT)){
+      return "Google Places quota exceeded. Try again shortly or review API limits.";
+    }
+    if(errors.has(google.maps.places.PlacesServiceStatus.INVALID_REQUEST)){
+      return "Google Places reported an invalid request. Try refreshing the map.";
+    }
+    if(errors.has(google.maps.places.PlacesServiceStatus.UNKNOWN_ERROR)){
+      return "Google Places had a temporary error. Try again.";
+    }
+    return `Unable to load venues from Google Places (${Array.from(errors).join(", ")}).`;
   }
 
   function renderMarkers(){
