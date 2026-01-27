@@ -13,7 +13,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
-  const GOOGLE_PLACES_TYPES = ["bar", "restaurant", "cafe", "night_club"];
+  const GOOGLE_PLACES_TYPES = ["bar", "pub", "restaurant", "cafe", "night_club"];
   const PLACES_QUERY_RADIUS_MIN_M = 1000;
   const PLACES_QUERY_RADIUS_MAX_M = 50000;
 
@@ -362,11 +362,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
   }
   async function fetchPlacesByType({ center, radius, type }){
-    if(!placesService){
-      return { results: [], status: google.maps.places.PlacesServiceStatus.INVALID_REQUEST, type };
-    }
+    if(!placesService) return [];
     const collected=[];
-    let finalStatus=google.maps.places.PlacesServiceStatus.ZERO_RESULTS;
     const request={
       location: center,
       radius,
@@ -374,14 +371,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     return new Promise((resolve)=>{
       const handlePage=(results,status,pagination)=>{
-        finalStatus=status;
         if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
           collected.push(...results);
         }
         if(pagination&&pagination.hasNextPage){
-          setTimeout(()=>pagination.nextPage(),2000);
+          setTimeout(()=>pagination.nextPage(),200);
         } else {
-          resolve({ results: collected, status: finalStatus, type });
+          resolve(collected);
         }
       };
       placesService.nearbySearch(request,handlePage);
@@ -401,19 +397,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const responses=await Promise.all(
       GOOGLE_PLACES_TYPES.map(type=>fetchPlacesByType({ center: centerLocation, radius, type }))
     );
-    const errorStatuses=responses.filter(response=>{
-      const status=response?.status;
-      return status&&status!==google.maps.places.PlacesServiceStatus.OK&&status!==google.maps.places.PlacesServiceStatus.ZERO_RESULTS;
-    });
-    if(errorStatuses.length){
-      const details=errorStatuses.map(entry=>`${entry.type}:${entry.status}`).join(", ");
-      throw new Error(`Places lookup failed (${details})`);
-    }
     const merged=new Map();
-    responses.forEach(response=>{
-      response.results.forEach(place=>{
-        if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
-      });
+    responses.flat().forEach(place=>{
+      if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
     });
     return Array.from(merged.values());
   }
@@ -692,7 +678,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       renderMarkers();
     } catch(e){
       console.error("Places error:",e);
-      showPlacesError("Unable to load venues from Google Places.");
     }
   }
 
@@ -991,39 +976,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         venueCountToast.style.opacity="0";
       }
     },3000);
-  }
-  function showPlacesError(message){
-    if(!map) return;
-    if(!venueCountToast){
-      venueCountToast=document.createElement("div");
-      venueCountToast.id="venue-count-toast";
-      Object.assign(venueCountToast.style,{
-        position:"absolute",
-        top:"16px",
-        left:"50%",
-        transform:"translateX(-50%)",
-        zIndex:"1000",
-        background:"#111",
-        color:"#fff",
-        padding:"8px 14px",
-        borderRadius:"999px",
-        fontWeight:"600",
-        fontSize:"14px",
-        boxShadow:"0 10px 25px rgba(15,23,42,0.25)",
-        opacity:"0",
-        transition:"opacity 150ms ease",
-        pointerEvents:"none"
-      });
-      map.getDiv().appendChild(venueCountToast);
-    }
-    venueCountToast.textContent=message;
-    venueCountToast.style.opacity="1";
-    if(venueCountTimer) clearTimeout(venueCountTimer);
-    venueCountTimer=setTimeout(()=>{
-      if(venueCountToast){
-        venueCountToast.style.opacity="0";
-      }
-    },4000);
   }
 
   function renderMarkers(){
