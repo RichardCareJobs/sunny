@@ -435,7 +435,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return sorted.slice(0,count);
   }
 
-  function buildCrawlState(venues,startAt,originInfo=null){
+  function buildCrawlState(venues,startAt,originInfo=null,orderMode="location"){
     const normalized=venues.map((venue,index)=>({
       ...venue,
       crawlIndex:index,
@@ -443,7 +443,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hangMinutes:CRAWL_DEFAULT_HANG_MINUTES,
       remind:false
     }));
-    crawlState={ venues: normalized, startAt, origin: originInfo };
+    crawlState={ venues: normalized, startAt, origin: originInfo, orderMode };
     updateCrawlSchedule();
   }
 
@@ -456,6 +456,44 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       venue.slot={ start, end };
       cursor=end;
     });
+  }
+
+  function getSunScore(venue,time){
+    if(!venue||!time) return -Infinity;
+    const { altitudeDeg }=sunPosition(venue.lat,venue.lng,time);
+    return altitudeDeg;
+  }
+
+  function orderVenues(venues,origin,mode,startAt){
+    if(!Array.isArray(venues)) return [];
+    if(mode==="sun"){
+      return [...venues].sort((a,b)=>{
+        const aScore=getSunScore(a,startAt);
+        const bScore=getSunScore(b,startAt);
+        if(aScore===bScore){
+          return haversine(origin.lat,origin.lng,a.lat,a.lng) - haversine(origin.lat,origin.lng,b.lat,b.lng);
+        }
+        return bScore - aScore;
+      });
+    }
+    const remaining=[...venues];
+    const ordered=[];
+    let current=origin;
+    while(remaining.length){
+      let bestIndex=0;
+      let bestDistance=Infinity;
+      remaining.forEach((venue,index)=>{
+        const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
+        if(distance<bestDistance){
+          bestDistance=distance;
+          bestIndex=index;
+        }
+      });
+      const [next]=remaining.splice(bestIndex,1);
+      ordered.push(next);
+      current=next;
+    }
+    return ordered;
   }
 
   function clearCrawlNotifications(){
@@ -490,9 +528,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function serializeCrawl(){
     if(!crawlState||!crawlState.venues) return null;
-    const data={
+      const data={
       startAt: crawlState.startAt instanceof Date ? crawlState.startAt.toISOString() : null,
       origin: crawlState.origin || null,
+      orderMode: crawlState.orderMode || "location",
       venues: crawlState.venues.map(v=>({
         id:v.id,
         name:v.name,
@@ -514,13 +553,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(!data||!Array.isArray(data.venues)) return false;
       const startAt=data.startAt ? new Date(data.startAt) : new Date();
       const origin=data.origin || null;
+      const orderMode=data.orderMode || "location";
       const venues=data.venues.map((v,index)=>({
         ...v,
         crawlIndex:index,
         hangMinutes:Number(v.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES,
         remind:false
       }));
-      crawlState={ venues, startAt, origin };
+      crawlState={ venues, startAt, origin, orderMode };
       updateCrawlSchedule();
       if(markersLayer) markersLayer.clearLayers();
       renderCrawlMarkers();
@@ -943,6 +983,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <span class="crawl-card__toggle-track"></span>
             <span class="crawl-card__toggle-label">Remind me when it is time to move on</span>
           </label>
+          <button type="button" class="crawl-card__continue hidden">
+            <span>Keen to keep going? Add more places</span>
+            <span class="crawl-card__continue-icon">+</span>
+          </button>
           <div class="crawl-card__uber">
             <div class="crawl-card__uber-text"></div>
             <a class="crawl-card__uber-btn" target="_blank" rel="noopener">Book now</a>
@@ -954,6 +998,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     closeBtn.addEventListener("click",hideCrawlCard);
     const removeBtn=container.querySelector(".crawl-card__remove-btn");
     const toggleInput=container.querySelector(".crawl-card__toggle-input");
+    const continueBtn=container.querySelector(".crawl-card__continue");
     const timeButtons=Array.from(container.querySelectorAll(".crawl-card__time-btn"));
     removeBtn.addEventListener("click",()=>{
       if(!crawlState||!crawlCard.currentVenueId) return;
@@ -988,6 +1033,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       venue.remind=toggleInput.checked;
       refreshCrawlReminders();
     });
+    if(continueBtn){
+      continueBtn.addEventListener("click",()=>{
+        openCrawlAddPanel();
+      });
+    }
     timeButtons.forEach(btn=>{
       btn.addEventListener("click",()=>{
         if(!crawlState||!crawlCard.currentVenueId) return;
@@ -1011,6 +1061,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       timeLengthEl:container.querySelector(".crawl-card__time-length"),
       removeBtn,
       toggleInput,
+      continueBtn,
       uberWrap:container.querySelector(".crawl-card__uber"),
       uberBtn:container.querySelector(".crawl-card__uber-btn"),
       uberText:container.querySelector(".crawl-card__uber-text")
@@ -1033,6 +1084,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const isLast=venue.crawlIndex===crawlState.venues.length-1;
     card.toggleInput.checked=!!venue.remind;
     card.toggleInput.closest(".crawl-card__toggle").classList.toggle("hidden",isLast);
+    if(card.continueBtn){
+      card.continueBtn.classList.toggle("hidden",!isLast);
+    }
     const nextVenue=!isLast ? crawlState.venues[venue.crawlIndex+1] : null;
     if(nextVenue){
       card.uberWrap.classList.remove("hidden");
@@ -1289,6 +1343,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <div class="crawl-builder__suggestions"></div>
             <div class="crawl-builder__status" role="status"></div>
           </div>
+          <div class="crawl-builder__section crawl-order">
+            <h3>Order places based on sun or location?</h3>
+            <div class="crawl-builder__order-options">
+              <button type="button" class="crawl-order-option" data-order="sun">Sun</button>
+              <button type="button" class="crawl-order-option" data-order="location">Location</button>
+            </div>
+          </div>
           <div class="crawl-builder__section crawl-start hidden">
             <h3>When do you want to start?</h3>
             <div class="crawl-builder__start-options">
@@ -1306,12 +1367,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const optionButtons=Array.from(container.querySelectorAll(".crawl-option"));
     const startSection=container.querySelector(".crawl-start");
     const startButtons=Array.from(container.querySelectorAll(".crawl-start-option"));
+    const orderButtons=Array.from(container.querySelectorAll(".crawl-order-option"));
     const timeInput=container.querySelector(".crawl-builder__time-input");
     const statusEl=container.querySelector(".crawl-builder__status");
     const input=container.querySelector(".crawl-builder__input");
     const suggestionsEl=container.querySelector(".crawl-builder__suggestions");
     let suggestionTimer=null;
     let selectedOption=null;
+    let orderMode="location";
 
     function setStatus(message,type=""){
       statusEl.textContent=message||"";
@@ -1360,6 +1423,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(option==="around") input.focus();
       startSection.classList.remove("hidden");
     }
+    function setOrderMode(mode){
+      orderMode=mode;
+      orderButtons.forEach(btn=>btn.classList.toggle("is-selected",btn.dataset.order===mode));
+    }
 
     optionButtons.forEach(btn=>{
       btn.addEventListener("click",async()=>{
@@ -1376,6 +1443,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           crawlBuilder.locationOverride=null;
           if(suggestionsEl) suggestionsEl.innerHTML="";
         }
+      });
+    });
+
+    orderButtons.forEach(btn=>{
+      btn.addEventListener("click",()=>{
+        setOrderMode(btn.dataset.order);
       });
     });
 
@@ -1436,6 +1509,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       statusEl,
       input,
       locationOverride:null,
+      get orderMode(){ return orderMode; },
       reset(){
         selectedOption="nearby";
         optionButtons.forEach(btn=>btn.classList.remove("is-selected","is-loading"));
@@ -1444,6 +1518,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         input.disabled=true;
         crawlBuilder.locationOverride=null;
         if(suggestionsEl) suggestionsEl.innerHTML="";
+        setOrderMode("location");
         startButtons.forEach(btn=>btn.classList.remove("is-selected"));
         startSection.classList.remove("hidden");
         timeInput.classList.add("hidden");
@@ -1474,7 +1549,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="No venues found yet. Try moving the map.";
       return;
     }
-    buildCrawlState(venues,startAt,origin);
+    const orderMode=crawlBuilder?.orderMode || "location";
+    const orderedVenues=orderVenues(venues,origin,orderMode,startAt);
+    buildCrawlState(orderedVenues,startAt,origin,orderMode);
     if(markersLayer) markersLayer.clearLayers();
     renderCrawlMarkers();
     updateCrawlList();
