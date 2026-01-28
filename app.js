@@ -65,7 +65,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let activeRequestId = 0;
   const MAX_PAGES_PER_PASS = 1;
 
-  const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
+  const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/marker.png";
   let markerIcon = null;
 
   // Helpers
@@ -1056,8 +1056,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     markerIcon={
       url: MARKER_ICON_URL,
-      scaledSize: new google.maps.Size(28,28),
-      anchor: new google.maps.Point(14,28)
+      scaledSize: new google.maps.Size(32, 32),
+      anchor: new google.maps.Point(16, 16)
     };
     placesService=new google.maps.places.PlacesService(map);
     autocompleteService=new google.maps.places.AutocompleteService();

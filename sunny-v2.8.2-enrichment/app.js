@@ -76,7 +76,7 @@ async function enrichVenue(v){
 }
 
 // Marker
-const markerIcon = L.icon({ iconUrl: 'icons/marker.png', iconSize: [30,30], iconAnchor: [15,30], popupAnchor: [0,-28] });
+const markerIcon = L.icon({ iconUrl: '/icons/marker.png', iconSize: [32,32], iconAnchor: [16,16], popupAnchor: [0,-16] });
 
 // Elements
 const locCard = document.getElementById('locCard');
