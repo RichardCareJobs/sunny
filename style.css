@@ -101,6 +101,8 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .chip-warn { background:#fff1f2; border-color:#fecdd3; color:#9f1239; }
 .chip-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
 .chip-muted { background:#f3f4f6; border-color:#e5e7eb; color:#4b5563; }
+.venue-card__hours { color:#374151; font-size:.9rem; }
+.venue-card__hours-next { color:#6b7280; font-size:.85rem; }
 .venue-card__note { color:#4b5563; font-size:.95rem; }
 .venue-card__name-row { display:flex; align-items:center; justify-content:space-between; gap:.6rem; flex-wrap:wrap; }
 .venue-card__rating-inline { display:flex; align-items:center; gap:.35rem; flex-wrap:wrap; }
