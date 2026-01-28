@@ -261,3 +261,8 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .crawl-add__meta { display: block; color: #6b7280; font-size: .85rem; font-weight: 500; margin-top: .2rem; }
 .crawl-add__action { color: #ff6a00; font-weight: 800; }
 .crawl-add__empty { color: #6b7280; font-size: .9rem; padding: .5rem; }
+
+/* Header height overrides */
+.toolbar { height: 52px; min-height: 52px; padding: 0 .8rem; align-items: center; }
+.toolbar h1 { margin: 0; line-height: 1; }
+.menu-btn { width: 36px; height: 36px; padding: 0; }
