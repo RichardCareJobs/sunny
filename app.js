@@ -13,9 +13,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
-  const GOOGLE_PLACES_TYPES = ["bar", "pub", "restaurant", "cafe", "night_club"];
+  const GOOGLE_PLACES_TYPES = ["bar", "cafe", "restaurant"];
   const PLACES_QUERY_RADIUS_MIN_M = 1000;
   const PLACES_QUERY_RADIUS_MAX_M = 50000;
+  const MAX_DETAILS_FETCH = 25;
+  const DEBUG_PLACES = false;
 
   let map;
   let markersLayer = [];
@@ -307,19 +309,131 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(current>=start&&current<=end){ open=true; closeIn=Math.min(closeIn,end-current); }
       else if(current<start){ openIn=Math.min(openIn,start-current); }
     }
-    if(open){ if(closeIn<=60) return {status:"Closing soon",tone:"warn"}; return {status:"Open now",tone:"good"}; }
-    if(isFinite(openIn)){ if(openIn<=60) return {status:"Opening soon",tone:"info"}; return {status:"Closed",tone:"muted"}; }
+    if(open){ if(closeIn<=30) return {status:"Closing soon",tone:"warn"}; return {status:"Open now",tone:"good"}; }
+    if(isFinite(openIn)){ if(openIn<=30) return {status:"Opening soon",tone:"info"}; return {status:"Closed",tone:"muted"}; }
     return {status:"Closed",tone:"muted"};
   }
+  function toneForHoursStatus(status=""){
+    if(status==="Open now") return "good";
+    if(status==="Closing soon") return "warn";
+    if(status==="Opening soon") return "info";
+    return "muted";
+  }
   function resolveOpenStatus(venue){
+    if(venue && venue.hoursStatus){
+      return {status:venue.hoursStatus,tone:toneForHoursStatus(venue.hoursStatus)};
+    }
     if(venue && typeof venue.openNow==="boolean"){
       return venue.openNow ? {status:"Open now",tone:"good"} : {status:"Closed",tone:"muted"};
     }
     const tags=venue?.tags||{};
     return parseOpenStatus(tags.opening_hours);
   }
+  function getLocalTimeForOffset(utcOffsetMinutes){
+    const now=new Date();
+    if(typeof utcOffsetMinutes!=="number") return now;
+    const utcMs=now.getTime()+now.getTimezoneOffset()*60000;
+    return new Date(utcMs+utcOffsetMinutes*60000);
+  }
+  function timeStringToMinutes(value){
+    if(!value||typeof value!=="string") return null;
+    const hour=parseInt(value.slice(0,2),10);
+    const minute=parseInt(value.slice(2),10);
+    if(Number.isNaN(hour)||Number.isNaN(minute)) return null;
+    return hour*60+minute;
+  }
+  function getTodayHoursText(weekdayText=[],utcOffsetMinutes){
+    if(!Array.isArray(weekdayText)||weekdayText.length!==7) return "";
+    const localTime=getLocalTimeForOffset(utcOffsetMinutes);
+    const dayIndex=localTime.getDay();
+    const weekdayIndex=(dayIndex+6)%7;
+    return weekdayText[weekdayIndex]||"";
+  }
+  function computeHoursStatus({ openingHours, utcOffsetMinutes }){
+    if(!openingHours) return { status:"Hours unavailable", nextChangeText:"" };
+    let isOpen;
+    if(typeof openingHours.isOpen==="function"){
+      try{ isOpen=openingHours.isOpen(); } catch{}
+    }
+    if(typeof isOpen!=="boolean" && typeof openingHours.open_now==="boolean") isOpen=openingHours.open_now;
+    const periods=Array.isArray(openingHours.periods)?openingHours.periods:[];
+    if(periods.length===0){
+      if(typeof isOpen==="boolean") return { status:isOpen?"Open now":"Closed", nextChangeText:"" };
+      return { status:"Hours unavailable", nextChangeText:"" };
+    }
+    const WEEK_MINUTES=10080;
+    const localTime=getLocalTimeForOffset(utcOffsetMinutes);
+    const nowMinutes=localTime.getDay()*1440+localTime.getHours()*60+localTime.getMinutes();
+    const intervals=[];
+    let hasOpenEnded=false;
+    periods.forEach(period=>{
+      const open=period.open;
+      if(!open||open.day==null||!open.time) return;
+      const openTime=timeStringToMinutes(open.time);
+      if(openTime==null) return;
+      let start=open.day*1440+openTime;
+      let end=start+1440;
+      if(period.close&&period.close.day!=null&&period.close.time){
+        const closeTime=timeStringToMinutes(period.close.time);
+        if(closeTime!=null){
+          end=period.close.day*1440+closeTime;
+          if(end<=start) end+=WEEK_MINUTES;
+        }
+      } else {
+        hasOpenEnded=true;
+      }
+      intervals.push([start,end]);
+    });
+    if(intervals.length===0){
+      if(typeof isOpen==="boolean") return { status:isOpen?"Open now":"Closed", nextChangeText:"" };
+      return { status:"Hours unavailable", nextChangeText:"" };
+    }
+    let openIn=Infinity;
+    let closeIn=Infinity;
+    let isCurrentlyOpen=false;
+    intervals.forEach(([start,end])=>{
+      [-WEEK_MINUTES,0,WEEK_MINUTES].forEach(shift=>{
+        const s=start+shift;
+        const e=end+shift;
+        if(nowMinutes>=s && nowMinutes<=e){
+          isCurrentlyOpen=true;
+          closeIn=Math.min(closeIn,e-nowMinutes);
+        } else if(nowMinutes<s){
+          openIn=Math.min(openIn,s-nowMinutes);
+        }
+      });
+    });
+    const statusIsOpen=typeof isOpen==="boolean" ? isOpen : isCurrentlyOpen;
+    let status="Closed";
+    if(statusIsOpen){
+      status=closeIn<=30 ? "Closing soon" : "Open now";
+    } else if(isFinite(openIn)){
+      status=openIn<=30 ? "Opening soon" : "Closed";
+    } else if(typeof isOpen==="boolean"){
+      status=isOpen ? "Open now" : "Closed";
+    } else {
+      status="Hours unavailable";
+    }
+    let nextChangeText="";
+    if(statusIsOpen && hasOpenEnded){
+      nextChangeText="Open 24 hours";
+    } else if(statusIsOpen && isFinite(closeIn)){
+      const closeAt=new Date(localTime.getTime()+closeIn*60000);
+      nextChangeText=`Closes ${formatTime(closeAt)}`;
+    } else if(!statusIsOpen && isFinite(openIn)){
+      const openAt=new Date(localTime.getTime()+openIn*60000);
+      nextChangeText=`Opens ${formatTime(openAt)}`;
+    }
+    return { status, nextChangeText };
+  }
 
   // Google Places
+  function getPrimaryCategory(types=[]){
+    if(types.includes("bar")||types.includes("pub")||types.includes("night_club")) return "Pub/Bar";
+    if(types.includes("cafe")) return "Cafe";
+    if(types.includes("restaurant")) return "Restaurant";
+    return "Other";
+  }
   function getAmenityFromTypes(types=[]){
     if(types.includes("pub")) return "pub";
     if(types.includes("bar")) return "bar";
@@ -338,11 +452,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(typeof lat!=="number"||typeof lng!=="number") return null;
     const id=place.place_id;
     const name=place.name||"Unnamed";
-    const amenity=getAmenityFromTypes(place.types||[]);
+    const types=place.types||[];
+    const amenity=getAmenityFromTypes(types);
+    const primaryCategory=getPrimaryCategory(types);
     const tags={
       name,
       amenity,
-      types: (place.types||[]).join(","),
+      types: types.join(","),
       vicinity: place.vicinity || "",
       formatted_address: place.formatted_address || ""
     };
@@ -356,19 +472,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       lng,
       address: place.vicinity || place.formatted_address || "",
       tags,
+      primaryCategory,
       openNow: place.opening_hours?.open_now,
+      hoursText: typeof place.opening_hours?.open_now==="boolean" ? (place.opening_hours.open_now?"Open now":"Closed") : "",
       hasOutdoor: hasOutdoorHints(tags),
       source: "google"
     };
   }
-  async function fetchPlacesByType({ center, radius, type }){
+  async function fetchPlacesByType({ request, type }){
     if(!placesService) return [];
     const collected=[];
-    const request={
-      location: center,
-      radius,
-      type
-    };
+    const scopedRequest={ ...request, type };
     return new Promise((resolve)=>{
       const handlePage=(results,status,pagination)=>{
         if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
@@ -380,7 +494,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           resolve(collected);
         }
       };
-      placesService.nearbySearch(request,handlePage);
+      placesService.nearbySearch(scopedRequest,handlePage);
     });
   }
   function calculateRadiusFromBounds(bounds){
@@ -394,14 +508,63 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const center=bounds.getCenter();
     const radius=calculateRadiusFromBounds(bounds);
     const centerLocation={lat:center.lat(),lng:center.lng()};
-    const responses=await Promise.all(
-      GOOGLE_PLACES_TYPES.map(type=>fetchPlacesByType({ center: centerLocation, radius, type }))
-    );
-    const merged=new Map();
-    responses.flat().forEach(place=>{
-      if(place&&place.place_id&&!merged.has(place.place_id)) merged.set(place.place_id,place);
+    const baseRequest={ location: centerLocation, radius };
+    const responses=[];
+    for(const type of GOOGLE_PLACES_TYPES){
+      const results=await fetchPlacesByType({ request: baseRequest, type });
+      if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
+      responses.push(results);
+    }
+    const merged=[];
+    const seen=new Set();
+    const totalCount=responses.reduce((sum,list)=>sum+list.length,0);
+    responses.forEach(list=>{
+      list.forEach(place=>{
+        if(place&&place.place_id&&!seen.has(place.place_id)){
+          seen.add(place.place_id);
+          merged.push(place);
+        }
+      });
     });
-    return Array.from(merged.values());
+    if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}`);
+    return merged;
+  }
+  function enrichVenueHours(venues){
+    if(!placesService||!Array.isArray(venues)||venues.length===0) return;
+    const targets=venues.filter(v=>v&&v.id).slice(0,MAX_DETAILS_FETCH);
+    let completed=0;
+    let failed=0;
+    targets.forEach(venue=>{
+      const existing=allVenues[venue.id];
+      if(existing?.detailsFetched||venue.detailsFetched) return;
+      venue.detailsFetched=true;
+      if(existing) existing.detailsFetched=true;
+      placesService.getDetails({
+        placeId: venue.id,
+        fields: ["place_id","opening_hours","utc_offset_minutes","name"]
+      },(place,status)=>{
+        if(status===google.maps.places.PlacesServiceStatus.OK&&place){
+          const openingHours=place.opening_hours||null;
+          const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
+          const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
+          const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||
+            (typeof openingHours?.open_now==="boolean" ? (openingHours.open_now?"Open now":"Closed") : "");
+          const updated={
+            ...venue,
+            openNow: typeof openingHours?.open_now==="boolean" ? openingHours.open_now : venue.openNow,
+            hoursStatus,
+            nextChangeText,
+            hoursText
+          };
+          if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated};
+          if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
+        } else {
+          failed++;
+        }
+        completed++;
+        if(DEBUG_PLACES) console.log(`[Places] details ${completed}/${targets.length} (failed ${failed})`);
+      });
+    });
   }
   function hasOutdoorHints(tags={}){
     const t=x=>(x||"").toLowerCase();
@@ -676,6 +839,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
       renderMarkers();
+      enrichVenueHours(normalized);
     } catch(e){
       console.error("Places error:",e);
     }
@@ -722,6 +886,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <span class="chip chip-weather" id="venue-card-weather">Loading weather…</span>
           <span class="chip chip-open"></span>
         </div>
+        <div class="venue-card__hours hidden"></div>
+        <div class="venue-card__hours-next hidden"></div>
         <div class="venue-card__note"></div>
         <div class="venue-card__section-title">Outdoor area rating</div>
         <div class="venue-card__rating-row">
@@ -821,6 +987,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       metaEl:container.querySelector(".venue-card__meta"),
       addressEl:container.querySelector(".venue-card__address"),
       openChip:container.querySelector(".chip-open"),
+      hoursEl:container.querySelector(".venue-card__hours"),
+      hoursNextEl:container.querySelector(".venue-card__hours-next"),
       sunChip:container.querySelector(".chip-sun"),
       weatherChip:container.querySelector("#venue-card-weather"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
@@ -869,7 +1037,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.currentVenue=v;
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
-    const kind=toTitle(tags.amenity||tags.tourism||"");
+    const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
     const address=v.address||formatAddress(tags);
     const sun=sunBadge(v.lat,v.lng);
@@ -893,7 +1061,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.weatherChip.textContent="Loading weather…";
     populateWeatherBadge("venue-card-weather",v.lat,v.lng);
 
-    if(!open.status||open.status==="Unknown"){
+    if(!open.status){
       card.openChip.textContent="";
       card.openChip.classList.add("hidden");
       card.openChip.style.display="none";
@@ -903,6 +1071,27 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.openChip.classList.remove("hidden");
       card.openChip.style.display="inline-flex";
       applyToneClass(card.openChip,open.tone);
+    }
+
+    if(card.hoursEl){
+      const hoursText=v.hoursText||"";
+      if(hoursText){
+        card.hoursEl.textContent=hoursText;
+        card.hoursEl.classList.remove("hidden");
+      } else {
+        card.hoursEl.textContent="";
+        card.hoursEl.classList.add("hidden");
+      }
+    }
+    if(card.hoursNextEl){
+      const nextChangeText=v.nextChangeText||"";
+      if(nextChangeText){
+        card.hoursNextEl.textContent=nextChangeText;
+        card.hoursNextEl.classList.remove("hidden");
+      } else {
+        card.hoursNextEl.textContent="";
+        card.hoursNextEl.classList.add("hidden");
+      }
     }
 
     const outdoorHint=hasOutdoorHints(tags);
