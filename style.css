@@ -93,6 +93,18 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 /* Empty state */
 .empty { padding:.6rem .8rem; color:var(--muted); }
 
+/* Venue status + intro tip */
+.venue-status { position: fixed; top: calc(56px + 12px); left: 50%; transform: translateX(-50%); z-index: 1200; background: rgba(17,17,17,0.92); color: #fff; padding: 8px 14px; border-radius: 999px; font-weight: 700; font-size: .9rem; box-shadow: 0 10px 25px rgba(15,23,42,0.18); text-align: center; max-width: min(90vw, 420px); pointer-events: none; }
+.venue-status[hidden] { display: none; }
+.venue-status[data-state="empty"] { background: #fff7ed; color: #9a3412; border: 1px solid #fdba74; }
+.venue-status[data-state="error"] { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+.intro-tip { position: fixed; top: calc(56px + 64px); left: 50%; transform: translateX(-50%); z-index: 1200; background: #fff; color: #111; border: 2px solid #ff6a00; border-radius: 14px; padding: 12px 14px; box-shadow: 0 12px 30px rgba(0,0,0,.18); display: flex; align-items: center; gap: 12px; max-width: min(92vw, 520px); flex-wrap: wrap; }
+.intro-tip[hidden] { display: none; }
+.intro-tip__text { font-weight: 600; }
+.intro-tip__button { border: 0; background: #111; color: #fff; border-radius: 999px; padding: 6px 14px; font-weight: 700; cursor: pointer; }
+.intro-tip__button:active { transform: translateY(1px); }
+
 /* Venue detail card */
 .venue-card { position: fixed; left:0; right:0; bottom:0; display:flex; justify-content:center; padding:0 8px; z-index:1250; pointer-events:none; opacity:0; transform: translateY(12px); transition: opacity .18s ease, transform .18s ease; }
 .venue-card.show { opacity:1; transform: translateY(0); pointer-events:auto; }
