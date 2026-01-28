@@ -19,6 +19,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_DETAILS_FETCH = 25;
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
+  const OUTDOOR_ONLY = true;
 
   let map;
   let markersLayer = [];
@@ -490,10 +491,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       source: "google"
     };
   }
-  async function fetchPlacesByType({ request, type }){
+  async function fetchPlacesByType({ request, type, keyword }){
     if(!placesService) return [];
     const collected=[];
-    const scopedRequest={ ...request, type };
+    const scopedRequest={ ...request, type, ...(keyword ? { keyword } : {}) };
     return new Promise((resolve)=>{
       const handlePage=(results,status,pagination)=>{
         if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
@@ -524,16 +525,32 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     for(const type of GOOGLE_PLACES_TYPES){
       const results=await fetchPlacesByType({ request: baseRequest, type });
       if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
-      responses.push(results);
+      responses.push({ results, outdoor: false, label: type });
+    }
+    const outdoorPasses=[
+      { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
+      { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" },
+      { type: "cafe", keyword: "alfresco", label: "cafe+alfresco" }
+    ];
+    for(const pass of outdoorPasses){
+      const results=await fetchPlacesByType({ request: baseRequest, type: pass.type, keyword: pass.keyword });
+      if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
+      responses.push({ results, outdoor: true, label: pass.label });
     }
     const merged=[];
     const seen=new Set();
-    const totalCount=responses.reduce((sum,list)=>sum+list.length,0);
-    responses.forEach(list=>{
-      list.forEach(place=>{
+    const mergedById=new Map();
+    const totalCount=responses.reduce((sum,entry)=>sum+entry.results.length,0);
+    responses.forEach(entry=>{
+      entry.results.forEach(place=>{
         if(place&&place.place_id&&!seen.has(place.place_id)){
           seen.add(place.place_id);
+          if(entry.outdoor) place.outdoorLikely=true;
           merged.push(place);
+          mergedById.set(place.place_id,place);
+        } else if(place&&place.place_id&&entry.outdoor){
+          const existing=mergedById.get(place.place_id);
+          if(existing) existing.outdoorLikely=true;
         }
       });
     });
@@ -580,10 +597,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return true;
     });
     const outdoorFiltered=nameFiltered.filter(place=>{
-      const outdoorLikely=getOutdoorLikely(place);
-      if(!outdoorLikely) logExclusion(place,"excluded: no outdoor signal");
+      const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
-      return outdoorLikely;
+      if(OUTDOOR_ONLY && !outdoorLikely) logExclusion(place,"excluded: no outdoor signal");
+      return OUTDOOR_ONLY ? outdoorLikely : true;
     });
     if(DEBUG_FILTERS){
       console.log(`[Filters] before ${beforeCount}`);
