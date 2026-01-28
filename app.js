@@ -19,6 +19,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_DETAILS_FETCH = 25;
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
+  const DEBUG_PERF = false;
   const OUTDOOR_ONLY = true;
 
   let map;
@@ -58,7 +59,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let crawlNotifications = new Map();
   let placesService = null;
   let autocompleteService = null;
-  let placesRequestId = 0;
+  let activeSearchId = 0;
+  const MAX_PAGES_PER_PASS = 1;
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
   let markerIcon = null;
@@ -491,19 +493,28 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       source: "google"
     };
   }
-  async function fetchPlacesByType({ request, type, keyword }){
+  async function fetchPlacesByType({ request, type, keyword, searchId }){
     if(!placesService) return [];
     const collected=[];
     const scopedRequest={ ...request, type, ...(keyword ? { keyword } : {}) };
     return new Promise((resolve)=>{
+      let pagesFetched=0;
+      let resolved=false;
       const handlePage=(results,status,pagination)=>{
+        if(searchId!==activeSearchId){
+          if(DEBUG_PERF) console.log(`[Perf] stale search ignored (${searchId})`);
+          if(!resolved){ resolved=true; resolve([]); }
+          return;
+        }
         if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
           collected.push(...results);
         }
-        if(pagination&&pagination.hasNextPage){
+        pagesFetched+=1;
+        if(DEBUG_PERF) console.log(`[Perf] ${type}${keyword?`+${keyword}`:""} pages fetched: ${pagesFetched}`);
+        if(pagination&&pagination.hasNextPage&&pagesFetched<MAX_PAGES_PER_PASS){
           setTimeout(()=>pagination.nextPage(),200);
         } else {
-          resolve(collected);
+          if(!resolved){ resolved=true; resolve(collected); }
         }
       };
       placesService.nearbySearch(scopedRequest,handlePage);
@@ -516,14 +527,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const radiusMeters=Math.min(PLACES_QUERY_RADIUS_MAX_M,Math.max(PLACES_QUERY_RADIUS_MIN_M,Math.round(radiusKm*1000)));
     return radiusMeters;
   }
-  async function fetchPlacesForBounds(bounds){
+  async function fetchPlacesForBounds(bounds,searchId){
     const center=bounds.getCenter();
     const radius=calculateRadiusFromBounds(bounds);
     const centerLocation={lat:center.lat(),lng:center.lng()};
     const baseRequest={ location: centerLocation, radius };
     const responses=[];
     for(const type of GOOGLE_PLACES_TYPES){
-      const results=await fetchPlacesByType({ request: baseRequest, type });
+      const results=await fetchPlacesByType({ request: baseRequest, type, searchId });
       if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
       responses.push({ results, outdoor: false, label: type });
     }
@@ -533,7 +544,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       { type: "cafe", keyword: "alfresco", label: "cafe+alfresco" }
     ];
     for(const pass of outdoorPasses){
-      const results=await fetchPlacesByType({ request: baseRequest, type: pass.type, keyword: pass.keyword });
+      const results=await fetchPlacesByType({ request: baseRequest, type: pass.type, keyword: pass.keyword, searchId });
       if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
       responses.push({ results, outdoor: true, label: pass.label });
     }
@@ -894,7 +905,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     placesService=new google.maps.places.PlacesService(map);
     autocompleteService=new google.maps.places.AutocompleteService();
     map.addListener("idle",debouncedLoadVisible);
-    map.addListener("zoom_changed",debouncedLoadVisible);
     map.addListener("click",()=>{
       hideVenueCard();
       hideCrawlCard();
@@ -906,6 +916,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   async function loadVisibleTiles(){
     if(!map||!placesService) return;
+    const searchId=++activeSearchId;
+    if(DEBUG_PERF) console.log(`[Perf] load start (${searchId})`);
     const b=map.getBounds();
     if(!b) return;
     const sw=b.getSouthWest(), ne=b.getNorthEast();
@@ -916,10 +928,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       renderMarkers();
       return;
     }
-    const requestId=++placesRequestId;
     try{
-      const places=await fetchPlacesForBounds(b);
-      if(requestId!==placesRequestId) return;
+      const places=await fetchPlacesForBounds(b,searchId);
+      if(searchId!==activeSearchId){
+        if(DEBUG_PERF) console.log(`[Perf] stale load ignored (${searchId})`);
+        return;
+      }
       const normalized=places.map(normalizePlace).filter(Boolean);
       saveLocal(cacheKey,normalized);
       mergeVenues(normalized);
