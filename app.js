@@ -18,6 +18,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const PLACES_QUERY_RADIUS_MAX_M = 50000;
   const MAX_DETAILS_FETCH = 25;
   const DEBUG_PLACES = false;
+  const DEBUG_FILTERS = false;
 
   let map;
   let markersLayer = [];
@@ -434,6 +435,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(types.includes("restaurant")) return "Restaurant";
     return "Other";
   }
+  function getOutdoorLikely(place){
+    if(!place) return false;
+    const haystack=`${place.name||""} ${place.vicinity||""}`.toLowerCase();
+    const keywords=[
+      "beer garden","beer-garden","courtyard","rooftop","terrace","alfresco","outdoor seating","outdoor",
+      "garden bar","beer garden pub","patio"
+    ];
+    return keywords.some(keyword=>haystack.includes(keyword));
+  }
   function getAmenityFromTypes(types=[]){
     if(types.includes("pub")) return "pub";
     if(types.includes("bar")) return "bar";
@@ -473,6 +483,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       address: place.vicinity || place.formatted_address || "",
       tags,
       primaryCategory,
+      outdoorLikely: !!place.outdoorLikely,
       openNow: place.opening_hours?.open_now,
       hoursText: typeof place.opening_hours?.open_now==="boolean" ? (place.opening_hours.open_now?"Open now":"Closed") : "",
       hasOutdoor: hasOutdoorHints(tags),
@@ -527,7 +538,64 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
     if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}`);
-    return merged;
+    const allowTypes=["bar","pub","cafe","restaurant","night_club"];
+    const excludeTypes=[
+      "fast_food_restaurant",
+      "convenience_store","gas_station","supermarket","grocery_or_supermarket",
+      "pharmacy","drugstore","department_store","shopping_mall",
+      "meal_delivery","meal_takeaway"
+    ];
+    const nameExclusions=[
+      "zambrero","mcdonald","kfc","subway","domino","pizza hut","hungry jack","guzman","gyg","taco bell",
+      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo"
+    ];
+    const excludedSamples=[];
+    const logExclusion=(place,reason)=>{
+      if(!DEBUG_FILTERS||excludedSamples.length>=5) return;
+      excludedSamples.push({ name: place?.name||"Unknown", reason });
+    };
+    const beforeCount=merged.length;
+    const allowFiltered=merged.filter(place=>{
+      const types=place?.types||[];
+      const keep=types.some(type=>allowTypes.includes(type));
+      if(!keep) logExclusion(place,"excluded: not hospitality");
+      return keep;
+    });
+    const excludeFiltered=allowFiltered.filter(place=>{
+      const types=place?.types||[];
+      const keep=!types.some(type=>excludeTypes.includes(type));
+      if(!keep){
+        const hit=types.find(type=>excludeTypes.includes(type));
+        logExclusion(place,`excluded: ${hit}`);
+      }
+      return keep;
+    });
+    const nameFiltered=excludeFiltered.filter(place=>{
+      const name=(place?.name||"").toLowerCase();
+      const hit=nameExclusions.find(term=>name.includes(term));
+      if(hit){
+        logExclusion(place,`excluded: name ${hit}`);
+        return false;
+      }
+      return true;
+    });
+    const outdoorFiltered=nameFiltered.filter(place=>{
+      const outdoorLikely=getOutdoorLikely(place);
+      if(!outdoorLikely) logExclusion(place,"excluded: no outdoor signal");
+      place.outdoorLikely=outdoorLikely;
+      return outdoorLikely;
+    });
+    if(DEBUG_FILTERS){
+      console.log(`[Filters] before ${beforeCount}`);
+      console.log(`[Filters] after allowlist ${allowFiltered.length}`);
+      console.log(`[Filters] after exclude types ${excludeFiltered.length}`);
+      console.log(`[Filters] after name excludes ${nameFiltered.length}`);
+      console.log(`[Filters] after outdoor required ${outdoorFiltered.length}`);
+      if(excludedSamples.length){
+        console.log("[Filters] sample exclusions:",excludedSamples);
+      }
+    }
+    return outdoorFiltered;
   }
   function enrichVenueHours(venues){
     if(!placesService||!Array.isArray(venues)||venues.length===0) return;
