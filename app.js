@@ -1564,7 +1564,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const nextVenue=!isLast ? crawlState.venues[venue.crawlIndex+1] : null;
     if(nextVenue){
       card.uberWrap.classList.remove("hidden");
-      card.uberText.textContent=`Up next: ${nextVenue.name || "the next venue"}, need a ride?`;
+      const hasCoords=typeof venue.lat==="number"&&typeof venue.lng==="number"
+        &&typeof nextVenue.lat==="number"&&typeof nextVenue.lng==="number";
+      const distanceMeters=hasCoords ? haversine(venue.lat,venue.lng,nextVenue.lat,nextVenue.lng)*1000 : 0;
+      const walkMins=Math.max(1,Math.round(distanceMeters/80));
+      card.uberText.textContent=`Up next: ${nextVenue.name || "the next venue"}, ${walkMins} min walk or book a ride.`;
       const uberUrl=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${nextVenue.lat}&dropoff[longitude]=${nextVenue.lng}&dropoff[nickname]=${encodeURIComponent(nextVenue.name || "Next venue")}`;
       const didiUrl="https://www.didiglobal.com/";
       card.uberBtn.href=uberUrl;
