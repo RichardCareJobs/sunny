@@ -7,6 +7,19 @@ html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe
 .toolbar h1 { font-size:1.1rem; font-weight:800; margin:0; color:#fff; }
 .toolbar .spacer { flex:1; }
 a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
+#app .menu { position: relative; }
+.menu-button { border:0; background:transparent; color:#fff; padding:.25rem; cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.menu-button:focus-visible { outline:2px solid #fff; outline-offset:2px; border-radius:6px; }
+.menu-icon { display:inline-block; width:22px; height:16px; background:
+  linear-gradient(#fff 0 0) top/100% 2px,
+  linear-gradient(#fff 0 0) center/100% 2px,
+  linear-gradient(#fff 0 0) bottom/100% 2px;
+  background-repeat:no-repeat;
+}
+.menu-dropdown { position:absolute; right:0; top:calc(100% + .4rem); background:#fff; color:#111; border-radius:12px; box-shadow:0 10px 25px rgba(15,23,42,0.18); padding:.35rem; min-width:180px; z-index:1100; }
+.menu-dropdown[hidden] { display:none; }
+.menu-dropdown a { display:block; padding:.55rem .75rem; border-radius:10px; text-decoration:none; color:#111; font-size:.95rem; }
+.menu-dropdown a:hover { background:#f3f4f6; }
 #map { width:100%; height:100%; min-height:60vh; }
 
 .locate-control{pointer-events:auto;margin:0 0 calc(10px + env(safe-area-inset-bottom)) 10px;}
