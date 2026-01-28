@@ -65,8 +65,8 @@
   <!-- Service Worker (optional; you already added network-first for app.js/version.json) -->
   <script>if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');</script>
 
-  <!-- Force the custom pin to use icons/marker.png -->
-  <script>window.SUNNY_ICON_URL = 'icons/marker.png';</script>
+  <!-- Force the custom pin to use /icons/marker.png -->
+  <script>window.SUNNY_ICON_URL = '/icons/marker.png';</script>
 
 
   <!-- Versioned loader to always fetch fresh app.js -->
