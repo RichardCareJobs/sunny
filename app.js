@@ -67,8 +67,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   // Helpers
   function setupHeaderMenu(){
-    const button = document.getElementById("menu-toggle");
-    const menu = document.getElementById("header-menu");
+    const button = document.getElementById("menuBtn");
+    const menu = document.getElementById("headerMenu");
     if (!button || !menu) return;
     const closeMenu = () => {
       menu.hidden = true;
