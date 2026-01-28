@@ -467,7 +467,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const name=place.name||"Unnamed";
     const types=place.types||[];
     const amenity=getAmenityFromTypes(types);
-    const primaryCategory=getPrimaryCategory(types);
+    const primaryCategory=place.primaryCategoryOverride||getPrimaryCategory(types);
     const tags={
       name,
       amenity,
@@ -520,6 +520,33 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       placesService.nearbySearch(scopedRequest,handlePage);
     });
   }
+  async function fetchPlacesByText({ request, query, searchId }){
+    if(!placesService) return [];
+    const collected=[];
+    const scopedRequest={ ...request, query };
+    return new Promise((resolve)=>{
+      let pagesFetched=0;
+      let resolved=false;
+      const handlePage=(results,status,pagination)=>{
+        if(searchId!==activeSearchId){
+          if(DEBUG_PERF) console.log(`[Perf] stale search ignored (${searchId})`);
+          if(!resolved){ resolved=true; resolve([]); }
+          return;
+        }
+        if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
+          collected.push(...results);
+        }
+        pagesFetched+=1;
+        if(DEBUG_PERF) console.log(`[Perf] text+${query} pages fetched: ${pagesFetched}`);
+        if(pagination&&pagination.hasNextPage&&pagesFetched<MAX_PAGES_PER_PASS){
+          setTimeout(()=>pagination.nextPage(),200);
+        } else {
+          if(!resolved){ resolved=true; resolve(collected); }
+        }
+      };
+      placesService.textSearch(scopedRequest,handlePage);
+    });
+  }
   function calculateRadiusFromBounds(bounds){
     const center=bounds.getCenter();
     const ne=bounds.getNorthEast();
@@ -548,6 +575,35 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
       responses.push({ results, outdoor: true, label: pass.label });
     }
+    const clubQueries=["bowling club","bowls club","bowlo","sports club"];
+    const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
+    const clubSanityCheck=(place)=>{
+      const name=(place?.name||"").toLowerCase();
+      return clubNameHints.some(hint=>name.includes(hint));
+    };
+    const clubExclusions=[];
+    const logClubExclusion=(place,reason)=>{
+      if(!DEBUG_PLACES) return;
+      clubExclusions.push({ name: place?.name||"Unknown", reason });
+    };
+    const clubLaneCounts=[];
+    for(const query of clubQueries){
+      const results=await fetchPlacesByText({ request: baseRequest, query, searchId });
+      const saneResults=results.filter(place=>{
+        const keep=clubSanityCheck(place);
+        if(!keep) logClubExclusion(place,"excluded: club sanity");
+        return keep;
+      });
+      if(DEBUG_PLACES){
+        clubLaneCounts.push({ query, total: results.length, sane: saneResults.length });
+      }
+      responses.push({ results: saneResults, outdoor: true, label: `club+${query}`, clubLane: true });
+    }
+    if(DEBUG_PLACES){
+      clubLaneCounts.forEach(entry=>{
+        console.log(`[Clubs] ${entry.query} results: ${entry.total} (after sanity ${entry.sane})`);
+      });
+    }
     const merged=[];
     const seen=new Set();
     const mergedById=new Map();
@@ -557,11 +613,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(place&&place.place_id&&!seen.has(place.place_id)){
           seen.add(place.place_id);
           if(entry.outdoor) place.outdoorLikely=true;
+          if(entry.clubLane){
+            place.clubLane=true;
+            place.primaryCategoryOverride="Club";
+          }
           merged.push(place);
           mergedById.set(place.place_id,place);
         } else if(place&&place.place_id&&entry.outdoor){
           const existing=mergedById.get(place.place_id);
           if(existing) existing.outdoorLikely=true;
+          if(existing&&entry.clubLane){
+            existing.clubLane=true;
+            existing.primaryCategoryOverride="Club";
+          }
         }
       });
     });
@@ -585,7 +649,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const beforeCount=merged.length;
     const allowFiltered=merged.filter(place=>{
       const types=place?.types||[];
-      const keep=types.some(type=>allowTypes.includes(type));
+      const keep=place?.clubLane ? true : types.some(type=>allowTypes.includes(type));
       if(!keep) logExclusion(place,"excluded: not hospitality");
       return keep;
     });
@@ -595,6 +659,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(!keep){
         const hit=types.find(type=>excludeTypes.includes(type));
         logExclusion(place,`excluded: ${hit}`);
+        if(place?.clubLane) logClubExclusion(place,`excluded: ${hit}`);
       }
       return keep;
     });
@@ -603,6 +668,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const hit=nameExclusions.find(term=>name.includes(term));
       if(hit){
         logExclusion(place,`excluded: name ${hit}`);
+        if(place?.clubLane) logClubExclusion(place,`excluded: name ${hit}`);
         return false;
       }
       return true;
@@ -610,9 +676,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const outdoorFiltered=nameFiltered.filter(place=>{
       const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
-      if(OUTDOOR_ONLY && !outdoorLikely) logExclusion(place,"excluded: no outdoor signal");
+      if(OUTDOOR_ONLY && !outdoorLikely){
+        logExclusion(place,"excluded: no outdoor signal");
+        if(place?.clubLane) logClubExclusion(place,"excluded: no outdoor signal");
+      }
       return OUTDOOR_ONLY ? outdoorLikely : true;
     });
+    if(DEBUG_PLACES){
+      const clubDisplayedCount=outdoorFiltered.filter(place=>place?.clubLane).length;
+      console.log(`[Clubs] final displayed: ${clubDisplayedCount}`);
+      if(clubExclusions.length){
+        console.log("[Clubs] excluded items:",clubExclusions);
+      }
+    }
     if(DEBUG_FILTERS){
       console.log(`[Filters] before ${beforeCount}`);
       console.log(`[Filters] after allowlist ${allowFiltered.length}`);
