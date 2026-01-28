@@ -256,6 +256,9 @@ function uberLink(lat, lon){
   const d = encodeURIComponent(`${lat},${lon}`);
   return `https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${lat}&dropoff[longitude]=${lon}`;
 }
+function didiLink(lat, lon){
+  return 'https://www.didiglobal.com/';
+}
 
 
 async function enhanceAndUpdateCard(v, el){
@@ -295,6 +298,7 @@ function buildCard(v){
   const phone = v.phone ? `<a href="tel:${v.phone}" data-call>Call</a>` : `<a href="#" style="display:none" data-call>Call</a>`;
   const website = v.website ? `<a href="${v.website}" target="_blank" rel="noopener" data-web>Website</a>` : `<a href="#" style="display:none" target="_blank" rel="noopener" data-web>Website</a>`;
   const uber = `<a href="${uberLink(v.lat,v.lon)}" target="_blank" rel="noopener">Uber</a>`;
+  const didi = `<a href="${didiLink(v.lat,v.lon)}" target="_blank" rel="noopener">DiDi</a>`;
   return `<article class="card" data-id="${v.id}">
     <h3>${v.name}</h3>
     <div class="meta">${dist ? dist + ' • ' : ''}${stateSpan}</div>
@@ -302,7 +306,7 @@ function buildCard(v){
     <div class="badges">${sunBadge} ${outdoor}</div>
     <div class="actions">
       <a href="https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(v.lat+','+v.lon)}" target="_blank" rel="noopener" class="primary">Directions</a>
-      ${uber} ${phone} ${website}
+      ${uber} ${didi} ${phone} ${website}
       <button data-add="${v.id}">+ Add to Crawl</button>
     </div>
     <div class="card-foot tiny"></div>
@@ -404,6 +408,7 @@ function openDetail(v){
     <div class="badges">${sunBadge} ${outdoor}</div>`;
   document.getElementById('detailDirections').href = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(v.lat+','+v.lon)}`;
   document.getElementById('detailUber').href = uberLink(v.lat, v.lon);
+  document.getElementById('detailDidi').href = didiLink(v.lat, v.lon);
   const web = document.getElementById('detailWebsite'); web.style.display = v.website ? 'inline-block' : 'none'; web.href = v.website || '#';
   const call = document.getElementById('detailCall'); call.style.display = v.phone ? 'inline-block' : 'none'; call.href = v.phone ? `tel:${v.phone}` : '#';
   if (window.detailMiniLeaflet) { window.detailMiniLeaflet.remove(); }
