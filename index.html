@@ -34,7 +34,18 @@
     <div class="toolbar">
       <h1>Sunny</h1>
       <div class="spacer"></div>
-      <a class="tiny" href="privacy.html">Privacy</a>
+      <div class="header-menu">
+        <button id="menuBtn" class="menu-btn" type="button" aria-expanded="false" aria-controls="headerMenu" aria-label="Open menu">
+          <span class="menu-line"></span>
+          <span class="menu-line"></span>
+          <span class="menu-line"></span>
+        </button>
+        <div id="headerMenu" class="menu-dropdown" hidden>
+          <a href="https://sunnypubs.app/privacy-policy/" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+          <a href="https://sunnypubs.app/terms-and-conditions/" target="_blank" rel="noopener noreferrer">T&amp;Cs</a>
+          <a href="https://sunnypubs.app/contact/" target="_blank" rel="noopener noreferrer">Contact</a>
+        </div>
+      </div>
     </div>
 
     <!-- Containers used by app.js -->
