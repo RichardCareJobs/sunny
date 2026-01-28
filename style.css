@@ -3,10 +3,20 @@
 * { box-sizing: border-box; }
 html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:var(--bg); }
 #app { display:grid; grid-template-rows: auto 1fr; height: 100dvh; }
-.toolbar { display:flex; align-items:center; gap:.6rem; padding:.6rem .8rem; border-bottom:1px solid #e65f00; background:#ff6a00; color:#fff; position:sticky; top:0; z-index:1000; }
+.toolbar { display:flex; align-items:center; gap:.6rem; padding:0 .8rem; height:56px; border-bottom:1px solid #e65f00; background:#ff6a00; color:#fff; position:sticky; top:0; z-index:1000; }
 .toolbar h1 { font-size:1.1rem; font-weight:800; margin:0; color:#fff; }
 .toolbar .spacer { flex:1; }
 a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
+.header-menu { position: relative; margin-left: auto; }
+.menu-btn { background: transparent; border: 0; width: 38px; height: 38px; padding: 0; line-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; position: relative; }
+.menu-btn::after { content: ""; position: absolute; inset: -6px; }
+.menu-btn:focus-visible { outline:2px solid #fff; outline-offset:2px; border-radius:8px; }
+.menu-line { display: block; width: 22px; height: 2px; background: #fff; border-radius: 2px; }
+.menu-dropdown { position:absolute; top:calc(100% + 8px); right:0; background:#fff; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.18); min-width:200px; padding:8px; z-index:9999; }
+.menu-dropdown[hidden] { display:none; }
+.menu-dropdown a { display:block; padding:12px; color:#111; text-decoration:none; font-weight:600; border-radius:10px; }
+.menu-dropdown a:hover,
+.menu-dropdown a:active { background: rgba(0,0,0,.06); }
 #map { width:100%; height:100%; min-height:60vh; }
 
 .locate-control{pointer-events:auto;margin:0 0 calc(10px + env(safe-area-inset-bottom)) 10px;}
@@ -251,3 +261,8 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .crawl-add__meta { display: block; color: #6b7280; font-size: .85rem; font-weight: 500; margin-top: .2rem; }
 .crawl-add__action { color: #ff6a00; font-weight: 800; }
 .crawl-add__empty { color: #6b7280; font-size: .9rem; padding: .5rem; }
+
+/* Header height overrides */
+.toolbar { height: 52px; min-height: 52px; padding: 0 .8rem; align-items: center; }
+.toolbar h1 { margin: 0; line-height: 1; }
+.menu-btn { width: 36px; height: 36px; padding: 0; }

@@ -66,6 +66,38 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let markerIcon = null;
 
   // Helpers
+  function setupHeaderMenu(){
+    const button = document.getElementById("menuBtn");
+    const menu = document.getElementById("headerMenu");
+    if (!button || !menu) return;
+    const closeMenu = () => {
+      menu.hidden = true;
+      button.setAttribute("aria-expanded", "false");
+    };
+    const openMenu = () => {
+      menu.hidden = false;
+      button.setAttribute("aria-expanded", "true");
+    };
+    const toggleMenu = () => {
+      if (menu.hidden) openMenu();
+      else closeMenu();
+    };
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleMenu();
+    });
+    menu.addEventListener("click", (event) => {
+      if (event.target.closest("a")) closeMenu();
+    });
+    document.addEventListener("click", (event) => {
+      if (menu.hidden) return;
+      if (menu.contains(event.target) || button.contains(event.target)) return;
+      closeMenu();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !menu.hidden) closeMenu();
+    });
+  }
   function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify({v,t:Date.now()}));}catch{} }
   function loadLocal(k,maxAge=null){
     try{const raw=localStorage.getItem(k); if(!raw) return null; const {v,t}=JSON.parse(raw); if(maxAge!=null&&Date.now()-t>maxAge) return null; return v;}catch{return null;}
@@ -2220,10 +2252,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   if(document.readyState==="loading"){
     document.addEventListener("DOMContentLoaded",()=>{
+      setupHeaderMenu();
       domReady=true;
       tryBoot();
     });
   } else {
+    setupHeaderMenu();
     domReady=true;
     tryBoot();
   }
