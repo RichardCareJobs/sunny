@@ -1566,9 +1566,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.uberWrap.classList.remove("hidden");
       card.uberText.textContent=`Up next: ${nextVenue.name || "the next venue"}, need a ride?`;
       const uberUrl=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${nextVenue.lat}&dropoff[longitude]=${nextVenue.lng}&dropoff[nickname]=${encodeURIComponent(nextVenue.name || "Next venue")}`;
+      const didiUrl="https://www.didiglobal.com/";
       card.uberBtn.href=uberUrl;
       if(card.didiBtn){
-        card.didiBtn.href=uberUrl;
+        card.didiBtn.href=didiUrl;
       }
     } else {
       card.uberWrap.classList.add("hidden");
