@@ -41,6 +41,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let isRenderingMarkers = false;
   let detailCard = null;
   let ratingCard = null;
+  let venueStatusEl = null;
+  let introTipEl = null;
 
   let venueCountToast = null;
   let venueCountTimer = null;
@@ -60,6 +62,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let placesService = null;
   let autocompleteService = null;
   let activeSearchId = 0;
+  let activeRequestId = 0;
   const MAX_PAGES_PER_PASS = 1;
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "icons/marker.png";
@@ -103,6 +106,52 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     try{const raw=localStorage.getItem(k); if(!raw) return null; const {v,t}=JSON.parse(raw); if(maxAge!=null&&Date.now()-t>maxAge) return null; return v;}catch{return null;}
   }
   function toTitle(s=""){ return s ? s.replace(/\b\w/g,c=>c.toUpperCase()) : ""; }
+  function ensureVenueStatus(){
+    if(venueStatusEl) return venueStatusEl;
+    const el=document.createElement("div");
+    el.id="venueStatus";
+    el.className="venue-status";
+    el.hidden=true;
+    el.setAttribute("aria-live","polite");
+    document.body.appendChild(el);
+    venueStatusEl=el;
+    return el;
+  }
+  function showVenueStatus(state,message){
+    const el=ensureVenueStatus();
+    el.dataset.state=state;
+    el.textContent=message;
+    el.hidden=false;
+  }
+  function hideVenueStatus(){
+    if(!venueStatusEl) return;
+    venueStatusEl.hidden=true;
+  }
+  function ensureIntroTip(){
+    if(introTipEl) return introTipEl;
+    const el=document.createElement("div");
+    el.id="introTip";
+    el.className="intro-tip";
+    el.hidden=true;
+    el.innerHTML=`
+      <span class="intro-tip__text">Tip: Move the map to find sunny venues. Tap a marker to see details.</span>
+      <button class="intro-tip__button" type="button">Got it</button>`;
+    const button=el.querySelector(".intro-tip__button");
+    button.addEventListener("click",()=>{
+      try{ localStorage.setItem("sunny_intro_seen","1"); }catch{}
+      el.hidden=true;
+    });
+    document.body.appendChild(el);
+    introTipEl=el;
+    return el;
+  }
+  function maybeShowIntroTip(){
+    try{
+      if(localStorage.getItem("sunny_intro_seen")==="1") return;
+    } catch {}
+    const tip=ensureIntroTip();
+    tip.hidden=false;
+  }
 
   // Distance
   function haversine(a,b,c,d){ const R=6371,toRad=x=>x*Math.PI/180; const dLat=toRad(c-a), dLon=toRad(d-b);
@@ -1024,30 +1073,48 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   async function loadVisibleTiles(){
     if(!map||!placesService) return;
-    const searchId=++activeSearchId;
-    if(DEBUG_PERF) console.log(`[Perf] load start (${searchId})`);
+    const requestId=++activeRequestId;
+    activeSearchId=requestId;
+    if(DEBUG_PERF) console.log(`[Perf] load start (${requestId})`);
+    showVenueStatus("loading","Loading venues…");
     const b=map.getBounds();
-    if(!b) return;
+    if(!b){
+      hideVenueStatus();
+      return;
+    }
     const sw=b.getSouthWest(), ne=b.getNorthEast();
     const bbox=[sw.lat(),sw.lng(),ne.lat(),ne.lng()].map(n=>+n.toFixed(5)).join(","), cacheKey=`${TILE_CACHE_PREFIX}${bbox}`;
     const cached=loadLocal(cacheKey,TILE_CACHE_TTL_MS);
     if(cached&&Array.isArray(cached)){
-      mergeVenues(cached);
-      renderMarkers();
+      if(requestId!==activeRequestId) return;
+      if(cached.length){
+        mergeVenues(cached);
+        renderMarkers();
+        hideVenueStatus();
+      } else {
+        showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
+      }
       return;
     }
     try{
-      const places=await fetchPlacesForBounds(b,searchId);
-      if(searchId!==activeSearchId){
-        if(DEBUG_PERF) console.log(`[Perf] stale load ignored (${searchId})`);
+      const places=await fetchPlacesForBounds(b,requestId);
+      if(requestId!==activeRequestId){
+        if(DEBUG_PERF) console.log(`[Perf] stale load ignored (${requestId})`);
         return;
       }
       const normalized=places.map(normalizePlace).filter(Boolean);
       saveLocal(cacheKey,normalized);
-      mergeVenues(normalized);
-      renderMarkers();
-      enrichVenueHours(normalized);
+      if(normalized.length){
+        mergeVenues(normalized);
+        renderMarkers();
+        hideVenueStatus();
+        enrichVenueHours(normalized);
+      } else {
+        showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
+      }
     } catch(e){
+      if(requestId!==activeRequestId) return;
+      showVenueStatus("error","Couldn’t load venues. Please try again.");
       console.error("Places error:",e);
     }
   }
@@ -2229,6 +2296,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
+    maybeShowIntroTip();
     ensureCrawlFab();
     const params=new URLSearchParams(window.location.search);
     const crawlParam=params.get("crawl");
