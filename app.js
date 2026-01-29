@@ -569,7 +569,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       primaryCategory,
       outdoorLikely: !!place.outdoorLikely,
       openNow: place.opening_hours?.open_now,
-      hoursText: typeof place.opening_hours?.open_now==="boolean" ? (place.opening_hours.open_now?"Open now":"Closed") : "",
+      hoursText: "",
       hasOutdoor: hasOutdoorHints(tags),
       source: "google"
     };
@@ -800,8 +800,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           const openingHours=place.opening_hours||null;
           const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
           const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
-          const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||
-            (typeof openingHours?.open_now==="boolean" ? (openingHours.open_now?"Open now":"Closed") : "");
+          const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||"";
           const updated={
             ...venue,
             openNow: typeof openingHours?.open_now==="boolean" ? openingHours.open_now : venue.openNow,
