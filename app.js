@@ -67,6 +67,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let crawlState = null;
   let isCrawlMode = false;
   let hasAutoFitCrawlOnLoad = false;
+  let pendingCrawlFitReason = null;
   let crawlBuilder = null;
   let crawlControls = null;
   let crawlCard = null;
@@ -1112,7 +1113,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return crawlLayer;
   }
 
-  function fitMapToCrawlVenues(venues){
+  function fitMapToCrawlVenues(venues,{ enforceMaxZoom=true }={}){
     if(!map||!Array.isArray(venues)||venues.length===0) return;
     const bounds=new google.maps.LatLngBounds();
     let points=0;
@@ -1123,27 +1124,34 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     if(points===0) return;
     map.fitBounds(bounds,{ top:72,right:72,bottom:180,left:72 });
-    google.maps.event.addListenerOnce(map,"idle",()=>{
-      const maxZoom=16;
-      if(map.getZoom()>maxZoom) map.setZoom(maxZoom);
+    if(enforceMaxZoom){
+      google.maps.event.addListenerOnce(map,"idle",()=>{
+        const maxZoom=16;
+        if(map.getZoom()>maxZoom) map.setZoom(maxZoom);
+      });
+    }
+  }
+
+  function scheduleCrawlFit(reason="load"){
+    if(!isCrawlMode||!crawlState?.venues?.length) return;
+    if(reason==="load"&&hasAutoFitCrawlOnLoad) return;
+    pendingCrawlFitReason=reason;
+    requestAnimationFrame(()=>{
+      if(pendingCrawlFitReason!==reason) return;
+      pendingCrawlFitReason=null;
+      if(reason==="load") hasAutoFitCrawlOnLoad=true;
+      fitMapToCrawlVenues(crawlState.venues,{ enforceMaxZoom: reason!=="refresh" });
     });
   }
 
-  function runInitialCrawlAutoFit(){
-    if(!isCrawlMode||hasAutoFitCrawlOnLoad||!crawlState?.venues?.length) return;
-    hasAutoFitCrawlOnLoad=true;
-    requestAnimationFrame(()=>fitMapToCrawlVenues(crawlState.venues));
-  }
-
-  function enterCrawlMode({ refit=false }={}){
+  function enterCrawlMode({ autoFit=false }={}){
     if(!crawlState?.venues?.length) return;
     isCrawlMode=true;
     hideVenueCard();
     clearMarkersLayer();
     renderCrawlMarkers();
     showCrawlControls();
-    if(refit) hasAutoFitCrawlOnLoad=false;
-    runInitialCrawlAutoFit();
+    if(autoFit) scheduleCrawlFit("load");
   }
 
   function exitCrawlMode(){
@@ -1169,11 +1177,34 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function chooseCrawlVenues(origin,count=4){
     const venues=Object.values(allVenues).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number");
     if(venues.length===0) return [];
-    const sorted=venues
+    return venues
       .map(v=>({ venue:v, distance:haversine(origin.lat,origin.lng,v.lat,v.lng) }))
       .sort((a,b)=>a.distance-b.distance)
-      .map(item=>item.venue);
-    return sorted.slice(0,count);
+      .map(item=>item.venue)
+      .slice(0,count);
+  }
+
+  function generateCrawlVenues(origin,count,startAt,orderMode,{ refresh=false, currentVenueIds=[] }={}){
+    const candidates=chooseCrawlVenues(origin,Math.max(count,Math.min(MAX_CRAWL_VENUES,refresh ? count*3 : count)));
+    if(!candidates.length) return [];
+    let selected=candidates.slice(0,count);
+    if(refresh&&candidates.length>count){
+      const currentSet=new Set(currentVenueIds||[]);
+      const alternates=candidates.filter(v=>!currentSet.has(v.id));
+      const pool=alternates.length>=count ? alternates : candidates;
+      const maxStart=Math.max(0,pool.length-count);
+      const startIndex=maxStart>0 ? Math.floor(Math.random()*(maxStart+1)) : 0;
+      selected=pool.slice(startIndex,startIndex+count);
+      if(selected.length<count){
+        const used=new Set(selected.map(v=>v.id));
+        for(const venue of pool){
+          if(selected.length>=count) break;
+          if(used.has(venue.id)) continue;
+          selected.push(venue);
+        }
+      }
+    }
+    return orderVenues(selected,origin,orderMode,startAt);
   }
 
   function buildCrawlState(venues,startAt,originInfo=null,orderMode="location"){
@@ -1304,7 +1335,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       crawlState={ venues, startAt, origin, orderMode };
       updateCrawlSchedule();
       hasAutoFitCrawlOnLoad=false;
-      enterCrawlMode({ refit:true });
+      enterCrawlMode({ autoFit:true });
       updateCrawlList();
       return true;
     } catch(err){
@@ -2094,8 +2125,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const container=document.createElement("div");
     container.className="crawl-controls hidden";
     container.innerHTML=`
-      <button class="crawl-control hidden" type="button" data-action="return">Return to crawl</button>
-      <button class="crawl-control hidden" type="button" data-action="back">Back to map</button>
+      <button class="crawl-control hidden" type="button" data-action="mode-toggle">View map</button>
       <button class="crawl-control crawl-control--icon hidden" type="button" data-action="refresh" aria-label="Refresh crawl venues">
         <span aria-hidden="true">↻</span>
       </button>
@@ -2116,8 +2146,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const btn=event.target.closest(".crawl-control");
       if(!btn) return;
       const action=btn.dataset.action;
-      if(action==="return") enterCrawlMode();
-      if(action==="back") exitCrawlMode();
+      if(action==="mode-toggle"){
+        if(isCrawlMode) exitCrawlMode();
+        else enterCrawlMode();
+      }
       if(action==="refresh") refreshCrawlVenues();
       if(action==="list") toggleCrawlList();
       if(action==="add") openCrawlAddPanel();
@@ -2131,8 +2163,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const controls=ensureCrawlControls();
     const hasActiveCrawl=!!crawlState?.venues?.length;
     controls.classList.toggle("hidden",!hasActiveCrawl);
-    controls.querySelector('[data-action="return"]')?.classList.toggle("hidden",!hasActiveCrawl||isCrawlMode);
-    controls.querySelector('[data-action="back"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
+    const modeBtn=controls.querySelector('[data-action="mode-toggle"]');
+    const showModeToggle=hasActiveCrawl;
+    modeBtn?.classList.toggle("hidden",!showModeToggle);
+    if(modeBtn){
+      modeBtn.textContent=isCrawlMode ? "View map" : "View crawl";
+      modeBtn.setAttribute("aria-label",isCrawlMode ? "View map" : "View crawl");
+    }
     controls.querySelector('[data-action="refresh"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     controls.querySelector('[data-action="list"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     controls.querySelector('[data-action="add"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
@@ -2150,16 +2187,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!crawlState?.venues?.length) return;
     const origin=crawlState.origin || getCrawlOrigin();
     const venueCount=Math.max(1,crawlState.venues.length);
-    const venues=chooseCrawlVenues(origin,venueCount);
-    if(!venues.length) return;
     const orderMode=crawlState.orderMode || "location";
     const startAt=crawlState.startAt instanceof Date ? crawlState.startAt : new Date();
-    const orderedVenues=orderVenues(venues,origin,orderMode,startAt);
-    buildCrawlState(orderedVenues,startAt,origin,orderMode);
+    const currentVenueIds=crawlState.venues.map(v=>v.id);
+    const nextVenues=generateCrawlVenues(origin,venueCount,startAt,orderMode,{ refresh:true, currentVenueIds });
+    if(!nextVenues.length) return;
+    buildCrawlState(nextVenues,startAt,origin,orderMode);
+    if(isCrawlMode){
+      renderCrawlMarkers();
+      scheduleCrawlFit("refresh");
+    }
     updateCrawlList();
     refreshCrawlReminders();
-    hasAutoFitCrawlOnLoad=false;
-    enterCrawlMode({ refit:true });
+    showCrawlControls();
   }
 
   function ensureCrawlListPanel(){
@@ -2610,10 +2650,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     const orderMode=crawlBuilder?.orderMode || "location";
-    const orderedVenues=orderVenues(venues,origin,orderMode,startAt);
+    const orderedVenues=generateCrawlVenues(origin,4,startAt,orderMode);
     buildCrawlState(orderedVenues,startAt,origin,orderMode);
     hasAutoFitCrawlOnLoad=false;
-    enterCrawlMode({ refit:true });
+    enterCrawlMode({ autoFit:true });
     updateCrawlList();
     refreshCrawlReminders();
     if(crawlBuilder?.container) crawlBuilder.container.classList.add("hidden");
