@@ -1163,6 +1163,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     showCrawlControls();
   }
 
+  function clearCrawlAndReturnToMap(){
+    if(!crawlState) return;
+    const confirmed=window.confirm("Clear this pub crawl?");
+    if(!confirmed) return;
+    clearCrawlNotifications();
+    crawlState=null;
+    hasAutoFitCrawlOnLoad=false;
+    pendingCrawlFitReason=null;
+    if(crawlAddPanel) crawlAddPanel.classList.add("hidden");
+    exitCrawlMode();
+    const url=new URL(window.location.href);
+    if(url.searchParams.has("crawl")){
+      url.searchParams.delete("crawl");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }
+
   function getMapCenter(){
     if(!map) return { lat: DEFAULT_VIEW.lat, lng: DEFAULT_VIEW.lng };
     const center=map.getCenter();
@@ -2132,6 +2149,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       <button class="crawl-control crawl-control--icon" type="button" data-action="list" aria-label="View crawl list">
         <span aria-hidden="true">☰</span>
       </button>
+      <button class="crawl-control crawl-control--icon" type="button" data-action="clear" aria-label="Clear crawl">
+        <span aria-hidden="true">×</span>
+      </button>
       <button class="crawl-control crawl-control--icon" type="button" data-action="add" aria-label="Add venue">
         <span aria-hidden="true">+</span>
       </button>
@@ -2152,6 +2172,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       if(action==="refresh") refreshCrawlVenues();
       if(action==="list") toggleCrawlList();
+      if(action==="clear") clearCrawlAndReturnToMap();
       if(action==="add") openCrawlAddPanel();
       if(action==="share") shareCrawl();
     });
@@ -2172,6 +2193,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     controls.querySelector('[data-action="refresh"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     controls.querySelector('[data-action="list"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
+    controls.querySelector('[data-action="clear"]')?.classList.toggle("hidden",!hasActiveCrawl);
     controls.querySelector('[data-action="add"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     controls.querySelector('[data-action="share"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     if(hasActiveCrawl) hideCrawlFab();
