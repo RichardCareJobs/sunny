@@ -55,7 +55,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let imageViewerModal = null;
   let ratingCard = null;
   let venueStatusEl = null;
-  let introTipEl = null;
 
   let venueCountToast = null;
   let venueCountTimer = null;
@@ -140,32 +139,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!venueStatusEl) return;
     venueStatusEl.hidden=true;
   }
-  function ensureIntroTip(){
-    if(introTipEl) return introTipEl;
-    const el=document.createElement("div");
-    el.id="introTip";
-    el.className="intro-tip";
-    el.hidden=true;
-    el.innerHTML=`
-      <span class="intro-tip__text">Tip: Move the map to find sunny venues. Tap a marker to see details.</span>
-      <button class="intro-tip__button" type="button">Got it</button>`;
-    const button=el.querySelector(".intro-tip__button");
-    button.addEventListener("click",()=>{
-      try{ localStorage.setItem("sunny_intro_seen","1"); }catch{}
-      el.hidden=true;
-    });
-    document.body.appendChild(el);
-    introTipEl=el;
-    return el;
-  }
-  function maybeShowIntroTip(){
-    try{
-      if(localStorage.getItem("sunny_intro_seen")==="1") return;
-    } catch {}
-    const tip=ensureIntroTip();
-    tip.hidden=false;
-  }
-
   // Distance
   function haversine(a,b,c,d){ const R=6371,toRad=x=>x*Math.PI/180; const dLat=toRad(c-a), dLon=toRad(d-b);
     const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2;
@@ -2669,7 +2642,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
-    maybeShowIntroTip();
     ensureCrawlFab();
     const params=new URLSearchParams(window.location.search);
     const crawlParam=params.get("crawl");
