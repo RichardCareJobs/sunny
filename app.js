@@ -13,14 +13,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
-  const GOOGLE_PLACES_TYPES = ["bar", "cafe", "restaurant"];
-  const PLACES_QUERY_RADIUS_MIN_M = 1000;
-  const PLACES_QUERY_RADIUS_MAX_M = 50000;
+  const PRIMARY_PUB_TYPES = ["bar", "pub"];
+  const SECONDARY_PUB_TYPES = ["night_club"];
+  const SECONDARY_FOOD_TYPES = ["restaurant"];
+  const DEFAULT_CITY_RADIUS_M = 2500;
+  const PLACES_QUERY_RADIUS_MIN_M = 2000;
+  const PLACES_QUERY_RADIUS_MAX_M = 12000;
+  const RADIUS_EXPANSION_STEP_M = 2000;
+  const MIN_PRIMARY_RESULTS = 18;
+  const MIN_TOTAL_RESULTS = 24;
+  const PUB_BAR_MIN_SHARE = 0.7;
+  const INCLUDE_CAFES_DEFAULT = false;
   const MAX_DETAILS_FETCH = 25;
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
   const OUTDOOR_ONLY = true;
+  const DEV_PLACES_LOGGING = DEBUG_PLACES || ["localhost","127.0.0.1",""].includes(window.location.hostname);
 
   let map;
   let markersLayer = [];
@@ -574,6 +583,49 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       source: "google"
     };
   }
+  function getRankByLabel(rankBy){
+    if(!google?.maps?.places?.RankBy) return rankBy;
+    const entries=Object.entries(google.maps.places.RankBy);
+    const match=entries.find(([,value])=>value===rankBy);
+    return match ? match[0] : rankBy;
+  }
+  function summarizePlaceTypes(results=[]){
+    const typeCounts={};
+    const top=results.slice(0,20).map(place=>({
+      name: place?.name||"Unknown",
+      primaryType: place?.types?.[0]||"unknown"
+    }));
+    results.forEach(place=>{
+      const primary=place?.types?.[0]||"unknown";
+      typeCounts[primary]=(typeCounts[primary]||0)+1;
+    });
+    return { typeCounts, top };
+  }
+  function logPlacesRequest(endpoint,params,results){
+    if(!DEV_PLACES_LOGGING) return;
+    const normalizedParams={ ...params };
+    if("rankBy" in normalizedParams) normalizedParams.rankBy=getRankByLabel(normalizedParams.rankBy);
+    const summary=summarizePlaceTypes(results);
+    console.log(`[Places][${endpoint}] request`,normalizedParams);
+    console.log(`[Places][${endpoint}] type counts`,summary.typeCounts);
+    console.log(`[Places][${endpoint}] top 20`,summary.top);
+  }
+  function isPubBarPlace(place){
+    const types=place?.types||[];
+    return !!place?.clubLane || types.includes("bar") || types.includes("pub") || types.includes("night_club");
+  }
+  function isCafePlace(place){
+    return (place?.types||[]).includes("cafe");
+  }
+  function enforcePubFirstComposition(places,{ includeCafes=false }={}){
+    if(!Array.isArray(places)||places.length===0||includeCafes) return places;
+    const pubs=places.filter(isPubBarPlace);
+    const others=places.filter(place=>!isPubBarPlace(place));
+    if(!others.length||!pubs.length) return places;
+    const maxOthers=Math.floor((pubs.length/PUB_BAR_MIN_SHARE)-pubs.length);
+    if(others.length<=maxOthers) return places;
+    return [...pubs,...others.slice(0,Math.max(0,maxOthers))];
+  }
   async function fetchPlacesByType({ request, type, keyword, searchId }){
     if(!placesService) return [];
     const collected=[];
@@ -598,7 +650,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           if(!resolved){ resolved=true; resolve(collected); }
         }
       };
-      placesService.nearbySearch(scopedRequest,handlePage);
+      placesService.nearbySearch(scopedRequest,(results,status,pagination)=>{
+        handlePage(results,status,pagination);
+        if(!pagination||!pagination.hasNextPage||pagesFetched>=MAX_PAGES_PER_PASS){
+          logPlacesRequest("nearbySearch",scopedRequest,collected);
+        }
+      });
     });
   }
   async function fetchPlacesByText({ request, query, searchId }){
@@ -625,34 +682,60 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           if(!resolved){ resolved=true; resolve(collected); }
         }
       };
-      placesService.textSearch(scopedRequest,handlePage);
+      placesService.textSearch(scopedRequest,(results,status,pagination)=>{
+        handlePage(results,status,pagination);
+        if(!pagination||!pagination.hasNextPage||pagesFetched>=MAX_PAGES_PER_PASS){
+          logPlacesRequest("textSearch",scopedRequest,collected);
+        }
+      });
     });
   }
   function calculateRadiusFromBounds(bounds){
     const center=bounds.getCenter();
     const ne=bounds.getNorthEast();
     const radiusKm=haversine(center.lat(),center.lng(),ne.lat(),ne.lng());
-    const radiusMeters=Math.min(PLACES_QUERY_RADIUS_MAX_M,Math.max(PLACES_QUERY_RADIUS_MIN_M,Math.round(radiusKm*1000)));
+    const viewRadius=Math.round(radiusKm*1000);
+    const radiusMeters=Math.min(PLACES_QUERY_RADIUS_MAX_M,Math.max(Math.max(PLACES_QUERY_RADIUS_MIN_M,DEFAULT_CITY_RADIUS_M),viewRadius));
     return radiusMeters;
+  }
+  function getIncludeCafes(){
+    const flag=window.SUNNY_INCLUDE_CAFES;
+    if(typeof flag==="boolean") return flag;
+    try{
+      const raw=localStorage.getItem("sunny_include_cafes");
+      if(raw===null) return INCLUDE_CAFES_DEFAULT;
+      return raw==="1"||raw==="true";
+    } catch {
+      return INCLUDE_CAFES_DEFAULT;
+    }
   }
   async function fetchPlacesForBounds(bounds,searchId){
     const center=bounds.getCenter();
-    const radius=calculateRadiusFromBounds(bounds);
+    let radius=calculateRadiusFromBounds(bounds);
     const centerLocation={lat:center.lat(),lng:center.lng()};
-    const baseRequest={ location: centerLocation, radius };
+    const distanceRequest={ location: centerLocation, rankBy: google.maps.places.RankBy.DISTANCE };
+    const textBaseRequest={ location: centerLocation, radius };
+    const includeCafes=getIncludeCafes();
     const responses=[];
-    for(const type of GOOGLE_PLACES_TYPES){
-      const results=await fetchPlacesByType({ request: baseRequest, type, searchId });
+    for(const type of PRIMARY_PUB_TYPES){
+      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId });
       if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
-      responses.push({ results, outdoor: false, label: type });
+      responses.push({ results, outdoor: false, label: type, pass: "primary" });
+    }
+    for(const type of SECONDARY_PUB_TYPES){
+      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId });
+      if(DEBUG_PLACES) console.log(`[Places] secondary ${type} results: ${results.length}`);
+      responses.push({ results, outdoor: false, label: type, pass: "secondary-pub" });
     }
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
-      { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" },
-      { type: "cafe", keyword: "alfresco", label: "cafe+alfresco" }
+      { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
+    if(includeCafes){
+      outdoorPasses.push({ type: "cafe", keyword: "alfresco", label: "cafe+alfresco" });
+    }
     for(const pass of outdoorPasses){
-      const results=await fetchPlacesByType({ request: baseRequest, type: pass.type, keyword: pass.keyword, searchId });
+      const results=await fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId });
       if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
       responses.push({ results, outdoor: true, label: pass.label });
     }
@@ -669,7 +752,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     const clubLaneCounts=[];
     for(const query of clubQueries){
-      const results=await fetchPlacesByText({ request: baseRequest, query, searchId });
+      const results=await fetchPlacesByText({ request: textBaseRequest, query, searchId });
       const saneResults=results.filter(place=>{
         const keep=clubSanityCheck(place);
         if(!keep) logClubExclusion(place,"excluded: club sanity");
@@ -679,6 +762,28 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         clubLaneCounts.push({ query, total: results.length, sane: saneResults.length });
       }
       responses.push({ results: saneResults, outdoor: true, label: `club+${query}`, clubLane: true });
+    }
+
+    const primaryCount=responses
+      .filter(entry=>entry.pass==="primary")
+      .reduce((sum,entry)=>sum+entry.results.length,0);
+    if(primaryCount<MIN_PRIMARY_RESULTS){
+      radius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
+      const expansionRequest={ ...textBaseRequest, radius };
+      for(const type of SECONDARY_FOOD_TYPES){
+        const results=await fetchPlacesByType({ request: distanceRequest, type, searchId });
+        if(DEBUG_PLACES) console.log(`[Places] fallback ${type} results: ${results.length}`);
+        responses.push({ results, outdoor: false, label: `fallback-${type}` });
+      }
+      if(includeCafes){
+        const cafeResults=await fetchPlacesByType({ request: distanceRequest, type: "cafe", searchId });
+        responses.push({ results: cafeResults, outdoor: false, label: "fallback-cafe" });
+      }
+      const fallbackQueries=["pub", "bar"];
+      for(const query of fallbackQueries){
+        const results=await fetchPlacesByText({ request: expansionRequest, query, searchId });
+        responses.push({ results, outdoor: false, label: `fallback-text-${query}` });
+      }
     }
     if(DEBUG_PLACES){
       clubLaneCounts.forEach(entry=>{
@@ -711,7 +816,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
     if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}`);
-    const allowTypes=["bar","pub","cafe","restaurant","night_club"];
+    const allowTypes=["bar","pub","restaurant","night_club",...(includeCafes?["cafe"]:[])];
     const excludeTypes=[
       "fast_food_restaurant",
       "convenience_store","gas_station","supermarket","grocery_or_supermarket",
@@ -754,7 +859,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       return true;
     });
-    const outdoorFiltered=nameFiltered.filter(place=>{
+    const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place));
+    const outdoorFiltered=cafeFiltered.filter(place=>{
       const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
       if(OUTDOOR_ONLY && !outdoorLikely){
@@ -775,12 +881,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       console.log(`[Filters] after allowlist ${allowFiltered.length}`);
       console.log(`[Filters] after exclude types ${excludeFiltered.length}`);
       console.log(`[Filters] after name excludes ${nameFiltered.length}`);
+      console.log(`[Filters] after cafe filter ${cafeFiltered.length}`);
       console.log(`[Filters] after outdoor required ${outdoorFiltered.length}`);
       if(excludedSamples.length){
         console.log("[Filters] sample exclusions:",excludedSamples);
       }
     }
-    return outdoorFiltered;
+    const compositionAdjusted=enforcePubFirstComposition(outdoorFiltered,{ includeCafes });
+    const finalPlaces=compositionAdjusted.slice(0,Math.max(MIN_TOTAL_RESULTS,compositionAdjusted.length));
+    if(DEBUG_FILTERS||DEV_PLACES_LOGGING){
+      const pubCount=finalPlaces.filter(isPubBarPlace).length;
+      console.log(`[Places] final composition pubs/bars ${pubCount}/${finalPlaces.length}`);
+    }
+    return finalPlaces;
   }
   function enrichVenueHours(venues){
     if(!placesService||!Array.isArray(venues)||venues.length===0) return;
