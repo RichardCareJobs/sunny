@@ -11,8 +11,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
   const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
-  const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
-  const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
+  const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 3;
+  const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 5;
+  const VIEWPORT_CACHE_GRID_DEG = 0.002;
 
   const PRIMARY_PUB_TYPES = ["bar", "pub"];
   const SECONDARY_PUB_TYPES = ["night_club"];
@@ -25,7 +26,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MIN_TOTAL_RESULTS = 24;
   const PUB_BAR_MIN_SHARE = 0.7;
   const INCLUDE_CAFES_DEFAULT = false;
-  const MAX_DETAILS_FETCH = 25;
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
@@ -34,6 +34,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   let map;
   let markersLayer = [];
+  const markersById = new Map();
+  let markerClusterer = null;
+  const CLUSTER_THRESHOLD = 60;
   let locateButton = null;
   let allVenues = {};
   let venuePhotoCache = loadLocal(VENUE_PHOTO_CACHE_KEY) || {};
@@ -46,8 +49,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
-  const MOVE_DEBOUNCE_MS = 500;
+  const MOVE_DEBOUNCE_MS = 300;
   let moveTimer = null;
+  let hasInitialMapLoad = false;
 
   let openVenueId = null;
   let isRenderingMarkers = false;
@@ -79,10 +83,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let autocompleteService = null;
   let activeSearchId = 0;
   let activeRequestId = 0;
+  let activeRequestController = null;
   const MAX_PAGES_PER_PASS = 1;
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/marker.png";
   let markerIcon = null;
+  const viewportCache = new Map();
 
   // Helpers
   function setupHeaderMenu(){
@@ -120,6 +126,54 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify({v,t:Date.now()}));}catch{} }
   function loadLocal(k,maxAge=null){
     try{const raw=localStorage.getItem(k); if(!raw) return null; const {v,t}=JSON.parse(raw); if(maxAge!=null&&Date.now()-t>maxAge) return null; return v;}catch{return null;}
+  }
+  function perfLog(message,data={}){
+    if(!(DEBUG_PERF || ["localhost","127.0.0.1",""].includes(window.location.hostname))) return;
+    const payload=Object.keys(data).length ? ` ${JSON.stringify(data)}` : "";
+    console.log(`[Perf] ${message}${payload}`);
+  }
+  function getFilterHash(){
+    const includeCafes=getIncludeCafes();
+    return `outdoor:${OUTDOOR_ONLY?1:0}|cafes:${includeCafes?1:0}`;
+  }
+  function roundToGrid(value,grid){
+    return Math.round(value/grid)*grid;
+  }
+  function getViewportCacheKey(){
+    if(!map) return "";
+    const center=map.getCenter();
+    const zoom=map.getZoom();
+    const lat=roundToGrid(center.lat(),VIEWPORT_CACHE_GRID_DEG);
+    const lng=roundToGrid(center.lng(),VIEWPORT_CACHE_GRID_DEG);
+    return `${lat.toFixed(3)}:${lng.toFixed(3)}:z${zoom}:${getFilterHash()}`;
+  }
+  function getViewportCacheEntry(key){
+    return viewportCache.get(key) || null;
+  }
+  function setViewportCacheEntry(key,data){
+    viewportCache.set(key,{ data, ts: Date.now() });
+  }
+  function throwIfAborted(signal){
+    if(signal?.aborted){
+      throw new DOMException("Aborted","AbortError");
+    }
+  }
+  function getMarkerClustererClass(){
+    return window.markerClusterer?.MarkerClusterer || window.MarkerClusterer || null;
+  }
+  function ensureMarkerClusterer(){
+    if(markerClusterer) return markerClusterer;
+    const MarkerClustererClass=getMarkerClustererClass();
+    if(!MarkerClustererClass) return null;
+    markerClusterer=new MarkerClustererClass({ map, markers: [] });
+    return markerClusterer;
+  }
+  function clearMarkerClusterer(){
+    if(markerClusterer){
+      markerClusterer.clearMarkers();
+      markerClusterer.setMap(null);
+      markerClusterer=null;
+    }
   }
   function toTitle(s=""){ return s ? s.replace(/\b\w/g,c=>c.toUpperCase()) : ""; }
   function ensureVenueStatus(){
@@ -737,14 +791,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(others.length<=maxOthers) return places;
     return [...pubs,...others.slice(0,Math.max(0,maxOthers))];
   }
-  async function fetchPlacesByType({ request, type, keyword, searchId }){
+  async function fetchPlacesByType({ request, type, keyword, searchId, signal }){
     if(!placesService) return [];
+    if(signal?.aborted) return [];
     const collected=[];
     const scopedRequest={ ...request, type, ...(keyword ? { keyword } : {}) };
     return new Promise((resolve)=>{
       let pagesFetched=0;
       let resolved=false;
       const handlePage=(results,status,pagination)=>{
+        if(signal?.aborted){
+          if(!resolved){ resolved=true; resolve([]); }
+          return;
+        }
         if(searchId!==activeSearchId){
           if(DEBUG_PERF) console.log(`[Perf] stale search ignored (${searchId})`);
           if(!resolved){ resolved=true; resolve([]); }
@@ -769,14 +828,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
   }
-  async function fetchPlacesByText({ request, query, searchId }){
+  async function fetchPlacesByText({ request, query, searchId, signal }){
     if(!placesService) return [];
+    if(signal?.aborted) return [];
     const collected=[];
     const scopedRequest={ ...request, query };
     return new Promise((resolve)=>{
       let pagesFetched=0;
       let resolved=false;
       const handlePage=(results,status,pagination)=>{
+        if(signal?.aborted){
+          if(!resolved){ resolved=true; resolve([]); }
+          return;
+        }
         if(searchId!==activeSearchId){
           if(DEBUG_PERF) console.log(`[Perf] stale search ignored (${searchId})`);
           if(!resolved){ resolved=true; resolve([]); }
@@ -820,7 +884,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return INCLUDE_CAFES_DEFAULT;
     }
   }
-  async function fetchPlacesForBounds(bounds,searchId){
+  async function fetchPlacesForBounds(bounds,searchId,signal){
     const center=bounds.getCenter();
     let radius=calculateRadiusFromBounds(bounds);
     const centerLocation={lat:center.lat(),lng:center.lng()};
@@ -829,12 +893,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const includeCafes=getIncludeCafes();
     const responses=[];
     for(const type of PRIMARY_PUB_TYPES){
-      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId });
+      throwIfAborted(signal);
+      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId, signal });
       if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
       responses.push({ results, outdoor: false, label: type, pass: "primary" });
     }
     for(const type of SECONDARY_PUB_TYPES){
-      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId });
+      throwIfAborted(signal);
+      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId, signal });
       if(DEBUG_PLACES) console.log(`[Places] secondary ${type} results: ${results.length}`);
       responses.push({ results, outdoor: false, label: type, pass: "secondary-pub" });
     }
@@ -846,7 +912,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       outdoorPasses.push({ type: "cafe", keyword: "alfresco", label: "cafe+alfresco" });
     }
     for(const pass of outdoorPasses){
-      const results=await fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId });
+      throwIfAborted(signal);
+      const results=await fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId, signal });
       if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
       responses.push({ results, outdoor: true, label: pass.label });
     }
@@ -863,7 +930,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     const clubLaneCounts=[];
     for(const query of clubQueries){
-      const results=await fetchPlacesByText({ request: textBaseRequest, query, searchId });
+      throwIfAborted(signal);
+      const results=await fetchPlacesByText({ request: textBaseRequest, query, searchId, signal });
       const saneResults=results.filter(place=>{
         const keep=clubSanityCheck(place);
         if(!keep) logClubExclusion(place,"excluded: club sanity");
@@ -882,17 +950,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       radius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
       const expansionRequest={ ...textBaseRequest, radius };
       for(const type of SECONDARY_FOOD_TYPES){
-        const results=await fetchPlacesByType({ request: distanceRequest, type, searchId });
+        throwIfAborted(signal);
+        const results=await fetchPlacesByType({ request: distanceRequest, type, searchId, signal });
         if(DEBUG_PLACES) console.log(`[Places] fallback ${type} results: ${results.length}`);
         responses.push({ results, outdoor: false, label: `fallback-${type}` });
       }
       if(includeCafes){
-        const cafeResults=await fetchPlacesByType({ request: distanceRequest, type: "cafe", searchId });
+        throwIfAborted(signal);
+        const cafeResults=await fetchPlacesByType({ request: distanceRequest, type: "cafe", searchId, signal });
         responses.push({ results: cafeResults, outdoor: false, label: "fallback-cafe" });
       }
       const fallbackQueries=["pub", "bar"];
       for(const query of fallbackQueries){
-        const results=await fetchPlacesByText({ request: expansionRequest, query, searchId });
+        throwIfAborted(signal);
+        const results=await fetchPlacesByText({ request: expansionRequest, query, searchId, signal });
         responses.push({ results, outdoor: false, label: `fallback-text-${query}` });
       }
     }
@@ -1006,43 +1077,37 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     return finalPlaces;
   }
-  function enrichVenueHours(venues){
-    if(!placesService||!Array.isArray(venues)||venues.length===0) return;
-    const targets=venues.filter(v=>v&&v.id).slice(0,MAX_DETAILS_FETCH);
-    let completed=0;
-    let failed=0;
-    targets.forEach(venue=>{
-      const existing=allVenues[venue.id];
-      if(existing?.detailsFetched||venue.detailsFetched) return;
-      venue.detailsFetched=true;
-      if(existing) existing.detailsFetched=true;
-      placesService.getDetails({
-        placeId: venue.id,
-        fields: ["place_id","name","opening_hours","utc_offset_minutes","outdoor_seating","photos"]
-      },(place,status)=>{
-        if(status===google.maps.places.PlacesServiceStatus.OK&&place){
-          const openingHours=place.opening_hours||null;
-          const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
-          const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
-          const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||"";
-          const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
-          const updated={
-            ...venue,
-            openNow: typeof openingHours?.open_now==="boolean" ? openingHours.open_now : venue.openNow,
-            hoursStatus,
-            nextChangeText,
-            hoursText,
-            photo: detailPhoto || venue.photo,
-            photos: detailPhoto?.photos || venue.photos || []
-          };
-          if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated};
-          if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
-        } else {
-          failed++;
-        }
-        completed++;
-        if(DEBUG_PLACES) console.log(`[Places] details ${completed}/${targets.length} (failed ${failed})`);
-      });
+  function fetchVenueDetails(venue){
+    if(!placesService||!venue||!venue.id) return;
+    const existing=allVenues[venue.id];
+    if(existing?.detailsFetched||existing?.detailsFetching||venue.detailsFetched||venue.detailsFetching) return;
+    if(existing) existing.detailsFetching=true;
+    venue.detailsFetching=true;
+    placesService.getDetails({
+      placeId: venue.id,
+      fields: ["place_id","name","opening_hours","utc_offset_minutes","outdoor_seating","photos"]
+    },(place,status)=>{
+      if(existing) existing.detailsFetching=false;
+      venue.detailsFetching=false;
+      if(status===google.maps.places.PlacesServiceStatus.OK&&place){
+        const openingHours=place.opening_hours||null;
+        const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
+        const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
+        const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||"";
+        const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
+        const updated={
+          ...venue,
+          openNow: typeof openingHours?.open_now==="boolean" ? openingHours.open_now : venue.openNow,
+          hoursStatus,
+          nextChangeText,
+          hoursText,
+          photo: detailPhoto || venue.photo,
+          photos: detailPhoto?.photos || venue.photos || []
+        };
+        if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated, detailsFetched:true };
+        venue.detailsFetched=true;
+        if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
+      }
     });
   }
   function hasOutdoorHints(tags={}){
@@ -1100,7 +1165,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function mergeVenues(list){ let added=0; for(const v of list){ if(!v) continue; if(!allVenues[v.id]){ allVenues[v.id]=v; added++; } else { allVenues[v.id]={...allVenues[v.id],...v}; } } if(added) saveLocal(VENUE_CACHE_KEY,allVenues); }
 
   function clearMarkersLayer(){
-    markersLayer.forEach(marker=>marker.setMap(null));
+    clearMarkerClusterer();
+    markersById.forEach(marker=>marker.setMap(null));
+    markersById.clear();
     markersLayer=[];
   }
 
@@ -1427,7 +1494,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     placesService=new google.maps.places.PlacesService(map);
     autocompleteService=new google.maps.places.AutocompleteService();
-    map.addListener("idle",debouncedLoadVisible);
+    map.addListener("idle",()=>{
+      if(!hasInitialMapLoad){
+        hasInitialMapLoad=true;
+        loadVisibleTiles({ immediate: true });
+        return;
+      }
+      debouncedLoadVisible();
+    });
     map.addListener("click",()=>{
       hideVenueCard();
       hideCrawlCard();
@@ -1435,50 +1509,75 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     addLocateControl();
     centerOnUserIfAvailable();
   }
-  function debouncedLoadVisible(){ if(moveTimer) clearTimeout(moveTimer); moveTimer=setTimeout(loadVisibleTiles,MOVE_DEBOUNCE_MS); }
+  function debouncedLoadVisible(){
+    if(moveTimer) clearTimeout(moveTimer);
+    moveTimer=setTimeout(()=>loadVisibleTiles({ immediate: false }),MOVE_DEBOUNCE_MS);
+  }
 
-  async function loadVisibleTiles(){
+  async function loadVisibleTiles({ immediate=false }={}){
     if(!map||!placesService) return;
     const requestId=++activeRequestId;
     activeSearchId=requestId;
-    if(DEBUG_PERF) console.log(`[Perf] load start (${requestId})`);
-    showVenueStatus("loading","Loading venues…");
+    if(activeRequestController) activeRequestController.abort();
+    const requestController=new AbortController();
+    activeRequestController=requestController;
+    const { signal }=requestController;
+    const perfStart=performance.now();
+    perfLog("load start",{ requestId, immediate });
     const b=map.getBounds();
     if(!b){
       hideVenueStatus();
       return;
     }
-    const sw=b.getSouthWest(), ne=b.getNorthEast();
-    const bbox=[sw.lat(),sw.lng(),ne.lat(),ne.lng()].map(n=>+n.toFixed(5)).join(","), cacheKey=`${TILE_CACHE_PREFIX}${bbox}`;
-    const cached=loadLocal(cacheKey,TILE_CACHE_TTL_MS);
-    if(cached&&Array.isArray(cached)){
+    const cacheKey=getViewportCacheKey();
+    const cachedEntry=cacheKey ? getViewportCacheEntry(cacheKey) : null;
+    const cacheAge=cachedEntry ? Date.now()-cachedEntry.ts : null;
+    const cacheFresh=cachedEntry && cacheAge<=VIEWPORT_CACHE_TTL_MS;
+    const cacheStale=cachedEntry && cacheAge>VIEWPORT_CACHE_TTL_MS && cacheAge<=VIEWPORT_CACHE_STALE_MS;
+    if(cacheFresh && Array.isArray(cachedEntry.data)){
       if(requestId!==activeRequestId) return;
-      if(cached.length){
-        mergeVenues(cached);
-        renderMarkers();
+      if(cachedEntry.data.length){
+        mergeVenues(cachedEntry.data);
+        renderMarkers({ perfStart, cacheStatus: "hit" });
         hideVenueStatus();
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }
+      perfLog("cache hit",{ requestId, ageMs: cacheAge });
       return;
     }
+    if(cacheStale && Array.isArray(cachedEntry.data)){
+      if(cachedEntry.data.length){
+        mergeVenues(cachedEntry.data);
+        renderMarkers({ cacheStatus: "stale" });
+        hideVenueStatus();
+      } else {
+        showVenueStatus("loading","Loading venues…");
+      }
+      perfLog("cache stale",{ requestId, ageMs: cacheAge });
+    } else if(!cacheStale) {
+      showVenueStatus("loading","Loading venues…");
+    }
     try{
-      const places=await fetchPlacesForBounds(b,requestId);
+      const places=await fetchPlacesForBounds(b,requestId,signal);
       if(requestId!==activeRequestId){
-        if(DEBUG_PERF) console.log(`[Perf] stale load ignored (${requestId})`);
+        perfLog("stale load ignored",{ requestId });
         return;
       }
       const normalized=places.map(normalizePlace).filter(Boolean);
-      saveLocal(cacheKey,normalized);
+      if(cacheKey) setViewportCacheEntry(cacheKey,normalized);
       if(normalized.length){
         mergeVenues(normalized);
-        renderMarkers();
+        renderMarkers({ perfStart, cacheStatus: cacheStale ? "stale-refresh" : "miss" });
         hideVenueStatus();
-        enrichVenueHours(normalized);
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }
     } catch(e){
+      if(signal.aborted){
+        perfLog("load aborted",{ requestId });
+        return;
+      }
       if(requestId!==activeRequestId) return;
       showVenueStatus("error","Couldn’t load venues. Please try again.");
       console.error("Places error:",e);
@@ -1790,6 +1889,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const card=ensureDetailCard();
     openVenueId=v.id;
     card.currentVenue=v;
+    fetchVenueDetails(v);
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
     const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
@@ -1931,7 +2031,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     },3000);
   }
 
-  function renderMarkers(){
+  function renderMarkers({ perfStart=null, cacheStatus=null }={}){
     if(!map) return;
     if(isCrawlMode&&crawlState&&crawlState.venues&&crawlState.venues.length){
       clearMarkersLayer();
@@ -1940,27 +2040,65 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const reopenVenueId=openVenueId;
     let reopenVenue=null;
     isRenderingMarkers=true;
-    clearMarkersLayer();
     const b=map.getBounds();
     if(!b){ isRenderingMarkers=false; return; }
-    let visibleCount=0;
+    const visibleVenues=[];
     Object.values(allVenues).forEach(v=>{
+      if(!v||typeof v.lat!=="number"||typeof v.lng!=="number") return;
       if(!b.contains(new google.maps.LatLng(v.lat,v.lng))) return;
-      visibleCount++;
-      const marker=new google.maps.Marker({
-        position:{ lat: v.lat, lng: v.lng },
-        map,
-        icon: markerIcon
-      });
-      marker.addListener("click",()=>{
-        openVenueId=v.id;
-        showVenueCard(v);
-      });
-      markersLayer.push(marker);
+      visibleVenues.push(v);
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
+    const visibleIds=new Set(visibleVenues.map(v=>v.id));
+    markersById.forEach((marker,id)=>{
+      if(!visibleIds.has(id)){
+        marker.setMap(null);
+        markersById.delete(id);
+      }
+    });
+    visibleVenues.forEach(v=>{
+      let marker=markersById.get(v.id);
+      if(!marker){
+        marker=new google.maps.Marker({
+          position:{ lat: v.lat, lng: v.lng },
+          icon: markerIcon
+        });
+        marker.addListener("click",()=>{
+          openVenueId=v.id;
+          showVenueCard(v);
+        });
+        markersById.set(v.id,marker);
+      } else {
+        const pos=marker.getPosition();
+        if(!pos||pos.lat()!==v.lat||pos.lng()!==v.lng){
+          marker.setPosition({ lat: v.lat, lng: v.lng });
+        }
+        if(markerIcon&&marker.getIcon()!==markerIcon){
+          marker.setIcon(markerIcon);
+        }
+      }
+    });
+    const visibleMarkers=visibleVenues.map(v=>markersById.get(v.id)).filter(Boolean);
+    const shouldCluster=visibleMarkers.length>CLUSTER_THRESHOLD && !!getMarkerClustererClass();
+    if(shouldCluster){
+      const clusterer=ensureMarkerClusterer();
+      if(clusterer){
+        visibleMarkers.forEach(marker=>marker.setMap(null));
+        clusterer.clearMarkers();
+        clusterer.addMarkers(visibleMarkers);
+      }
+    } else {
+      if(markerClusterer) clearMarkerClusterer();
+      visibleMarkers.forEach(marker=>marker.setMap(map));
+    }
+    markersLayer=visibleMarkers;
     isRenderingMarkers=false;
-    showVenueCount(visibleCount);
+    showVenueCount(visibleMarkers.length);
+    if(perfStart){
+      perfLog("markers rendered",{ ms: Math.round(performance.now()-perfStart), count: visibleMarkers.length, cache: cacheStatus || "none" });
+    } else if(cacheStatus){
+      perfLog("markers rendered",{ count: visibleMarkers.length, cache: cacheStatus });
+    }
     if(reopenVenue){
       showVenueCard(reopenVenue);
     } else if(reopenVenueId){
