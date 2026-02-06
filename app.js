@@ -10,6 +10,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
+  const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v1";
   const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
@@ -35,6 +36,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let markersLayer = [];
   let locateButton = null;
   let allVenues = {};
+  let venuePhotoCache = loadLocal(VENUE_PHOTO_CACHE_KEY) || {};
+  if(!venuePhotoCache || typeof venuePhotoCache!=="object") venuePhotoCache={};
   let userLocation = null;
   let locationWatchId = null;
   let locationWatchTimer = null;
@@ -558,12 +561,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const types=place.types||[];
     const amenity=getAmenityFromTypes(types);
     const primaryCategory=place.primaryCategoryOverride||getPrimaryCategory(types);
+    const photoData=resolvePlacePhotoData(place,{ width: 480, mode: "thumbnail" });
     const tags={
       name,
       amenity,
       types: types.join(","),
       vicinity: place.vicinity || "",
-      formatted_address: place.formatted_address || ""
+      formatted_address: place.formatted_address || "",
+      outdoor_seating: place.outdoor_seating || ""
     };
     if(isClosed(tags)) return null;
     if(lacksOutdoor(tags)) return null;
@@ -580,8 +585,100 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       openNow: place.opening_hours?.open_now,
       hoursText: "",
       hasOutdoor: hasOutdoorHints(tags),
+      photo: photoData,
       source: "google"
     };
+  }
+  function getGoogleMapsApiKey(){
+    const script=[...document.querySelectorAll('script[src*="maps.googleapis.com/maps/api/js"]')].find(Boolean);
+    if(!script?.src) return "";
+    try{
+      const url=new URL(script.src,window.location.origin);
+      return url.searchParams.get("key")||"";
+    } catch {
+      return "";
+    }
+  }
+  function buildLegacyPhotoEndpoint(photoReference,width=480){
+    const apiKey=getGoogleMapsApiKey();
+    if(!photoReference||!apiKey) return "";
+    const params=new URLSearchParams({
+      maxwidth: String(width),
+      photo_reference: photoReference,
+      key: apiKey
+    });
+    return `https://maps.googleapis.com/maps/api/place/photo?${params.toString()}`;
+  }
+  function derivePhotoUrl(photo,width=480){
+    if(!photo) return "";
+    if(typeof photo.getUrl==="function"){
+      try{ return photo.getUrl({ maxWidth: width }); }catch{}
+    }
+    if(photo.photo_reference) return buildLegacyPhotoEndpoint(photo.photo_reference,width);
+    if(photo.name){
+      const apiKey=getGoogleMapsApiKey();
+      if(apiKey){
+        const encodedName=encodeURIComponent(photo.name);
+        return `https://places.googleapis.com/v1/${encodedName}/media?maxWidthPx=${width}&key=${encodeURIComponent(apiKey)}`;
+      }
+    }
+    return "";
+  }
+  function hasOutdoorFeature(place){
+    if(!place) return false;
+    return ["TRUE","true",true,"yes","YES"].includes(place.outdoor_seating) ||
+      ["TRUE","true",true,"yes","YES"].includes(place.rooftop_seating) ||
+      ["TRUE","true",true,"yes","YES"].includes(place.courtyard);
+  }
+  function selectPlacePhoto(place,photos=[]){
+    if(!photos.length) return { selectedIndex: -1, selectedPhoto: null, photosCount: 0, strategy: "none" };
+    const outdoorFeature=hasOutdoorFeature(place);
+    if(!outdoorFeature){
+      return { selectedIndex: 0, selectedPhoto: photos[0], photosCount: photos.length, strategy: "primary" };
+    }
+    // Best-effort outdoor hint support. Metadata varies by API response; currently we default
+    // to first photo when no reliable outdoor metadata is present.
+    const firstOutdoorIndex=photos.findIndex(photo=>{
+      const text=`${photo?.caption||""} ${(photo?.html_attributions||[]).join(" ")}`.toLowerCase();
+      return /outdoor|terrace|rooftop|courtyard|beer ?garden|patio|alfresco/.test(text);
+    });
+    const selectedIndex=firstOutdoorIndex>=0 ? firstOutdoorIndex : 0;
+    return { selectedIndex, selectedPhoto: photos[selectedIndex], photosCount: photos.length, strategy: firstOutdoorIndex>=0?"outdoor-hint":"outdoor-fallback-primary" };
+  }
+  function resolvePlacePhotoData(place,{ width=480, mode="thumbnail" }={}){
+    const placeId=place?.place_id;
+    if(!placeId) return null;
+    const cached=venuePhotoCache[placeId];
+    if(cached&&cached[mode]?.url){
+      return {
+        url: cached[mode].url,
+        selectedIndex: cached.selectedIndex,
+        photosCount: cached.photosCount,
+        mode,
+        strategy: cached.strategy||"cache"
+      };
+    }
+    const photos=Array.isArray(place?.photos) ? place.photos.slice(0,5) : [];
+    const pick=selectPlacePhoto(place,photos);
+    if(!pick.selectedPhoto) return null;
+    const url=derivePhotoUrl(pick.selectedPhoto,width);
+    if(!url) return null;
+    const next={
+      ...venuePhotoCache[placeId],
+      selectedIndex: pick.selectedIndex,
+      photosCount: pick.photosCount,
+      strategy: pick.strategy,
+      thumbnail: { url: mode==="thumbnail" ? url : (venuePhotoCache[placeId]?.thumbnail?.url||"") },
+      detail: { url: mode==="detail" ? url : (venuePhotoCache[placeId]?.detail?.url||"") }
+    };
+    if(mode==="thumbnail") next.thumbnail={ url };
+    if(mode==="detail") next.detail={ url };
+    venuePhotoCache[placeId]=next;
+    saveLocal(VENUE_PHOTO_CACHE_KEY,venuePhotoCache);
+    if(DEV_PLACES_LOGGING){
+      console.log(`[PlacesPhoto] place_id=${placeId} photos=${pick.photosCount} selectedIndex=${pick.selectedIndex} strategy=${pick.strategy}`);
+    }
+    return { url, selectedIndex: pick.selectedIndex, photosCount: pick.photosCount, mode, strategy: pick.strategy };
   }
   function getRankByLabel(rankBy){
     if(!google?.maps?.places?.RankBy) return rankBy;
@@ -907,19 +1004,21 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(existing) existing.detailsFetched=true;
       placesService.getDetails({
         placeId: venue.id,
-        fields: ["place_id","opening_hours","utc_offset_minutes","name"]
+        fields: ["place_id","name","opening_hours","utc_offset_minutes","outdoor_seating","photos"]
       },(place,status)=>{
         if(status===google.maps.places.PlacesServiceStatus.OK&&place){
           const openingHours=place.opening_hours||null;
           const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
           const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
           const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||"";
+          const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
           const updated={
             ...venue,
             openNow: typeof openingHours?.open_now==="boolean" ? openingHours.open_now : venue.openNow,
             hoursStatus,
             nextChangeText,
-            hoursText
+            hoursText,
+            photo: detailPhoto || venue.photo
           };
           if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated};
           if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
@@ -1266,6 +1365,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           </div>
           <button class="venue-card__close" type="button" aria-label="Close details">×</button>
         </div>
+        <div class="venue-card__image-wrap">
+          <img class="venue-card__image hidden" alt="Venue photo" loading="lazy" decoding="async">
+          <div class="venue-card__image-fallback">No photo available</div>
+        </div>
         <div class="venue-card__section-title">Current weather</div>
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
@@ -1379,6 +1482,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       weatherChip:container.querySelector("#venue-card-weather"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
+      imageEl:container.querySelector(".venue-card__image"),
+      imageFallbackEl:container.querySelector(".venue-card__image-fallback"),
       ratingDisplay:container.querySelector(".rating-display"),
       rateButton:rateButtons[0]||null,
       rateButtons,
@@ -1487,6 +1592,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } else {
       card.noteEl.textContent="";
       card.noteEl.classList.add("hidden");
+    }
+
+    const photoUrl=v?.photo?.url||"";
+    if(card.imageEl&&card.imageFallbackEl){
+      card.imageEl.onerror=()=>{
+        card.imageEl.classList.add("hidden");
+        card.imageFallbackEl.classList.remove("hidden");
+      };
+      if(photoUrl){
+        card.imageEl.src=photoUrl;
+        card.imageEl.classList.remove("hidden");
+        card.imageFallbackEl.classList.add("hidden");
+      } else {
+        card.imageEl.removeAttribute("src");
+        card.imageEl.classList.add("hidden");
+        card.imageFallbackEl.classList.remove("hidden");
+      }
     }
 
     card.actions.directions.textContent="Google Maps";
