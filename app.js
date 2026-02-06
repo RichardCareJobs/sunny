@@ -2229,6 +2229,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const subtitle=panel.querySelector(".crawl-list__subtitle");
     subtitle.textContent=`${crawlState.venues.length} venues · Start ${formatTime(crawlState.startAt)}`;
     items.innerHTML="";
+    const firstVenueName=(crawlState.venues[0]?.name||"").trim();
+    const hasFirstVenueName=!!firstVenueName;
+    const hasCurrentLocation=!!(userLocation&&typeof userLocation.lat==="number"&&typeof userLocation.lng==="number");
     crawlState.venues.forEach((venue,index)=>{
       const previous=index>0 ? crawlState.venues[index-1] : null;
       const origin=crawlState.origin && typeof crawlState.origin.lat==="number" ? crawlState.origin : null;
@@ -2238,7 +2241,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const distanceKm=fromPoint ? haversine(fromPoint.lat,fromPoint.lng,venue.lat,venue.lng) : 0;
       const distanceLabel=fromPoint ? `${formatDistanceKm(distanceKm)} from ${fromLabel}` : "Start of the crawl";
       const fare=estimateUberFare(distanceKm);
-      const uberText=`$${fare} uber fare from ${fromLabel}`;
+      let uberText=`$${fare} Uber fare`;
+      if(hasFirstVenueName){
+        uberText+=` to ${firstVenueName}`;
+      }
+      if(hasFirstVenueName&&hasCurrentLocation){
+        uberText+=" from your current location.";
+      } else {
+        uberText+=".";
+      }
       const uberLink=fromPoint
         ? `https://m.uber.com/ul/?action=setPickup&pickup[latitude]=${fromPoint.lat}&pickup[longitude]=${fromPoint.lng}&pickup[nickname]=${encodeURIComponent(fromLabel)}&dropoff[latitude]=${venue.lat}&dropoff[longitude]=${venue.lng}&dropoff[nickname]=${encodeURIComponent(venue.name || "Next venue")}`
         : "";
@@ -2250,7 +2261,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <div class="crawl-list__meta">${distanceLabel}</div>
           <div class="crawl-list__uber">
             <span>${uberText}</span>
-            <a class="crawl-list__uber-btn" target="_blank" rel="noopener" ${fromPoint ? `href="${uberLink}"` : "aria-disabled=\"true\""}>Book now</a>
+            <a class="crawl-list__uber-btn" target="_blank" rel="noopener" ${fromPoint ? `href="${uberLink}"` : "aria-disabled=\"true\""}>Book Uber now</a>
           </div>
         </div>
         <div class="crawl-list__time">${formatTimeRange(venue.slot?.start,venue.slot?.end)}</div>
