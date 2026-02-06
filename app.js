@@ -370,18 +370,35 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if (code === 2 || code === 3) return { icon: "🌤️", label: "Partly cloudy" };
     return { icon: "☁️", label: "Cloudy" };
   }
-  async function populateWeatherBadge(id,lat,lng){
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = "Loading weather…";
-    const data = await fetchWeather(lat,lng);
-    const target = document.getElementById(id);
-    if (!target) return;
-    if (data && data.tempC !== null) {
-      target.innerHTML = `<span>${data.icon}</span><span>${data.tempC}&nbsp;°C</span>`;
-    } else {
-      target.innerHTML = `<span>${data.icon}</span><span>${data.label}</span>`;
+  function formatCurrentWeatherChipLabel(sunLabel,tempC){
+    const cleanSunLabel=typeof sunLabel==="string"?sunLabel.trim():"";
+    const hasSunLabel=!!cleanSunLabel;
+    const hasTemp=typeof tempC==="number"&&Number.isFinite(tempC);
+    if(!hasSunLabel&&!hasTemp) return "";
+    if(hasSunLabel&&hasTemp) return `${cleanSunLabel} · ${tempC}°C`;
+    if(hasSunLabel) return cleanSunLabel;
+    return `Weather · ${tempC}°C`;
+  }
+  async function populateCombinedWeatherChip(chip,lat,lng,sun){
+    if(!chip) return;
+    const currentIcon=chip.querySelector(".chip-emoji");
+    const currentLabel=chip.querySelector(".chip-label");
+    if(!currentIcon||!currentLabel) return;
+    currentIcon.textContent=(sun&&sun.icon)||"☀️";
+    currentLabel.textContent=formatCurrentWeatherChipLabel(sun?.label,null);
+    const requestToken=String(Date.now()+Math.random());
+    chip.dataset.weatherRequestToken=requestToken;
+    const data=await fetchWeather(lat,lng);
+    if(chip.dataset.weatherRequestToken!==requestToken) return;
+    const formattedLabel=formatCurrentWeatherChipLabel(sun?.label,data?.tempC);
+    if(!formattedLabel){
+      chip.classList.add("hidden");
+      chip.style.display="none";
+      return;
     }
+    currentLabel.textContent=formattedLabel;
+    chip.classList.remove("hidden");
+    chip.style.display="inline-flex";
   }
 
   // Hours
@@ -1390,7 +1407,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__section-title">Current weather</div>
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
-          <span class="chip chip-weather" id="venue-card-weather">Loading weather…</span>
           <span class="chip chip-open"></span>
         </div>
         <div class="venue-card__hours hidden"></div>
@@ -1497,7 +1513,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hoursEl:container.querySelector(".venue-card__hours"),
       hoursNextEl:container.querySelector(".venue-card__hours-next"),
       sunChip:container.querySelector(".chip-sun"),
-      weatherChip:container.querySelector("#venue-card-weather"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
       photoStripEl:container.querySelector(".venue-card__photo-strip"),
@@ -1663,7 +1678,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
     const address=v.address||formatAddress(tags);
-    const sun=sunBadge(v.lat,v.lng);
+    const hasValidCoords=Number.isFinite(v.lat)&&Number.isFinite(v.lng);
+    const sun=hasValidCoords?sunBadge(v.lat,v.lng):null;
     const open=resolveOpenStatus(v);
     const website=(tags.website||tags.contact_website||tags.url)?String(tags.website||tags.contact_website||tags.url).replace(/^http:\/\//,'https://'):null;
 
@@ -1678,11 +1694,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.addressEl.classList.add("hidden");
     }
 
-    card.sunChip.querySelector(".chip-emoji").textContent=sun.icon;
-    card.sunChip.querySelector(".chip-label").textContent=sun.label;
-
-    card.weatherChip.textContent="Loading weather…";
-    populateWeatherBadge("venue-card-weather",v.lat,v.lng);
+    const initialWeatherLabel=formatCurrentWeatherChipLabel(sun?.label,null);
+    if(initialWeatherLabel){
+      card.sunChip.querySelector(".chip-emoji").textContent=(sun&&sun.icon)||"☀️";
+      card.sunChip.querySelector(".chip-label").textContent=initialWeatherLabel;
+      card.sunChip.classList.remove("hidden");
+      card.sunChip.style.display="inline-flex";
+    } else {
+      card.sunChip.classList.add("hidden");
+      card.sunChip.style.display="none";
+    }
+    if(hasValidCoords) populateCombinedWeatherChip(card.sunChip,v.lat,v.lng,sun);
 
     if(!open.status){
       card.openChip.textContent="";
