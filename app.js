@@ -151,11 +151,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const lng=roundToGrid(center.lng(),VIEWPORT_CACHE_GRID_DEG);
     return `${lat.toFixed(3)}:${lng.toFixed(3)}:z${zoom}:${getFilterHash()}`;
   }
-  function getCrawlVenueCacheKey(center){
+  function getCrawlVenueCacheKey(center,radiusMeters){
     if(!center||typeof center.lat!=="number"||typeof center.lng!=="number") return "";
+    const radius=Math.round(radiusMeters || 0);
     const lat=roundToGrid(center.lat,VIEWPORT_CACHE_GRID_DEG);
     const lng=roundToGrid(center.lng,VIEWPORT_CACHE_GRID_DEG);
-    return `crawl:${lat.toFixed(3)}:${lng.toFixed(3)}:${getFilterHash()}`;
+    return `crawl:${lat.toFixed(3)}:${lng.toFixed(3)}:r${radius}:${getFilterHash()}`;
   }
   function getViewportCacheEntry(key){
     return viewportCache.get(key) || null;
@@ -217,6 +218,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function haversine(a,b,c,d){ const R=6371,toRad=x=>x*Math.PI/180; const dLat=toRad(c-a), dLon=toRad(d-b);
     const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2;
     const C=2*Math.atan2(Math.sqrt(A),Math.sqrt(1-A)); return R*C; }
+  function haversineMeters(a,b,c,d){
+    const km=haversine(a,b,c,d);
+    return Number.isFinite(km) ? km*1000 : NaN;
+  }
+  function isValidCoord(lat,lng){
+    return Number.isFinite(lat)&&Number.isFinite(lng);
+  }
   function formatDistanceKm(km){ return km<1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`; }
   function formatAddress(tags={}){
     if(tags["addr:full"]) return tags["addr:full"];
@@ -1201,14 +1209,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
   }
 
-  async function fetchPlacesForCrawlCenter(center,requestId){
-    const radiusMeters=Math.min(
+  async function fetchPlacesForCrawlCenter(center,requestId,radiusMeters){
+    const radius=Math.min(
       PLACES_QUERY_RADIUS_MAX_M,
-      Math.max(PLACES_QUERY_RADIUS_MIN_M,DEFAULT_CITY_RADIUS_M)
+      Math.max(PLACES_QUERY_RADIUS_MIN_M,DEFAULT_CITY_RADIUS_M,Number(radiusMeters)||0)
     );
     const centerLocation={ lat: center.lat, lng: center.lng };
     const distanceRequest={ location: centerLocation, rankBy: google.maps.places.RankBy.DISTANCE };
-    const textBaseRequest={ location: centerLocation, radius: radiusMeters };
+    const textBaseRequest={ location: centerLocation, radius };
     const includeCafes=getIncludeCafes();
     const responses=[];
     for(const type of PRIMARY_PUB_TYPES){
@@ -1249,7 +1257,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       .filter(entry=>entry.pass==="primary")
       .reduce((sum,entry)=>sum+entry.results.length,0);
     if(primaryCount<MIN_PRIMARY_RESULTS){
-      const expansionRequest={ ...textBaseRequest, radius: Math.min(PLACES_QUERY_RADIUS_MAX_M, radiusMeters+RADIUS_EXPANSION_STEP_M) };
+      const expansionRequest={ ...textBaseRequest, radius: Math.min(PLACES_QUERY_RADIUS_MAX_M, radius+RADIUS_EXPANSION_STEP_M) };
       for(const type of SECONDARY_FOOD_TYPES){
         if(requestId!==crawlBuildRequestId) return [];
         const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
@@ -1330,18 +1338,21 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return finalPlaces;
   }
 
-  async function fetchCrawlVenuesForCenter(center,requestId){
+  async function fetchCrawlVenuesForCenter(center,requestId,radiusMeters){
     if(requestId!==crawlBuildRequestId) return [];
-    const cacheKey=getCrawlVenueCacheKey(center);
+    const cacheKey=getCrawlVenueCacheKey(center,radiusMeters);
     const cachedEntry=cacheKey ? getCrawlVenueCacheEntry(cacheKey) : null;
     if(cachedEntry && Date.now()-cachedEntry.ts<=VIEWPORT_CACHE_TTL_MS){
       return filterGloballyExcludedVenues(cachedEntry.data,"crawl-cache");
     }
-    const places=await fetchPlacesForCrawlCenter(center,requestId);
+    const places=await fetchPlacesForCrawlCenter(center,requestId,radiusMeters);
     if(requestId!==crawlBuildRequestId) return [];
     const normalized=places.map(normalizePlace).filter(Boolean);
     const filtered=filterGloballyExcludedVenues(normalized,"crawl-fetch");
     if(cacheKey) setCrawlVenueCacheEntry(cacheKey,filtered);
+    if(filtered.length){
+      mergeVenues(filtered);
+    }
     return filtered;
   }
   function fetchVenueDetails(venue){
@@ -1540,7 +1551,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function chooseCrawlVenuesFromList(list,origin,count=4){
-    const venues=(Array.isArray(list)?list:[]).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number"&&!isGloballyExcludedVenue(v));
+    const venues=(Array.isArray(list)?list:[]).filter(v=>v&&isValidCoord(v.lat,v.lng)&&!isGloballyExcludedVenue(v));
     if(venues.length===0) return [];
     return venues
       .map(v=>({ venue:v, distance:haversine(origin.lat,origin.lng,v.lat,v.lng) }))
@@ -1553,9 +1564,31 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return chooseCrawlVenuesFromList(Object.values(allVenues),origin,count);
   }
 
+  function getCrawlCandidatesFromStore(center,radiusMeters){
+    const totalVenuesInStore=Object.values(allVenues).length;
+    const withValidCoords=Object.values(allVenues).filter(v=>v&&isValidCoord(v.lat,v.lng));
+    const candidatesAfterTypeFilter=withValidCoords.filter(v=>!isGloballyExcludedVenue(v));
+    const withinRadius=candidatesAfterTypeFilter.filter(v=>{
+      const distance=haversineMeters(center.lat,center.lng,v.lat,v.lng);
+      return Number.isFinite(distance) && distance<=radiusMeters;
+    });
+    const candidatesAfterAnyOtherFilter=withinRadius;
+    const candidatesAfterDedup=selectUniqueAddressVenues(candidatesAfterAnyOtherFilter,candidatesAfterAnyOtherFilter.length);
+    return {
+      candidates: candidatesAfterDedup,
+      stats: {
+        totalVenuesInStore,
+        candidatesWithValidCoords: withValidCoords.length,
+        candidatesAfterTypeFilter: candidatesAfterTypeFilter.length,
+        candidatesAfterAnyOtherFilter: candidatesAfterAnyOtherFilter.length,
+        candidatesAfterDedup: candidatesAfterDedup.length
+      }
+    };
+  }
+
   function generateCrawlVenuesFromList(list,origin,count,startAt,orderMode,{ refresh=false, currentVenueIds=[], maxStepMeters=CRAWL_MAX_STEP_METERS }={}){
     const candidates=chooseCrawlVenuesFromList(list,origin,Math.max(count,Math.min(MAX_CRAWL_VENUES,refresh ? count*3 : count)));
-    if(!candidates.length) return { ok:false, reason:"NO_VENUES", venues: [] };
+    if(!candidates.length) return { ok:false, reason:"NOT_ENOUGH_CANDIDATES", venues: [] };
     let selectionPool=candidates;
     if(refresh&&candidates.length>count){
       const currentSet=new Set(currentVenueIds||[]);
@@ -1569,7 +1602,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     // Enforce unique addresses so a crawl never repeats a location.
     const uniqueSelected=selectUniqueAddressVenues(selectionPool,count);
     if(uniqueSelected.length<count){
-      return { ok:false, reason:"NOT_ENOUGH_VENUES", venues: uniqueSelected };
+      return { ok:false, reason:"NOT_ENOUGH_CANDIDATES", venues: uniqueSelected };
     }
     return orderVenues(uniqueSelected,origin,orderMode,startAt,maxStepMeters);
   }
@@ -1620,11 +1653,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters){
-    const maxStepKm=maxStepMeters/1000;
     const candidates=[];
     remaining.forEach((venue,index)=>{
-      const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
-      if(distance<=maxStepKm){
+      const distance=haversineMeters(current.lat,current.lng,venue.lat,venue.lng);
+      if(Number.isFinite(distance) && distance<=maxStepMeters){
         candidates.push({ venue, index, distance });
       }
     });
@@ -1653,64 +1685,58 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function orderVenues(venues,origin,mode,startAt,maxStepMeters){
-    if(!Array.isArray(venues)) return { ok:false, reason:"NO_VENUES", venues: [] };
-    const maxStepKm=maxStepMeters/1000;
+    if(!Array.isArray(venues)) return { ok:false, reason:"OTHER", venues: [] };
+    if(!isValidCoord(origin?.lat,origin?.lng)) return { ok:false, reason:"INVALID_COORDS", venues: [] };
+    const candidates=venues.filter(v=>v&&isValidCoord(v.lat,v.lng));
+    if(candidates.length===0) return { ok:false, reason:"INVALID_COORDS", venues: [] };
+    const seedRanked=[...candidates]
+      .map((venue,index)=>({
+        index,
+        distance:haversineMeters(origin.lat,origin.lng,venue.lat,venue.lng)
+      }))
+      .filter(item=>Number.isFinite(item.distance))
+      .sort((a,b)=>a.distance-b.distance);
+    const seedIndices=new Set(seedRanked.slice(0,Math.min(10,seedRanked.length)).map(item=>item.index));
     if(mode==="sun"){
-      const sorted=[...venues].sort((a,b)=>{
-        const aScore=getSunScore(a,startAt);
-        const bScore=getSunScore(b,startAt);
-        if(aScore===bScore){
-          return haversine(origin.lat,origin.lng,a.lat,a.lng) - haversine(origin.lat,origin.lng,b.lat,b.lng);
+      const sunRanked=[...candidates]
+        .map((venue,index)=>({ index, score:getSunScore(venue,startAt) }))
+        .sort((a,b)=>b.score-a.score);
+      sunRanked.slice(0,Math.min(5,sunRanked.length)).forEach(item=>seedIndices.add(item.index));
+    }
+    const maxSeeds=Math.min(20,candidates.length);
+    while(seedIndices.size<maxSeeds){
+      seedIndices.add(Math.floor(Math.random()*candidates.length));
+    }
+    let bestResult=null;
+    for(const seedIndex of seedIndices){
+      const seedVenue=candidates[seedIndex];
+      if(!seedVenue) continue;
+      const remaining=candidates.filter((_,idx)=>idx!==seedIndex);
+      const firstDistance=haversineMeters(origin.lat,origin.lng,seedVenue.lat,seedVenue.lng);
+      if(!Number.isFinite(firstDistance) || firstDistance>maxStepMeters) continue;
+      const ordered=[seedVenue];
+      let current=seedVenue;
+      let maxDistance=firstDistance;
+      let failed=false;
+      while(remaining.length){
+        const next=pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters);
+        if(!next){
+          failed=true;
+          break;
         }
-        return bScore - aScore;
-      });
-      if(sorted.length===0) return { ok:false, reason:"NO_VENUES", venues: [] };
-      let firstIndex=sorted.findIndex(v=>haversine(origin.lat,origin.lng,v.lat,v.lng)<=maxStepKm);
-      if(firstIndex===-1) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
-      if(firstIndex!==0){
-        const [firstCandidate]=sorted.splice(firstIndex,1);
-        sorted.unshift(firstCandidate);
-      }
-      const ordered=[sorted.shift()];
-      let maxDistance=haversine(origin.lat,origin.lng,ordered[0].lat,ordered[0].lng);
-      if(maxDistance>maxStepKm) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
-      let current=ordered[0];
-      while(sorted.length){
-        const next=pickNextCrawlVenue(sorted,current,mode,startAt,maxStepMeters);
-        if(!next) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
         ordered.push(next.venue);
         if(next.distance>maxDistance) maxDistance=next.distance;
         current=next.venue;
       }
-      return { ok:true, venues: ordered, maxStepDistanceMeters: Math.round(maxDistance*1000) };
-    }
-    const remaining=[...venues];
-    const ordered=[];
-    if(!remaining.length) return { ok:false, reason:"NO_VENUES", venues: [] };
-    let current=origin;
-    let firstIndex=0;
-    let nearestDistance=Infinity;
-    remaining.forEach((venue,index)=>{
-      const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
-      if(distance<nearestDistance){
-        nearestDistance=distance;
-        firstIndex=index;
+      if(!failed){
+        const result={ ok:true, venues: ordered, maxStepDistanceMeters: Math.round(maxDistance) };
+        if(!bestResult || result.maxStepDistanceMeters<bestResult.maxStepDistanceMeters){
+          bestResult=result;
+        }
       }
-    });
-    const [first]=remaining.splice(firstIndex,1);
-    const firstStepDistance=haversine(current.lat,current.lng,first.lat,first.lng);
-    if(firstStepDistance>maxStepKm) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
-    ordered.push(first);
-    current=first;
-    let maxDistance=firstStepDistance;
-    while(remaining.length){
-      const next=pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters);
-      if(!next) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
-      ordered.push(next.venue);
-      if(next.distance>maxDistance) maxDistance=next.distance;
-      current=next.venue;
     }
-    return { ok:true, venues: ordered, maxStepDistanceMeters: Math.round(maxDistance*1000) };
+    if(bestResult) return bestResult;
+    return { ok:false, reason:"NO_VALID_PATH_WITHIN_CONSTRAINTS", venues: [] };
   }
 
   function clearCrawlNotifications(){
@@ -3250,6 +3276,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const deviceLocation=userLocation ? { ...userLocation } : null;
     const selectedAreaCenter=option==="around" ? crawlBuilder?.locationOverride : null;
     const distanceSteps=[200,350,500,750,1000,1500,2000];
+    const radiusSteps=Array.from(new Set([
+      Math.max(1200,distanceSteps[0]*6),
+      1500,
+      2000,
+      3000,
+      4000
+    ])).sort((a,b)=>a-b);
     const targetCount=4;
     const logBuild=(payload)=>{
       if(!DEV_CRAWL_LOGGING) return;
@@ -3300,61 +3333,50 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         }
         return;
       }
-      if(crawlBuilder?.setLoading){
-        crawlBuilder.setLoading(true,"Finding venues…");
-      }
-      const venues=await fetchCrawlVenuesForCenter(center,requestId);
-      if(requestId!==crawlBuildRequestId) return;
-      if(venues.length===0){
-        if(crawlBuilder?.statusEl){
-          if(crawlBuilder?.setLoading) crawlBuilder.setLoading(false);
-          crawlBuilder.statusEl.textContent="No venues found yet. Try moving the map.";
-          crawlBuilder.statusEl.className="crawl-builder__status error";
-        }
-        logBuild({
-          requestId,
-          deviceLocation,
-          selectedAreaCenter,
-          centerUsedForCrawl:center,
-          venueCountUsed: venues.length,
-          maxStepDistanceMeters: CRAWL_MAX_STEP_METERS,
-          failureReason: "NO_VENUES"
-        });
-        return;
-      }
-      if(venues.length<targetCount){
-        if(crawlBuilder?.statusEl){
-          if(crawlBuilder?.setLoading) crawlBuilder.setLoading(false);
-          crawlBuilder.statusEl.textContent="Not enough venues in this area to build a crawl. Try another suburb or reduce the number of stops.";
-          crawlBuilder.statusEl.className="crawl-builder__status error";
-        }
-        logBuild({
-          requestId,
-          deviceLocation,
-          selectedAreaCenter,
-          centerUsedForCrawl:center,
-          venueCountUsed: venues.length,
-          maxStepDistanceMeters: CRAWL_MAX_STEP_METERS,
-          failureReason: "NOT_ENOUGH_VENUES"
-        });
-        return;
-      }
       const orderMode=crawlBuilder?.orderMode || "location";
-      if(crawlBuilder?.setLoading){
-        crawlBuilder.setLoading(true,"Building your pub crawl");
-      }
-      let buildResult={ ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE" };
+      let buildResult={ ok:false, reason:"NOT_ENOUGH_CANDIDATES" };
       let usedDistance=null;
-      for(const step of distanceSteps){
-        const attempt=generateCrawlVenuesFromList(venues,center,targetCount,startAt,orderMode,{ maxStepMeters: step });
-        if(attempt.ok){
+      let usedRadius=null;
+      let lastStats=null;
+      for(const radius of radiusSteps){
+        if(requestId!==crawlBuildRequestId) return;
+        if(crawlBuilder?.setLoading){
+          crawlBuilder.setLoading(true,"Finding venues…");
+        }
+        await fetchCrawlVenuesForCenter(center,requestId,radius);
+        if(requestId!==crawlBuildRequestId) return;
+        const { candidates, stats }=getCrawlCandidatesFromStore(center,radius);
+        lastStats=stats;
+        logBuild({
+          requestId,
+          centerUsedForCrawl:center,
+          venueSearchRadiusMeters: radius,
+          requiredStops: targetCount,
+          actualCandidates: candidates.length,
+          ...stats
+        });
+        if(candidates.length<targetCount){
+          buildResult={ ok:false, reason:"NOT_ENOUGH_CANDIDATES" };
+          continue;
+        }
+        if(crawlBuilder?.setLoading){
+          crawlBuilder.setLoading(true,"Building your pub crawl");
+        }
+        for(const step of distanceSteps){
+          const attempt=generateCrawlVenuesFromList(candidates,center,targetCount,startAt,orderMode,{ maxStepMeters: step });
+          if(attempt.ok){
+            buildResult=attempt;
+            usedDistance=step;
+            usedRadius=radius;
+            break;
+          }
+          if(attempt.reason==="NOT_ENOUGH_CANDIDATES"||attempt.reason==="INVALID_COORDS"){
+            buildResult=attempt;
+            break;
+          }
           buildResult=attempt;
-          usedDistance=step;
-          break;
         }
-        if(attempt.reason==="NOT_ENOUGH_VENUES"||attempt.reason==="NO_VENUES"){
-          break;
-        }
+        if(buildResult.ok) break;
       }
       if(requestId!==crawlBuildRequestId) return;
       if(buildResult.ok && !usedDistance){
@@ -3364,8 +3386,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(crawlBuilder?.statusEl){
           if(crawlBuilder?.setLoading) crawlBuilder.setLoading(false);
           const maxDistance=distanceSteps[distanceSteps.length-1];
+          const maxRadius=radiusSteps[radiusSteps.length-1];
           const distanceLimitKm=formatDistanceKm(maxDistance/1000);
-          crawlBuilder.statusEl.textContent=`Couldn’t build a crawl within ${distanceLimitKm} between stops for this area. Try increasing the distance limit or reducing number of stops.`;
+          const detail=DEV_CRAWL_LOGGING && lastStats
+            ? ` Tried radius=${maxRadius}m, candidates=${lastStats.candidatesAfterDedup}, requiredStops=${targetCount}, maxStep=${maxDistance}m.`
+            : "";
+          if(buildResult.reason==="NOT_ENOUGH_CANDIDATES"){
+            crawlBuilder.statusEl.textContent=`Not enough venues in this area to build a crawl. Try another suburb or reduce the number of stops.${detail}`;
+          } else if(buildResult.reason==="INVALID_COORDS"){
+            crawlBuilder.statusEl.textContent=`Some venues are missing location data for this area. Try another suburb or reduce the number of stops.${detail}`;
+          } else {
+            crawlBuilder.statusEl.textContent=`Couldn’t build a crawl within ${distanceLimitKm} between stops for this area. Try increasing the distance limit or reducing number of stops.${detail}`;
+          }
           crawlBuilder.statusEl.className="crawl-builder__status error";
         }
         logBuild({
@@ -3373,9 +3405,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           deviceLocation,
           selectedAreaCenter,
           centerUsedForCrawl:center,
-          venueCountUsed: venues.length,
+          venueSearchRadiusMeters: radiusSteps[radiusSteps.length-1],
           maxStepDistanceMeters: distanceSteps[distanceSteps.length-1],
-          failureReason: buildResult.reason || "NOT_ENOUGH_VENUES_WITHIN_DISTANCE"
+          failureReason: buildResult.reason || "NO_VALID_PATH_WITHIN_CONSTRAINTS",
+          ...(lastStats || {})
         });
         return;
       }
@@ -3384,8 +3417,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         deviceLocation,
         selectedAreaCenter,
         centerUsedForCrawl:center,
-        venueCountUsed: venues.length,
+        venueCountUsed: lastStats?.candidatesAfterDedup ?? 0,
         maxStepDistanceMeters: usedDistance,
+        venueSearchRadiusMeters: usedRadius,
         maxStepDistanceUsedMeters: buildResult.maxStepDistanceMeters
       });
       buildCrawlState(buildResult.venues,startAt,center,orderMode,usedDistance);
