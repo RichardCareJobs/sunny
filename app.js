@@ -31,6 +31,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const DEBUG_PERF = false;
   const OUTDOOR_ONLY = true;
   const DEV_PLACES_LOGGING = DEBUG_PLACES || ["localhost","127.0.0.1",""].includes(window.location.hostname);
+  const DEV_CRAWL_LOGGING = DEV_PLACES_LOGGING;
 
   let map;
   let markersLayer = [];
@@ -79,6 +80,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let crawlListPanel = null;
   let crawlAddPanel = null;
   let crawlNotifications = new Map();
+  let crawlBuildRequestId = 0;
+  let isCrawlBuildInProgress = false;
   let placesService = null;
   let autocompleteService = null;
   let activeSearchId = 0;
@@ -89,6 +92,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/marker.png";
   let markerIcon = null;
   const viewportCache = new Map();
+  const crawlVenueCache = new Map();
 
   // Helpers
   function setupHeaderMenu(){
@@ -147,11 +151,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const lng=roundToGrid(center.lng(),VIEWPORT_CACHE_GRID_DEG);
     return `${lat.toFixed(3)}:${lng.toFixed(3)}:z${zoom}:${getFilterHash()}`;
   }
+  function getCrawlVenueCacheKey(center){
+    if(!center||typeof center.lat!=="number"||typeof center.lng!=="number") return "";
+    const lat=roundToGrid(center.lat,VIEWPORT_CACHE_GRID_DEG);
+    const lng=roundToGrid(center.lng,VIEWPORT_CACHE_GRID_DEG);
+    return `crawl:${lat.toFixed(3)}:${lng.toFixed(3)}:${getFilterHash()}`;
+  }
   function getViewportCacheEntry(key){
     return viewportCache.get(key) || null;
   }
   function setViewportCacheEntry(key,data){
     viewportCache.set(key,{ data, ts: Date.now() });
+  }
+  function getCrawlVenueCacheEntry(key){
+    return crawlVenueCache.get(key) || null;
+  }
+  function setCrawlVenueCacheEntry(key,data){
+    crawlVenueCache.set(key,{ data, ts: Date.now() });
   }
   function throwIfAborted(signal){
     if(signal?.aborted){
@@ -1124,6 +1140,210 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     return finalPlaces;
   }
+
+  async function fetchPlacesByTypeForCrawl({ request, type, keyword, requestId }){
+    if(!placesService) return [];
+    if(requestId!==crawlBuildRequestId) return [];
+    const collected=[];
+    const scopedRequest={ ...request, type, ...(keyword ? { keyword } : {}) };
+    return new Promise((resolve)=>{
+      let pagesFetched=0;
+      let resolved=false;
+      const handlePage=(results,status,pagination)=>{
+        if(requestId!==crawlBuildRequestId){
+          if(!resolved){ resolved=true; resolve([]); }
+          return;
+        }
+        if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
+          collected.push(...results);
+        }
+        pagesFetched+=1;
+        if(pagination&&pagination.hasNextPage&&pagesFetched<MAX_PAGES_PER_PASS){
+          setTimeout(()=>pagination.nextPage(),200);
+        } else if(!resolved){
+          resolved=true;
+          resolve(collected);
+        }
+      };
+      placesService.nearbySearch(scopedRequest,(results,status,pagination)=>{
+        handlePage(results,status,pagination);
+      });
+    });
+  }
+
+  async function fetchPlacesByTextForCrawl({ request, query, requestId }){
+    if(!placesService) return [];
+    if(requestId!==crawlBuildRequestId) return [];
+    const collected=[];
+    const scopedRequest={ ...request, query };
+    return new Promise((resolve)=>{
+      let pagesFetched=0;
+      let resolved=false;
+      const handlePage=(results,status,pagination)=>{
+        if(requestId!==crawlBuildRequestId){
+          if(!resolved){ resolved=true; resolve([]); }
+          return;
+        }
+        if(status===google.maps.places.PlacesServiceStatus.OK&&Array.isArray(results)){
+          collected.push(...results);
+        }
+        pagesFetched+=1;
+        if(pagination&&pagination.hasNextPage&&pagesFetched<MAX_PAGES_PER_PASS){
+          setTimeout(()=>pagination.nextPage(),200);
+        } else if(!resolved){
+          resolved=true;
+          resolve(collected);
+        }
+      };
+      placesService.textSearch(scopedRequest,(results,status,pagination)=>{
+        handlePage(results,status,pagination);
+      });
+    });
+  }
+
+  async function fetchPlacesForCrawlCenter(center,requestId){
+    const radiusMeters=Math.min(
+      PLACES_QUERY_RADIUS_MAX_M,
+      Math.max(PLACES_QUERY_RADIUS_MIN_M,DEFAULT_CITY_RADIUS_M)
+    );
+    const centerLocation={ lat: center.lat, lng: center.lng };
+    const distanceRequest={ location: centerLocation, rankBy: google.maps.places.RankBy.DISTANCE };
+    const textBaseRequest={ location: centerLocation, radius: radiusMeters };
+    const includeCafes=getIncludeCafes();
+    const responses=[];
+    for(const type of PRIMARY_PUB_TYPES){
+      if(requestId!==crawlBuildRequestId) return [];
+      const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
+      responses.push({ results, outdoor: false, label: type, pass: "primary" });
+    }
+    for(const type of SECONDARY_PUB_TYPES){
+      if(requestId!==crawlBuildRequestId) return [];
+      const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
+      responses.push({ results, outdoor: false, label: type, pass: "secondary-pub" });
+    }
+    const outdoorPasses=[
+      { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
+      { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
+    ];
+    if(includeCafes){
+      outdoorPasses.push({ type: "cafe", keyword: "alfresco", label: "cafe+alfresco" });
+    }
+    for(const pass of outdoorPasses){
+      if(requestId!==crawlBuildRequestId) return [];
+      const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: pass.type, keyword: pass.keyword, requestId });
+      responses.push({ results, outdoor: true, label: pass.label });
+    }
+    const clubQueries=["bowling club","bowls club","bowlo","sports club"];
+    const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
+    const clubSanityCheck=(place)=>{
+      const name=(place?.name||"").toLowerCase();
+      return clubNameHints.some(hint=>name.includes(hint));
+    };
+    for(const query of clubQueries){
+      if(requestId!==crawlBuildRequestId) return [];
+      const results=await fetchPlacesByTextForCrawl({ request: textBaseRequest, query, requestId });
+      const saneResults=results.filter(place=>clubSanityCheck(place));
+      responses.push({ results: saneResults, outdoor: true, label: `club+${query}`, clubLane: true });
+    }
+    const primaryCount=responses
+      .filter(entry=>entry.pass==="primary")
+      .reduce((sum,entry)=>sum+entry.results.length,0);
+    if(primaryCount<MIN_PRIMARY_RESULTS){
+      const expansionRequest={ ...textBaseRequest, radius: Math.min(PLACES_QUERY_RADIUS_MAX_M, radiusMeters+RADIUS_EXPANSION_STEP_M) };
+      for(const type of SECONDARY_FOOD_TYPES){
+        if(requestId!==crawlBuildRequestId) return [];
+        const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
+        responses.push({ results, outdoor: false, label: `fallback-${type}` });
+      }
+      if(includeCafes){
+        if(requestId!==crawlBuildRequestId) return [];
+        const cafeResults=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: "cafe", requestId });
+        responses.push({ results: cafeResults, outdoor: false, label: "fallback-cafe" });
+      }
+      const fallbackQueries=["pub", "bar"];
+      for(const query of fallbackQueries){
+        if(requestId!==crawlBuildRequestId) return [];
+        const results=await fetchPlacesByTextForCrawl({ request: expansionRequest, query, requestId });
+        responses.push({ results, outdoor: false, label: `fallback-text-${query}` });
+      }
+    }
+    const merged=[];
+    const seen=new Set();
+    const mergedById=new Map();
+    responses.forEach(entry=>{
+      entry.results.forEach(place=>{
+        if(place&&place.place_id&&!seen.has(place.place_id)){
+          seen.add(place.place_id);
+          if(entry.outdoor) place.outdoorLikely=true;
+          if(entry.clubLane){
+            place.clubLane=true;
+            place.primaryCategoryOverride="Club";
+          }
+          merged.push(place);
+          mergedById.set(place.place_id,place);
+        } else if(place&&place.place_id&&entry.outdoor){
+          const existing=mergedById.get(place.place_id);
+          if(existing) existing.outdoorLikely=true;
+          if(existing&&entry.clubLane){
+            existing.clubLane=true;
+            existing.primaryCategoryOverride="Club";
+          }
+        }
+      });
+    });
+    const allowTypes=["bar","pub","restaurant","night_club",...(includeCafes?["cafe"]:[])];
+    const excludeTypes=[
+      "fast_food_restaurant",
+      "convenience_store","gas_station","supermarket","grocery_or_supermarket",
+      "pharmacy","drugstore","department_store","shopping_mall",
+      "meal_delivery","meal_takeaway"
+    ];
+    const nameExclusions=[
+      "zambrero","mcdonald","kfc","subway","domino","pizza hut","hungry jack","guzman","gyg","taco bell",
+      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo"
+    ];
+    const allowFiltered=merged.filter(place=>{
+      const types=place?.types||[];
+      return place?.clubLane ? true : types.some(type=>allowTypes.includes(type));
+    });
+    const excludeFiltered=allowFiltered.filter(place=>{
+      const types=place?.types||[];
+      return !types.some(type=>excludeTypes.includes(type));
+    });
+    const nameFiltered=excludeFiltered.filter(place=>{
+      const name=(place?.name||"").toLowerCase();
+      const hit=nameExclusions.find(term=>name.includes(term));
+      return !hit;
+    });
+    const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place));
+    const outdoorFiltered=cafeFiltered.filter(place=>{
+      const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
+      place.outdoorLikely=outdoorLikely;
+      return OUTDOOR_ONLY ? outdoorLikely : true;
+    });
+    const compositionAdjusted=enforcePubFirstComposition(outdoorFiltered,{ includeCafes });
+    const finalPlaces=compositionAdjusted.slice(0,Math.max(MIN_TOTAL_RESULTS,compositionAdjusted.length));
+    if(DEBUG_FILTERS||DEV_PLACES_LOGGING){
+      const pubCount=finalPlaces.filter(isPubBarPlace).length;
+      console.log(`[Places] final crawl composition pubs/bars ${pubCount}/${finalPlaces.length}`);
+    }
+    return finalPlaces;
+  }
+
+  async function fetchCrawlVenuesForCenter(center,requestId){
+    if(requestId!==crawlBuildRequestId) return [];
+    const cacheKey=getCrawlVenueCacheKey(center);
+    const cachedEntry=cacheKey ? getCrawlVenueCacheEntry(cacheKey) : null;
+    if(cachedEntry && Date.now()-cachedEntry.ts<=VIEWPORT_CACHE_TTL_MS){
+      return filterGloballyExcludedVenues(cachedEntry.data,"crawl-cache");
+    }
+    const places=await fetchPlacesForCrawlCenter(center,requestId);
+    if(requestId!==crawlBuildRequestId) return [];
+    const normalized=places.map(normalizePlace).filter(Boolean);
+    const filtered=filterGloballyExcludedVenues(normalized,"crawl-fetch");
+    if(cacheKey) setCrawlVenueCacheEntry(cacheKey,filtered);
+    return filtered;
+  }
   function fetchVenueDetails(venue){
     if(!placesService||!venue||!venue.id) return;
     const existing=allVenues[venue.id];
@@ -1318,8 +1538,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return getMapCenter();
   }
 
-  function chooseCrawlVenues(origin,count=4){
-    const venues=Object.values(allVenues).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number"&&!isGloballyExcludedVenue(v));
+  function chooseCrawlVenuesFromList(list,origin,count=4){
+    const venues=(Array.isArray(list)?list:[]).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number"&&!isGloballyExcludedVenue(v));
     if(venues.length===0) return [];
     return venues
       .map(v=>({ venue:v, distance:haversine(origin.lat,origin.lng,v.lat,v.lng) }))
@@ -1328,9 +1548,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       .slice(0,count);
   }
 
-  function generateCrawlVenues(origin,count,startAt,orderMode,{ refresh=false, currentVenueIds=[] }={}){
-    const candidates=chooseCrawlVenues(origin,Math.max(count,Math.min(MAX_CRAWL_VENUES,refresh ? count*3 : count)));
-    if(!candidates.length) return [];
+  function chooseCrawlVenues(origin,count=4){
+    return chooseCrawlVenuesFromList(Object.values(allVenues),origin,count);
+  }
+
+  function generateCrawlVenuesFromList(list,origin,count,startAt,orderMode,{ refresh=false, currentVenueIds=[] }={}){
+    const candidates=chooseCrawlVenuesFromList(list,origin,Math.max(count,Math.min(MAX_CRAWL_VENUES,refresh ? count*3 : count)));
+    if(!candidates.length) return { ok:false, reason:"NO_VENUES", venues: [] };
     let selectionPool=candidates;
     if(refresh&&candidates.length>count){
       const currentSet=new Set(currentVenueIds||[]);
@@ -1343,7 +1567,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     // Enforce unique addresses so a crawl never repeats a location.
     const uniqueSelected=selectUniqueAddressVenues(selectionPool,count);
+    if(uniqueSelected.length<count){
+      return { ok:false, reason:"NOT_ENOUGH_VENUES", venues: uniqueSelected };
+    }
     return orderVenues(uniqueSelected,origin,orderMode,startAt);
+  }
+
+  function generateCrawlVenues(origin,count,startAt,orderMode,options){
+    return generateCrawlVenuesFromList(Object.values(allVenues),origin,count,startAt,orderMode,options);
   }
 
   function buildCrawlState(venues,startAt,originInfo=null,orderMode="location"){
@@ -1396,13 +1627,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         candidates.push({ venue, index, distance });
       }
     });
-    const pool=candidates.length
-      ? candidates
-      : remaining.map((venue,index)=>({
-        venue,
-        index,
-        distance:haversine(current.lat,current.lng,venue.lat,venue.lng)
-      }));
+    if(!candidates.length) return null;
+    const pool=candidates;
     let bestIndex=pool[0]?.index ?? 0;
     let bestDistance=Infinity;
     let bestScore=-Infinity;
@@ -1422,11 +1648,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
     });
     const [next]=remaining.splice(bestIndex,1);
-    return next;
+    return { venue: next, distance: bestDistance };
   }
 
   function orderVenues(venues,origin,mode,startAt){
-    if(!Array.isArray(venues)) return [];
+    if(!Array.isArray(venues)) return { ok:false, reason:"NO_VENUES", venues: [] };
+    const maxStepKm=CRAWL_MAX_STEP_METERS/1000;
     if(mode==="sun"){
       const sorted=[...venues].sort((a,b)=>{
         const aScore=getSunScore(a,startAt);
@@ -1436,38 +1663,53 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         }
         return bScore - aScore;
       });
-      if(sorted.length<=1) return sorted;
+      if(sorted.length===0) return { ok:false, reason:"NO_VENUES", venues: [] };
+      let firstIndex=sorted.findIndex(v=>haversine(origin.lat,origin.lng,v.lat,v.lng)<=maxStepKm);
+      if(firstIndex===-1) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
+      if(firstIndex!==0){
+        const [firstCandidate]=sorted.splice(firstIndex,1);
+        sorted.unshift(firstCandidate);
+      }
       const ordered=[sorted.shift()];
+      let maxDistance=haversine(origin.lat,origin.lng,ordered[0].lat,ordered[0].lng);
+      if(maxDistance>maxStepKm) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
       let current=ordered[0];
       while(sorted.length){
         const next=pickNextCrawlVenue(sorted,current,mode,startAt);
-        ordered.push(next);
-        current=next;
+        if(!next) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
+        ordered.push(next.venue);
+        if(next.distance>maxDistance) maxDistance=next.distance;
+        current=next.venue;
       }
-      return ordered;
+      return { ok:true, venues: ordered, maxStepDistanceMeters: Math.round(maxDistance*1000) };
     }
     const remaining=[...venues];
     const ordered=[];
-    if(!remaining.length) return ordered;
+    if(!remaining.length) return { ok:false, reason:"NO_VENUES", venues: [] };
     let current=origin;
     let firstIndex=0;
-    let firstDistance=Infinity;
+    let nearestDistance=Infinity;
     remaining.forEach((venue,index)=>{
       const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
-      if(distance<firstDistance){
-        firstDistance=distance;
+      if(distance<nearestDistance){
+        nearestDistance=distance;
         firstIndex=index;
       }
     });
     const [first]=remaining.splice(firstIndex,1);
+    const firstStepDistance=haversine(current.lat,current.lng,first.lat,first.lng);
+    if(firstStepDistance>maxStepKm) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
     ordered.push(first);
     current=first;
+    let maxDistance=firstStepDistance;
     while(remaining.length){
       const next=pickNextCrawlVenue(remaining,current,mode,startAt);
-      ordered.push(next);
-      current=next;
+      if(!next) return { ok:false, reason:"NOT_ENOUGH_VENUES_WITHIN_DISTANCE", venues: [] };
+      ordered.push(next.venue);
+      if(next.distance>maxDistance) maxDistance=next.distance;
+      current=next.venue;
     }
-    return ordered;
+    return { ok:true, venues: ordered, maxStepDistanceMeters: Math.round(maxDistance*1000) };
   }
 
   function clearCrawlNotifications(){
@@ -2478,9 +2720,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const orderMode=crawlState.orderMode || "location";
     const startAt=crawlState.startAt instanceof Date ? crawlState.startAt : new Date();
     const currentVenueIds=crawlState.venues.map(v=>v.id);
-    const nextVenues=generateCrawlVenues(origin,venueCount,startAt,orderMode,{ refresh:true, currentVenueIds });
-    if(!nextVenues.length) return;
-    buildCrawlState(nextVenues,startAt,origin,orderMode);
+    const refreshResult=generateCrawlVenues(origin,venueCount,startAt,orderMode,{ refresh:true, currentVenueIds });
+    if(!refreshResult.ok){
+      alert(`Couldn’t build a crawl within ${formatDistanceKm(CRAWL_MAX_STEP_METERS/1000)} between stops. Try increasing the distance limit or reducing number of stops.`);
+      return;
+    }
+    buildCrawlState(refreshResult.venues,startAt,origin,orderMode);
     if(isCrawlMode){
       renderCrawlMarkers();
       scheduleCrawlFit("refresh");
@@ -2726,6 +2971,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     let suggestionTimer=null;
     let selectedOption=null;
     let orderMode="location";
+    let isBusy=false;
     const STREET_TOKEN_REGEX=/\b(st|street|rd|road|ave|avenue|ln|lane|dr|drive|ct|court|cct|circuit|pde|parade|cres|crescent|pl|place|blvd|boulevard|hwy|highway|tce|terrace)\b/i;
     const UNIT_TOKEN_REGEX=/\b(unit|apt|apartment|suite|level|lvl)\b/i;
     const LEADING_STREET_NUMBER_REGEX=/^\s*\d{1,6}\s+\S+/;
@@ -2736,6 +2982,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     function setStatus(message,type=""){
       statusEl.textContent=message||"";
       statusEl.className=`crawl-builder__status ${type}`.trim();
+    }
+    function updateInputDisabled(){
+      input.disabled=isBusy || selectedOption!=="around";
+    }
+    function setBuilderBusy(busy,requestId=null){
+      if(requestId!=null && requestId!==crawlBuildRequestId) return;
+      isBusy=busy;
+      optionButtons.forEach(btn=>btn.disabled=busy);
+      startButtons.forEach(btn=>{
+        btn.disabled=busy;
+        btn.classList.toggle("is-loading",busy);
+      });
+      timeInput.disabled=busy;
+      updateInputDisabled();
     }
     function renderSuggestions(list){
       if(!suggestionsEl) return;
@@ -2822,7 +3082,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     function setSelectedOption(option){
       selectedOption=option;
       optionButtons.forEach(btn=>btn.classList.toggle("is-selected",btn.dataset.option===option));
-      input.disabled=option!=="around";
+      updateInputDisabled();
       if(option==="around") input.focus();
       startSection.classList.remove("hidden");
     }
@@ -2856,7 +3116,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
 
     startButtons.forEach(btn=>{
-      btn.addEventListener("click",()=>{
+      btn.addEventListener("click",async()=>{
         if(!selectedOption){
           setStatus("Choose where you'd like to crawl first.","error");
           return;
@@ -2870,14 +3130,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         }
         timeInput.classList.add("hidden");
         const startAt=new Date();
-        buildCrawlFromBuilder(selectedOption,startAt);
+        await buildCrawlFromBuilder(selectedOption,startAt);
       });
     });
 
-    timeInput.addEventListener("change",()=>{
+    timeInput.addEventListener("change",async()=>{
       if(!selectedOption) return;
       const startAt=buildStartDateFromInput(timeInput.value);
-      buildCrawlFromBuilder(selectedOption,startAt);
+      await buildCrawlFromBuilder(selectedOption,startAt);
     });
 
     input.addEventListener("input",()=>{
@@ -2911,6 +3171,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       timeInput,
       statusEl,
       input,
+      setBusy: setBuilderBusy,
       locationOverride:null,
       get orderMode(){ return orderMode; },
       reset(){
@@ -2918,7 +3179,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         optionButtons.forEach(btn=>btn.classList.remove("is-selected","is-loading"));
         const nearbyButton=container.querySelector('.crawl-option[data-option="nearby"]');
         nearbyButton?.classList.add("is-selected");
-        input.disabled=true;
+        setBuilderBusy(false);
         crawlBuilder.locationOverride=null;
         if(suggestionsEl) suggestionsEl.innerHTML="";
         setOrderMode("location");
@@ -2937,29 +3198,124 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     builder.reset();
   }
 
-  function buildCrawlFromBuilder(option,startAt){
-    if(!option) return;
-    let origin=getCrawlOrigin();
-    if(option==="around"){
-      if(!crawlBuilder?.locationOverride){
-        if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="Choose a location from the list first.";
+  async function buildCrawlFromBuilder(option,startAt){
+    if(!option||isCrawlBuildInProgress) return;
+    const requestId=++crawlBuildRequestId;
+    isCrawlBuildInProgress=true;
+    crawlBuilder?.setBusy(true,requestId);
+    const deviceLocation=userLocation ? { ...userLocation } : null;
+    const selectedAreaCenter=option==="around" ? crawlBuilder?.locationOverride : null;
+    const logBuild=(payload)=>{
+      if(!DEV_CRAWL_LOGGING) return;
+      console.log("[Crawl] build",payload);
+    };
+    const resolveCenter=async()=>{
+      if(option==="around"){
+        if(!crawlBuilder?.locationOverride) return null;
+        const override=crawlBuilder.locationOverride;
+        if(typeof override.lat==="number"&&typeof override.lng==="number") return override;
+        if(override.placeId&&placesService){
+          const details=await new Promise(resolve=>{
+            placesService.getDetails({
+              placeId: override.placeId,
+              fields: ["geometry","formatted_address","name"]
+            },(place,status)=>{
+              if(status!==google.maps.places.PlacesServiceStatus.OK||!place?.geometry?.location){
+                return resolve(null);
+              }
+              const location=place.geometry.location;
+              resolve({
+                lat: location.lat(),
+                lng: location.lng(),
+                label: place.formatted_address||place.name||override.label||"",
+                bounds: place.geometry.viewport || null,
+                placeId: override.placeId
+              });
+            });
+          });
+          if(requestId!==crawlBuildRequestId) return null;
+          if(details){
+            crawlBuilder.locationOverride={ ...override, ...details };
+          }
+          return details;
+        }
+        return null;
+      }
+      return getCrawlOrigin();
+    };
+    try{
+      const center=await resolveCenter();
+      if(requestId!==crawlBuildRequestId) return;
+      if(!center){
+        if(crawlBuilder?.statusEl){
+          crawlBuilder.statusEl.textContent="Choose a location from the list first.";
+          crawlBuilder.statusEl.className="crawl-builder__status error";
+        }
         return;
       }
-      origin=crawlBuilder.locationOverride;
+      if(crawlBuilder?.statusEl){
+        crawlBuilder.statusEl.textContent="Loading venues…";
+        crawlBuilder.statusEl.className="crawl-builder__status";
+      }
+      const venues=await fetchCrawlVenuesForCenter(center,requestId);
+      if(requestId!==crawlBuildRequestId) return;
+      if(venues.length===0){
+        if(crawlBuilder?.statusEl){
+          crawlBuilder.statusEl.textContent="No venues found yet. Try moving the map.";
+          crawlBuilder.statusEl.className="crawl-builder__status error";
+        }
+        logBuild({
+          requestId,
+          deviceLocation,
+          selectedAreaCenter,
+          centerUsedForCrawl:center,
+          venueCountUsed: venues.length,
+          maxStepDistanceMeters: CRAWL_MAX_STEP_METERS,
+          failureReason: "NO_VENUES"
+        });
+        return;
+      }
+      const orderMode=crawlBuilder?.orderMode || "location";
+      const buildResult=generateCrawlVenuesFromList(venues,center,4,startAt,orderMode);
+      if(requestId!==crawlBuildRequestId) return;
+      if(!buildResult.ok){
+        const distanceLimitKm=formatDistanceKm(CRAWL_MAX_STEP_METERS/1000);
+        if(crawlBuilder?.statusEl){
+          crawlBuilder.statusEl.textContent=`Couldn’t build a crawl within ${distanceLimitKm} between stops for this area. Try increasing the distance limit or reducing number of stops.`;
+          crawlBuilder.statusEl.className="crawl-builder__status error";
+        }
+        logBuild({
+          requestId,
+          deviceLocation,
+          selectedAreaCenter,
+          centerUsedForCrawl:center,
+          venueCountUsed: venues.length,
+          maxStepDistanceMeters: CRAWL_MAX_STEP_METERS,
+          failureReason: buildResult.reason
+        });
+        return;
+      }
+      logBuild({
+        requestId,
+        deviceLocation,
+        selectedAreaCenter,
+        centerUsedForCrawl:center,
+        venueCountUsed: venues.length,
+        maxStepDistanceMeters: CRAWL_MAX_STEP_METERS,
+        maxStepDistanceUsedMeters: buildResult.maxStepDistanceMeters
+      });
+      buildCrawlState(buildResult.venues,startAt,center,orderMode);
+      hasAutoFitCrawlOnLoad=false;
+      enterCrawlMode({ autoFit:true });
+      updateCrawlList();
+      refreshCrawlReminders();
+      if(crawlBuilder?.container) crawlBuilder.container.classList.add("hidden");
+    } finally {
+      if(requestId===crawlBuildRequestId){
+        isCrawlBuildInProgress=false;
+        crawlBuilder?.setBusy(false,requestId);
+      }
     }
-    const venues=chooseCrawlVenues(origin,4);
-    if(venues.length===0){
-      if(crawlBuilder?.statusEl) crawlBuilder.statusEl.textContent="No venues found yet. Try moving the map.";
-      return;
-    }
-    const orderMode=crawlBuilder?.orderMode || "location";
-    const orderedVenues=generateCrawlVenues(origin,4,startAt,orderMode);
-    buildCrawlState(orderedVenues,startAt,origin,orderMode);
-    hasAutoFitCrawlOnLoad=false;
-    enterCrawlMode({ autoFit:true });
-    updateCrawlList();
-    refreshCrawlReminders();
-    if(crawlBuilder?.container) crawlBuilder.container.classList.add("hidden");
   }
 
   function ensureCrawlFab(){
