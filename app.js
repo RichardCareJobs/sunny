@@ -639,6 +639,53 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       source: "google"
     };
   }
+  // Rule: VIP Lounge sub-venues are globally excluded from Sunny.
+  function isGloballyExcludedVenue(venue){
+    const name=String(venue?.name||"").trim().toLowerCase();
+    return name.includes("vip lounge");
+  }
+  function normalizeAddressKey(venue){
+    const address=String(
+      venue?.address ||
+      venue?.formatted_address ||
+      venue?.vicinity ||
+      venue?.tags?.formatted_address ||
+      venue?.tags?.vicinity ||
+      ""
+    ).trim();
+    if(address){
+      return address.toLowerCase().replace(/\s+/g," ");
+    }
+    const lat=venue?.lat;
+    const lng=venue?.lng;
+    if(Number.isFinite(lat)&&Number.isFinite(lng)){
+      return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+    }
+    return String(venue?.id||"").trim();
+  }
+  function filterGloballyExcludedVenues(list,label="venues"){
+    const venues=Array.isArray(list)?list:[];
+    const filtered=venues.filter(v=>!isGloballyExcludedVenue(v));
+    if((DEBUG_FILTERS||DEV_PLACES_LOGGING)&&filtered.length!==venues.length){
+      console.log(`[Venues] excluded ${venues.length-filtered.length} VIP Lounge entries from ${label}.`);
+    }
+    return filtered;
+  }
+  function selectUniqueAddressVenues(list,count){
+    const selected=[];
+    const used=new Set();
+    list.forEach((venue)=>{
+      if(selected.length>=count) return;
+      const key=normalizeAddressKey(venue);
+      if(!key||used.has(key)) return;
+      used.add(key);
+      selected.push(venue);
+    });
+    if((DEBUG_FILTERS||DEV_PLACES_LOGGING)&&selected.length<Math.min(count,list.length)){
+      console.log(`[Crawl] skipped ${Math.min(count,list.length)-selected.length} venues with duplicate addresses.`);
+    }
+    return selected;
+  }
   function getGoogleMapsApiKey(){
     const script=[...document.querySelectorAll('script[src*="maps.googleapis.com/maps/api/js"]')].find(Boolean);
     if(!script?.src) return "";
@@ -1162,7 +1209,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(t(tags["contact:status"])==="closed") return true;
     return false;
   }
-  function mergeVenues(list){ let added=0; for(const v of list){ if(!v) continue; if(!allVenues[v.id]){ allVenues[v.id]=v; added++; } else { allVenues[v.id]={...allVenues[v.id],...v}; } } if(added) saveLocal(VENUE_CACHE_KEY,allVenues); }
+  function mergeVenues(list){
+    let added=0;
+    for(const v of list){
+      if(!v||isGloballyExcludedVenue(v)) continue;
+      if(!allVenues[v.id]){
+        allVenues[v.id]=v;
+        added++;
+      } else {
+        allVenues[v.id]={...allVenues[v.id],...v};
+      }
+    }
+    if(added) saveLocal(VENUE_CACHE_KEY,allVenues);
+  }
 
   function clearMarkersLayer(){
     clearMarkerClusterer();
@@ -1260,7 +1319,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function chooseCrawlVenues(origin,count=4){
-    const venues=Object.values(allVenues).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number");
+    const venues=Object.values(allVenues).filter(v=>v&&typeof v.lat==="number"&&typeof v.lng==="number"&&!isGloballyExcludedVenue(v));
     if(venues.length===0) return [];
     return venues
       .map(v=>({ venue:v, distance:haversine(origin.lat,origin.lng,v.lat,v.lng) }))
@@ -1272,28 +1331,35 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function generateCrawlVenues(origin,count,startAt,orderMode,{ refresh=false, currentVenueIds=[] }={}){
     const candidates=chooseCrawlVenues(origin,Math.max(count,Math.min(MAX_CRAWL_VENUES,refresh ? count*3 : count)));
     if(!candidates.length) return [];
-    let selected=candidates.slice(0,count);
+    let selectionPool=candidates;
     if(refresh&&candidates.length>count){
       const currentSet=new Set(currentVenueIds||[]);
       const alternates=candidates.filter(v=>!currentSet.has(v.id));
       const pool=alternates.length>=count ? alternates : candidates;
       const maxStart=Math.max(0,pool.length-count);
       const startIndex=maxStart>0 ? Math.floor(Math.random()*(maxStart+1)) : 0;
-      selected=pool.slice(startIndex,startIndex+count);
-      if(selected.length<count){
-        const used=new Set(selected.map(v=>v.id));
-        for(const venue of pool){
-          if(selected.length>=count) break;
-          if(used.has(venue.id)) continue;
-          selected.push(venue);
-        }
-      }
+      const orderedPool=pool.slice(startIndex).concat(pool.slice(0,startIndex));
+      selectionPool=orderedPool;
     }
-    return orderVenues(selected,origin,orderMode,startAt);
+    // Enforce unique addresses so a crawl never repeats a location.
+    const uniqueSelected=selectUniqueAddressVenues(selectionPool,count);
+    return orderVenues(uniqueSelected,origin,orderMode,startAt);
   }
 
   function buildCrawlState(venues,startAt,originInfo=null,orderMode="location"){
-    const normalized=venues.map((venue,index)=>({
+    const filtered=Array.isArray(venues) ? venues.filter(v=>v&&!isGloballyExcludedVenue(v)) : [];
+    const uniqueVenues=[];
+    const usedAddresses=new Set();
+    filtered.forEach((venue)=>{
+      const key=normalizeAddressKey(venue);
+      if(!key||usedAddresses.has(key)) return;
+      usedAddresses.add(key);
+      uniqueVenues.push(venue);
+    });
+    if((DEBUG_FILTERS||DEV_PLACES_LOGGING)&&uniqueVenues.length!==filtered.length){
+      console.log(`[Crawl] removed ${filtered.length-uniqueVenues.length} duplicate-address venues from crawl.`);
+    }
+    const normalized=uniqueVenues.map((venue,index)=>({
       ...venue,
       crawlIndex:index,
       address: venue.address || formatAddress(venue.tags||{}),
@@ -1468,7 +1534,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         hangMinutes:Number(v.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES,
         remind:false
       }));
-      crawlState={ venues, startAt, origin, orderMode };
+      const filtered=venues.filter(v=>v&&!isGloballyExcludedVenue(v));
+      const uniqueVenues=selectUniqueAddressVenues(filtered,filtered.length);
+      crawlState={ venues: uniqueVenues, startAt, origin, orderMode };
       updateCrawlSchedule();
       hasAutoFitCrawlOnLoad=false;
       enterCrawlMode({ autoFit:true });
@@ -1536,8 +1604,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const cacheStale=cachedEntry && cacheAge>VIEWPORT_CACHE_TTL_MS && cacheAge<=VIEWPORT_CACHE_STALE_MS;
     if(cacheFresh && Array.isArray(cachedEntry.data)){
       if(requestId!==activeRequestId) return;
-      if(cachedEntry.data.length){
-        mergeVenues(cachedEntry.data);
+      const cachedFiltered=filterGloballyExcludedVenues(cachedEntry.data,"cache");
+      if(cachedFiltered.length){
+        mergeVenues(cachedFiltered);
         renderMarkers({ perfStart, cacheStatus: "hit" });
         hideVenueStatus();
       } else {
@@ -1547,8 +1616,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     if(cacheStale && Array.isArray(cachedEntry.data)){
-      if(cachedEntry.data.length){
-        mergeVenues(cachedEntry.data);
+      const cachedFiltered=filterGloballyExcludedVenues(cachedEntry.data,"cache");
+      if(cachedFiltered.length){
+        mergeVenues(cachedFiltered);
         renderMarkers({ cacheStatus: "stale" });
         hideVenueStatus();
       } else {
@@ -1565,9 +1635,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         return;
       }
       const normalized=places.map(normalizePlace).filter(Boolean);
-      if(cacheKey) setViewportCacheEntry(cacheKey,normalized);
-      if(normalized.length){
-        mergeVenues(normalized);
+      const filtered=filterGloballyExcludedVenues(normalized,"fetch");
+      if(cacheKey) setViewportCacheEntry(cacheKey,filtered);
+      if(filtered.length){
+        mergeVenues(filtered);
         renderMarkers({ perfStart, cacheStatus: cacheStale ? "stale-refresh" : "miss" });
         hideVenueStatus();
       } else {
@@ -1886,6 +1957,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     else el.classList.add("chip-muted");
   }
   function showVenueCard(v){
+    if(isGloballyExcludedVenue(v)){
+      hideVenueCard();
+      return;
+    }
     const card=ensureDetailCard();
     openVenueId=v.id;
     card.currentVenue=v;
@@ -2045,6 +2120,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const visibleVenues=[];
     Object.values(allVenues).forEach(v=>{
       if(!v||typeof v.lat!=="number"||typeof v.lng!=="number") return;
+      if(isGloballyExcludedVenue(v)) return;
       if(!b.contains(new google.maps.LatLng(v.lat,v.lng))) return;
       visibleVenues.push(v);
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
@@ -2538,9 +2614,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     const existingIds=new Set(crawlState.venues.map(v=>v.id));
+    const existingAddressKeys=new Set(crawlState.venues.map(v=>normalizeAddressKey(v)).filter(Boolean));
     const matches=Object.values(allVenues)
       .filter(v=>v&&v.name&&v.name.toLowerCase().includes(term))
+      .filter(v=>!isGloballyExcludedVenue(v))
       .filter(v=>!existingIds.has(v.id))
+      .filter(v=>!existingAddressKeys.has(normalizeAddressKey(v)))
       .slice(0,10);
     if(matches.length===0){
       resultsEl.innerHTML=`<div class="crawl-add__empty">No matches found.</div>`;
@@ -2559,6 +2638,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       `;
       row.addEventListener("click",()=>{
         if(crawlState.venues.length>=MAX_CRAWL_VENUES) return;
+        if(existingAddressKeys.has(normalizeAddressKey(venue))) return;
         const nextVenue={
           ...venue,
           crawlIndex:crawlState.venues.length,
@@ -3014,7 +3094,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function boot(){
     requestUserLocationOnce();
     const cached=loadLocal(VENUE_CACHE_KEY);
-    if(cached&&typeof cached==="object") allVenues=cached;
+    if(cached&&typeof cached==="object"){
+      const filtered=filterGloballyExcludedVenues(Object.values(cached),"local cache");
+      allVenues=filtered.reduce((acc,venue)=>{
+        if(venue?.id) acc[venue.id]=venue;
+        return acc;
+      },{});
+    }
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
