@@ -10,7 +10,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
-  const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v1";
+  const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
   const TILE_CACHE_PREFIX = "sunny-pubs-google-tiles-v1:";
   const TILE_CACHE_TTL_MS = 1000 * 60 * 30;
 
@@ -52,6 +52,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let openVenueId = null;
   let isRenderingMarkers = false;
   let detailCard = null;
+  let imageViewerModal = null;
   let ratingCard = null;
   let venueStatusEl = null;
   let introTipEl = null;
@@ -586,6 +587,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hoursText: "",
       hasOutdoor: hasOutdoorHints(tags),
       photo: photoData,
+      photos: photoData?.photos||[],
       source: "google"
     };
   }
@@ -624,6 +626,21 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     return "";
   }
+  function normalizePlacePhotos(place,photos=[]){
+    const list=Array.isArray(photos)?photos:[];
+    return list.slice(0,10).map((photo,index)=>({
+      id: photo?.name || photo?.photo_reference || `${place?.place_id||"place"}-${index}`,
+      attribution: Array.isArray(photo?.html_attributions) ? photo.html_attributions : [],
+      caption: photo?.caption || "",
+      source: photo
+    }));
+  }
+  function getThumbnailUrl(photo,maxWidth=400){
+    return derivePhotoUrl(photo?.source||photo,maxWidth);
+  }
+  function getLargeUrl(photo,maxWidth=1200){
+    return derivePhotoUrl(photo?.source||photo,maxWidth);
+  }
   function hasOutdoorFeature(place){
     if(!place) return false;
     return ["TRUE","true",true,"yes","YES"].includes(place.outdoor_seating) ||
@@ -649,36 +666,39 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const placeId=place?.place_id;
     if(!placeId) return null;
     const cached=venuePhotoCache[placeId];
-    if(cached&&cached[mode]?.url){
-      return {
-        url: cached[mode].url,
-        selectedIndex: cached.selectedIndex,
-        photosCount: cached.photosCount,
-        mode,
-        strategy: cached.strategy||"cache"
-      };
+    if(cached&&Array.isArray(cached.photos)&&cached.photos.length){
+      const selectedIndex=Number.isInteger(cached.selectedIndex)?cached.selectedIndex:0;
+      const selectedPhoto=cached.photos[selectedIndex]||cached.photos[0];
+      const url=mode==="detail"?getLargeUrl(selectedPhoto,width):getThumbnailUrl(selectedPhoto,width);
+      if(url){
+        return {
+          url,
+          selectedIndex,
+          photosCount: cached.photos.length,
+          photos: cached.photos,
+          mode,
+          strategy: cached.strategy||"cache"
+        };
+      }
     }
-    const photos=Array.isArray(place?.photos) ? place.photos.slice(0,5) : [];
-    const pick=selectPlacePhoto(place,photos);
-    if(!pick.selectedPhoto) return null;
-    const url=derivePhotoUrl(pick.selectedPhoto,width);
+    const photos=normalizePlacePhotos(place,place?.photos);
+    const pick=selectPlacePhoto(place,photos.map(photo=>photo.source));
+    if(!photos.length||!pick.selectedPhoto) return null;
+    const selectedPhoto=photos[pick.selectedIndex]||photos[0];
+    const url=mode==="detail"?getLargeUrl(selectedPhoto,width):getThumbnailUrl(selectedPhoto,width);
     if(!url) return null;
     const next={
-      ...venuePhotoCache[placeId],
+      photos,
       selectedIndex: pick.selectedIndex,
-      photosCount: pick.photosCount,
       strategy: pick.strategy,
-      thumbnail: { url: mode==="thumbnail" ? url : (venuePhotoCache[placeId]?.thumbnail?.url||"") },
-      detail: { url: mode==="detail" ? url : (venuePhotoCache[placeId]?.detail?.url||"") }
+      photosCount: photos.length
     };
-    if(mode==="thumbnail") next.thumbnail={ url };
-    if(mode==="detail") next.detail={ url };
     venuePhotoCache[placeId]=next;
     saveLocal(VENUE_PHOTO_CACHE_KEY,venuePhotoCache);
     if(DEV_PLACES_LOGGING){
       console.log(`[PlacesPhoto] place_id=${placeId} photos=${pick.photosCount} selectedIndex=${pick.selectedIndex} strategy=${pick.strategy}`);
     }
-    return { url, selectedIndex: pick.selectedIndex, photosCount: pick.photosCount, mode, strategy: pick.strategy };
+    return { url, selectedIndex: pick.selectedIndex, photosCount: photos.length, photos, mode, strategy: pick.strategy };
   }
   function getRankByLabel(rankBy){
     if(!google?.maps?.places?.RankBy) return rankBy;
@@ -1018,7 +1038,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             hoursStatus,
             nextChangeText,
             hoursText,
-            photo: detailPhoto || venue.photo
+            photo: detailPhoto || venue.photo,
+            photos: detailPhoto?.photos || venue.photos || []
           };
           if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated};
           if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
@@ -1365,10 +1386,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           </div>
           <button class="venue-card__close" type="button" aria-label="Close details">×</button>
         </div>
-        <div class="venue-card__image-wrap">
-          <img class="venue-card__image hidden" alt="Venue photo" loading="lazy" decoding="async">
-          <div class="venue-card__image-fallback">No photo available</div>
-        </div>
+        <div class="venue-card__photo-strip hidden" aria-label="Venue photos"></div>
         <div class="venue-card__section-title">Current weather</div>
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
@@ -1482,8 +1500,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       weatherChip:container.querySelector("#venue-card-weather"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
-      imageEl:container.querySelector(".venue-card__image"),
-      imageFallbackEl:container.querySelector(".venue-card__image-fallback"),
+      photoStripEl:container.querySelector(".venue-card__photo-strip"),
       ratingDisplay:container.querySelector(".rating-display"),
       rateButton:rateButtons[0]||null,
       rateButtons,
@@ -1505,6 +1522,121 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     return detailCard;
   }
+  function ensureImageViewerModal(){
+    if(imageViewerModal) return imageViewerModal;
+    const container=document.createElement("div");
+    container.className="image-viewer hidden";
+    container.innerHTML=`
+      <div class="image-viewer__backdrop" data-close="true"></div>
+      <div class="image-viewer__card" role="dialog" aria-modal="true" aria-label="Venue photos viewer">
+        <button class="image-viewer__close" type="button" aria-label="Close image viewer">×</button>
+        <button class="image-viewer__arrow image-viewer__arrow--prev" type="button" aria-label="Previous photo">‹</button>
+        <img class="image-viewer__image" alt="Venue photo" loading="lazy" decoding="async">
+        <div class="image-viewer__placeholder hidden">Image unavailable</div>
+        <button class="image-viewer__arrow image-viewer__arrow--next" type="button" aria-label="Next photo">›</button>
+      </div>`;
+    document.body.appendChild(container);
+    const imageEl=container.querySelector(".image-viewer__image");
+    const placeholderEl=container.querySelector(".image-viewer__placeholder");
+    const prevBtn=container.querySelector(".image-viewer__arrow--prev");
+    const nextBtn=container.querySelector(".image-viewer__arrow--next");
+    let photos=[];
+    let index=0;
+    let touchStartX=0;
+    const render=()=>{
+      const total=photos.length;
+      if(!total) return;
+      const current=photos[index]||photos[0];
+      const url=getLargeUrl(current,1200)||getThumbnailUrl(current,400);
+      if(url){
+        imageEl.src=url;
+        imageEl.classList.remove("hidden");
+        placeholderEl.classList.add("hidden");
+      } else {
+        imageEl.removeAttribute("src");
+        imageEl.classList.add("hidden");
+        placeholderEl.classList.remove("hidden");
+      }
+      prevBtn.disabled=total<2;
+      nextBtn.disabled=total<2;
+    };
+    const close=()=>{
+      container.classList.add("hidden");
+      container.classList.remove("show");
+      imageEl.removeAttribute("src");
+    };
+    const move=(delta)=>{
+      if(photos.length<2) return;
+      index=(index+delta+photos.length)%photos.length;
+      render();
+    };
+    container.addEventListener("click",(event)=>{
+      if(event.target.dataset.close==="true") close();
+    });
+    container.querySelector(".image-viewer__close").addEventListener("click",close);
+    prevBtn.addEventListener("click",()=>move(-1));
+    nextBtn.addEventListener("click",()=>move(1));
+    imageEl.onerror=()=>{
+      imageEl.classList.add("hidden");
+      placeholderEl.classList.remove("hidden");
+    };
+    container.addEventListener("touchstart",(event)=>{ touchStartX=event.changedTouches?.[0]?.clientX||0; },{ passive:true });
+    container.addEventListener("touchend",(event)=>{
+      const endX=event.changedTouches?.[0]?.clientX||0;
+      const diff=endX-touchStartX;
+      if(Math.abs(diff)<35) return;
+      move(diff>0?-1:1);
+    },{ passive:true });
+    const onKeyDown=(event)=>{
+      if(container.classList.contains("hidden")) return;
+      if(event.key==="Escape") close();
+      if(event.key==="ArrowLeft") move(-1);
+      if(event.key==="ArrowRight") move(1);
+    };
+    document.addEventListener("keydown",onKeyDown);
+    imageViewerModal={ open(nextPhotos=[],initialIndex=0){ photos=Array.isArray(nextPhotos)?nextPhotos:[]; index=Math.max(0,Math.min(initialIndex,photos.length-1)); if(!photos.length) return; render(); container.classList.remove("hidden"); container.classList.add("show"); }, close };
+    return imageViewerModal;
+  }
+  function renderVenueThumbnails(card,venue){
+    const strip=card?.photoStripEl;
+    if(!strip) return;
+    const cachedPhotos=venue?.id&&Array.isArray(venuePhotoCache?.[venue.id]?.photos)?venuePhotoCache[venue.id].photos:[];
+    const photos=Array.isArray(venue?.photos)&&venue.photos.length?venue.photos:cachedPhotos;
+    strip.innerHTML="";
+    if(!photos.length){
+      strip.classList.add("hidden");
+      return;
+    }
+    const maxVisible=3;
+    const visible=photos.slice(0,maxVisible);
+    const hiddenCount=Math.max(0,photos.length-maxVisible);
+    visible.forEach((photo,index)=>{
+      const button=document.createElement("button");
+      button.type="button";
+      button.className="venue-thumb";
+      button.setAttribute("aria-label",`Open photo ${index+1} of ${photos.length}`);
+      const img=document.createElement("img");
+      img.className="venue-thumb__img";
+      img.loading="lazy";
+      img.decoding="async";
+      img.alt=`${venue?.name||"Venue"} photo ${index+1}`;
+      const url=getThumbnailUrl(photo,400);
+      if(url) img.src=url;
+      else button.classList.add("is-fallback");
+      img.onerror=()=>button.classList.add("is-fallback");
+      button.appendChild(img);
+      if(hiddenCount>0&&index===visible.length-1){
+        const overlay=document.createElement("span");
+        overlay.className="venue-thumb__more";
+        overlay.textContent=`+${hiddenCount}`;
+        button.appendChild(overlay);
+      }
+      button.addEventListener("click",()=>ensureImageViewerModal().open(photos,index));
+      strip.appendChild(button);
+    });
+    strip.classList.remove("hidden");
+  }
+
   function hideVenueCard(){
     if(!detailCard) return;
     if(detailCard.setFabOpen) detailCard.setFabOpen(false);
@@ -1594,22 +1726,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.noteEl.classList.add("hidden");
     }
 
-    const photoUrl=v?.photo?.url||"";
-    if(card.imageEl&&card.imageFallbackEl){
-      card.imageEl.onerror=()=>{
-        card.imageEl.classList.add("hidden");
-        card.imageFallbackEl.classList.remove("hidden");
-      };
-      if(photoUrl){
-        card.imageEl.src=photoUrl;
-        card.imageEl.classList.remove("hidden");
-        card.imageFallbackEl.classList.add("hidden");
-      } else {
-        card.imageEl.removeAttribute("src");
-        card.imageEl.classList.add("hidden");
-        card.imageFallbackEl.classList.remove("hidden");
-      }
-    }
+    renderVenueThumbnails(card,v);
 
     card.actions.directions.textContent="Google Maps";
     card.actions.directions.href=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}`;
