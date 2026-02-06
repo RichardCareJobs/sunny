@@ -2306,6 +2306,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     let suggestionTimer=null;
     let selectedOption=null;
     let orderMode="location";
+    const STREET_TOKEN_REGEX=/\b(st|street|rd|road|ave|avenue|ln|lane|dr|drive|ct|court|cct|circuit|pde|parade|cres|crescent|pl|place|blvd|boulevard|hwy|highway|tce|terrace)\b/i;
+    const UNIT_TOKEN_REGEX=/\b(unit|apt|apartment|suite|level|lvl)\b/i;
+    const LEADING_STREET_NUMBER_REGEX=/^\s*\d{1,6}\s+\S+/;
+    const POSTCODE_PREFIX_REGEX=/^\s*\d{4}(?:\b|\s)/;
+    const REGION_RESULT_TYPES=new Set(["postal_code","locality","sublocality","administrative_area_level_1","administrative_area_level_2","postal_town"]);
+    const ADDRESS_ONLY_TYPES=new Set(["street_address","premise","subpremise","route"]);
 
     function setStatus(message,type=""){
       statusEl.textContent=message||"";
@@ -2322,30 +2328,55 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         btn.textContent=item.label;
         btn.addEventListener("click",()=>{
           input.value=item.label;
-          crawlBuilder.locationOverride={ lat:item.lat, lng:item.lng, label:item.label };
+          crawlBuilder.locationOverride={ lat:item.lat, lng:item.lng, label:item.label, bounds:item.bounds || null, placeId:item.placeId || null };
           suggestionsEl.innerHTML="";
           setStatus("Location confirmed.","success");
-          if(map) panToLocation(item.lat,item.lng,13);
+          if(map&&item.bounds){
+            map.fitBounds(item.bounds);
+          } else if(map){
+            panToLocation(item.lat,item.lng,13);
+          }
         });
         suggestionsEl.appendChild(btn);
       });
     }
+    function isLikelyAddressQuery(query){
+      if(!query) return false;
+      return LEADING_STREET_NUMBER_REGEX.test(query)||STREET_TOKEN_REGEX.test(query)||UNIT_TOKEN_REGEX.test(query);
+    }
+    function isLikelyPostcodeQuery(query){
+      if(!query) return false;
+      return POSTCODE_PREFIX_REGEX.test(query);
+    }
+    function shouldIncludePrediction(prediction,allowAddressResults){
+      if(!prediction||!Array.isArray(prediction.types)||prediction.types.length===0) return false;
+      if(allowAddressResults) return true;
+      const types=prediction.types;
+      if(types.some(type=>ADDRESS_ONLY_TYPES.has(type))) return false;
+      if(types.some(type=>REGION_RESULT_TYPES.has(type))) return true;
+      return !types.includes("geocode");
+    }
     async function fetchSuggestions(query){
       if(!query||!autocompleteService||!placesService) return [];
+      const postcodeQuery=isLikelyPostcodeQuery(query);
+      const addressQuery=!postcodeQuery&&isLikelyAddressQuery(query);
+      const predictionTypes=addressQuery ? ["address"] : ["(regions)"];
       const predictions=await new Promise(resolve=>{
         autocompleteService.getPlacePredictions({
           input: query,
+          types: predictionTypes,
           componentRestrictions: { country: "au" }
         },(results,status)=>{
           if(status!==google.maps.places.PlacesServiceStatus.OK||!Array.isArray(results)) return resolve([]);
-          resolve(results.slice(0,5));
+          const filtered=results.filter(prediction=>shouldIncludePrediction(prediction,addressQuery));
+          resolve(filtered.slice(0,5));
         });
       });
       if(predictions.length===0) return [];
       const detailPromises=predictions.map(prediction=>new Promise(resolve=>{
         placesService.getDetails({
           placeId: prediction.place_id,
-          fields: ["geometry","formatted_address","name"]
+          fields: ["geometry","formatted_address","name","address_components"]
         },(place,status)=>{
           if(status!==google.maps.places.PlacesServiceStatus.OK||!place||!place.geometry){
             return resolve(null);
@@ -2354,7 +2385,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           const lat=location.lat();
           const lng=location.lng();
           const label=place.formatted_address||place.name||prediction.description;
-          resolve({ label, lat, lng });
+          resolve({
+            label,
+            lat,
+            lng,
+            bounds: place.geometry.viewport || null,
+            placeId: prediction.place_id,
+            addressComponents: place.address_components || []
+          });
         });
       }));
       const results=await Promise.all(detailPromises);
