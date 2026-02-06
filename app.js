@@ -62,6 +62,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const CRAWL_DEFAULT_HANG_MINUTES = 45;
   const CRAWL_TIME_STEP_MINUTES = 15;
   const MAX_CRAWL_VENUES = 12;
+  const CRAWL_MAX_STEP_METERS = 200;
 
   let crawlLayer = [];
   let crawlState = null;
@@ -1253,10 +1254,48 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return altitudeDeg;
   }
 
+  function pickNextCrawlVenue(remaining,current,mode,startAt){
+    const maxStepKm=CRAWL_MAX_STEP_METERS/1000;
+    const candidates=[];
+    remaining.forEach((venue,index)=>{
+      const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
+      if(distance<=maxStepKm){
+        candidates.push({ venue, index, distance });
+      }
+    });
+    const pool=candidates.length
+      ? candidates
+      : remaining.map((venue,index)=>({
+        venue,
+        index,
+        distance:haversine(current.lat,current.lng,venue.lat,venue.lng)
+      }));
+    let bestIndex=pool[0]?.index ?? 0;
+    let bestDistance=Infinity;
+    let bestScore=-Infinity;
+    pool.forEach((item)=>{
+      if(mode==="sun"){
+        const score=getSunScore(item.venue,startAt);
+        if(score>bestScore || (score===bestScore && item.distance<bestDistance)){
+          bestScore=score;
+          bestDistance=item.distance;
+          bestIndex=item.index;
+        }
+      }else{
+        if(item.distance<bestDistance){
+          bestDistance=item.distance;
+          bestIndex=item.index;
+        }
+      }
+    });
+    const [next]=remaining.splice(bestIndex,1);
+    return next;
+  }
+
   function orderVenues(venues,origin,mode,startAt){
     if(!Array.isArray(venues)) return [];
     if(mode==="sun"){
-      return [...venues].sort((a,b)=>{
+      const sorted=[...venues].sort((a,b)=>{
         const aScore=getSunScore(a,startAt);
         const bScore=getSunScore(b,startAt);
         if(aScore===bScore){
@@ -1264,21 +1303,34 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         }
         return bScore - aScore;
       });
+      if(sorted.length<=1) return sorted;
+      const ordered=[sorted.shift()];
+      let current=ordered[0];
+      while(sorted.length){
+        const next=pickNextCrawlVenue(sorted,current,mode,startAt);
+        ordered.push(next);
+        current=next;
+      }
+      return ordered;
     }
     const remaining=[...venues];
     const ordered=[];
+    if(!remaining.length) return ordered;
     let current=origin;
+    let firstIndex=0;
+    let firstDistance=Infinity;
+    remaining.forEach((venue,index)=>{
+      const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
+      if(distance<firstDistance){
+        firstDistance=distance;
+        firstIndex=index;
+      }
+    });
+    const [first]=remaining.splice(firstIndex,1);
+    ordered.push(first);
+    current=first;
     while(remaining.length){
-      let bestIndex=0;
-      let bestDistance=Infinity;
-      remaining.forEach((venue,index)=>{
-        const distance=haversine(current.lat,current.lng,venue.lat,venue.lng);
-        if(distance<bestDistance){
-          bestDistance=distance;
-          bestIndex=index;
-        }
-      });
-      const [next]=remaining.splice(bestIndex,1);
+      const next=pickNextCrawlVenue(remaining,current,mode,startAt);
       ordered.push(next);
       current=next;
     }
@@ -2142,7 +2194,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const container=document.createElement("div");
     container.className="crawl-controls hidden";
     container.innerHTML=`
-      <button class="crawl-control hidden" type="button" data-action="mode-toggle">View map</button>
+      <button class="crawl-control hidden" type="button" data-action="mode-toggle">Hide crawl</button>
       <button class="crawl-control crawl-control--icon hidden" type="button" data-action="refresh" aria-label="Refresh crawl venues">
         <span aria-hidden="true">↻</span>
       </button>
@@ -2188,8 +2240,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const showModeToggle=hasActiveCrawl;
     modeBtn?.classList.toggle("hidden",!showModeToggle);
     if(modeBtn){
-      modeBtn.textContent=isCrawlMode ? "View map" : "View crawl";
-      modeBtn.setAttribute("aria-label",isCrawlMode ? "View map" : "View crawl");
+      modeBtn.textContent=isCrawlMode ? "Hide crawl" : "View crawl";
+      modeBtn.setAttribute("aria-label",isCrawlMode ? "Hide crawl" : "View crawl");
     }
     controls.querySelector('[data-action="refresh"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     controls.querySelector('[data-action="list"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
