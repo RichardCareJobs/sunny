@@ -30,6 +30,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
   const OUTDOOR_ONLY = true;
+  const preferPubsAndBarsForCrawls = true;
   const DEV_PLACES_LOGGING = DEBUG_PLACES || ["localhost","127.0.0.1",""].includes(window.location.hostname);
   const DEV_CRAWL_LOGGING = DEV_PLACES_LOGGING;
 
@@ -846,9 +847,46 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     console.log(`[Places][${endpoint}] type counts`,summary.typeCounts);
     console.log(`[Places][${endpoint}] top 20`,summary.top);
   }
+  const GENERIC_PLACE_TYPES=new Set([
+    "point_of_interest",
+    "establishment",
+    "food",
+    "store",
+    "premise"
+  ]);
+  const PUB_BAR_NAME_HINTS=[
+    "hotel",
+    "arms",
+    "tavern",
+    "inn",
+    "public house",
+    "pub",
+    "bar",
+    "brewpub",
+    "taproom"
+  ];
+  function getPlaceTypes(place){
+    const types=Array.isArray(place?.types) ? place.types : [];
+    const normalized=types.map(type=>String(type).toLowerCase());
+    const primaryType=place?.primaryType ? String(place.primaryType).toLowerCase() : "";
+    if(primaryType && !normalized.includes(primaryType)) normalized.push(primaryType);
+    return normalized;
+  }
+  function classifyPlace(place){
+    const types=getPlaceTypes(place);
+    if(types.includes("bar")) return { isPubBar:true, reason:"type:bar" };
+    if(types.includes("pub")) return { isPubBar:true, reason:"type:pub" };
+    const name=(place?.name||"").toLowerCase();
+    const hasGenericTypes=types.length===0 || types.every(type=>GENERIC_PLACE_TYPES.has(type));
+    if(name && hasGenericTypes){
+      const hit=PUB_BAR_NAME_HINTS.find(hint=>name.includes(hint));
+      if(hit) return { isPubBar:true, reason:`name:${hit}` };
+    }
+    return { isPubBar:false, reason: types.length ? `types:${types.join(",")}` : "no-types" };
+  }
   function isPubBarPlace(place){
-    const types=place?.types||[];
-    return !!place?.clubLane || types.includes("bar") || types.includes("pub") || types.includes("night_club");
+    if(place?.clubLane) return true;
+    return classifyPlace(place).isPubBar;
   }
   function isCafePlace(place){
     return (place?.types||[]).includes("cafe");
@@ -1564,6 +1602,95 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return chooseCrawlVenuesFromList(Object.values(allVenues),origin,count);
   }
 
+  function annotateCrawlVenue(venue){
+    const classification=classifyPlace(venue);
+    const crawlFallback=preferPubsAndBarsForCrawls ? !classification.isPubBar : false;
+    return {
+      ...venue,
+      crawlFallback,
+      crawlPubBarReason: classification.reason
+    };
+  }
+
+  function selectCrawlVenuesWithPubPreference(venues,count){
+    const pubBars=[];
+    const fallbacks=[];
+    venues.forEach((venue)=>{
+      const classification=classifyPlace(venue);
+      if(classification.isPubBar){
+        pubBars.push({ venue, classification });
+      } else {
+        fallbacks.push({ venue, classification });
+      }
+    });
+    const selectedPubBars=pubBars.slice(0,count);
+    const remaining=count-selectedPubBars.length;
+    const selectedFallbacks=remaining>0 ? fallbacks.slice(0,remaining) : [];
+    const selected=[
+      ...selectedPubBars.map(({ venue, classification })=>({
+        ...venue,
+        crawlFallback:false,
+        crawlPubBarReason: classification.reason
+      })),
+      ...selectedFallbacks.map(({ venue, classification })=>({
+        ...venue,
+        crawlFallback:true,
+        crawlPubBarReason: classification.reason
+      }))
+    ];
+    return {
+      selected,
+      pubBarCount:selectedPubBars.length,
+      fallbackCount:selectedFallbacks.length,
+      totalPubBars:pubBars.length
+    };
+  }
+
+  function orderCrawlVenuesWithPubPreference(venues,origin,mode,startAt,maxStepMeters){
+    const pubBars=venues.filter(venue=>!venue.crawlFallback);
+    const fallbacks=venues.filter(venue=>venue.crawlFallback);
+    if(!pubBars.length){
+      return orderVenues(fallbacks,origin,mode,startAt,maxStepMeters);
+    }
+    const orderedPubs=orderVenues(pubBars,origin,mode,startAt,maxStepMeters);
+    if(!orderedPubs.ok) return orderedPubs;
+    if(!fallbacks.length) return orderedPubs;
+    const fallbackOrigin=orderedPubs.venues[orderedPubs.venues.length-1];
+    const orderedFallbacks=orderVenues(fallbacks,fallbackOrigin,mode,startAt,maxStepMeters);
+    if(!orderedFallbacks.ok) return orderedFallbacks;
+    return {
+      ok:true,
+      venues:[...orderedPubs.venues,...orderedFallbacks.venues],
+      maxStepDistanceMeters: Math.max(
+        orderedPubs.maxStepDistanceMeters || 0,
+        orderedFallbacks.maxStepDistanceMeters || 0
+      )
+    };
+  }
+
+  function runCrawlSelectionAssertions(){
+    const warn=(message)=>console.warn(`[CrawlTest] ${message}`);
+    const assert=(condition,message)=>{ if(!condition) warn(message); };
+    const typedPub={ name:"The Local Bar", types:["bar"] };
+    const namedPub={ name:"Sunset Tavern", types:["establishment"] };
+    const restaurant={ name:"Arms Cafe", types:["restaurant"] };
+    assert(classifyPlace(typedPub).isPubBar,"Expected bar type to classify as pub/bar.");
+    assert(classifyPlace(namedPub).isPubBar,"Expected name hint to classify as pub/bar when types are generic.");
+    assert(!classifyPlace(restaurant).isPubBar,"Expected restaurant type to stay non pub/bar.");
+    const sampleVenues=[
+      { id:"1", name:"Pub A", types:["bar"] },
+      { id:"2", name:"Cafe", types:["cafe"] },
+      { id:"3", name:"Pub B", types:["pub"] }
+    ];
+    const fullPubs=selectCrawlVenuesWithPubPreference(sampleVenues,2);
+    assert(fullPubs.selected.length===2 && fullPubs.selected.every(v=>!v.crawlFallback),"Expected pub-only crawl when enough pubs.");
+    const mixed=selectCrawlVenuesWithPubPreference(sampleVenues,3);
+    assert(mixed.selected[0] && !mixed.selected[0].crawlFallback && mixed.selected[2]?.crawlFallback,"Expected pubs first then fallback venues.");
+    const noPubs=selectCrawlVenuesWithPubPreference([{ id:"1", name:"Cafe", types:["cafe"] }],1);
+    assert(noPubs.selected[0]?.crawlFallback,"Expected fallback when no pubs.");
+  }
+  if(DEV_CRAWL_LOGGING) runCrawlSelectionAssertions();
+
   function getCrawlCandidatesFromStore(center,radiusMeters){
     const totalVenuesInStore=Object.values(allVenues).length;
     const withValidCoords=Object.values(allVenues).filter(v=>v&&isValidCoord(v.lat,v.lng));
@@ -1590,6 +1717,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const candidates=chooseCrawlVenuesFromList(list,origin,Math.max(count,Math.min(MAX_CRAWL_VENUES,refresh ? count*3 : count)));
     if(!candidates.length) return { ok:false, reason:"NOT_ENOUGH_CANDIDATES", venues: [] };
     let selectionPool=candidates;
+    let selectionMeta=null;
     if(refresh&&candidates.length>count){
       const currentSet=new Set(currentVenueIds||[]);
       const alternates=candidates.filter(v=>!currentSet.has(v.id));
@@ -1599,10 +1727,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const orderedPool=pool.slice(startIndex).concat(pool.slice(0,startIndex));
       selectionPool=orderedPool;
     }
+    if(preferPubsAndBarsForCrawls){
+      selectionMeta=selectCrawlVenuesWithPubPreference(selectionPool,count);
+      selectionPool=selectionMeta.selected;
+    }
     // Enforce unique addresses so a crawl never repeats a location.
     const uniqueSelected=selectUniqueAddressVenues(selectionPool,count);
     if(uniqueSelected.length<count){
       return { ok:false, reason:"NOT_ENOUGH_CANDIDATES", venues: uniqueSelected };
+    }
+    if(preferPubsAndBarsForCrawls && selectionMeta){
+      return orderCrawlVenuesWithPubPreference(uniqueSelected,origin,orderMode,startAt,maxStepMeters);
     }
     return orderVenues(uniqueSelected,origin,orderMode,startAt,maxStepMeters);
   }
@@ -1619,7 +1754,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const key=normalizeAddressKey(venue);
       if(!key||usedAddresses.has(key)) return;
       usedAddresses.add(key);
-      uniqueVenues.push(venue);
+      uniqueVenues.push(annotateCrawlVenue(venue));
     });
     if((DEBUG_FILTERS||DEV_PLACES_LOGGING)&&uniqueVenues.length!==filtered.length){
       console.log(`[Crawl] removed ${filtered.length-uniqueVenues.length} duplicate-address venues from crawl.`);
@@ -1631,7 +1766,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hangMinutes:CRAWL_DEFAULT_HANG_MINUTES,
       remind:false
     }));
-    crawlState={ venues: normalized, startAt, origin: originInfo, orderMode, maxStepDistanceMeters };
+    const pubBarCount=normalized.filter(venue=>!venue.crawlFallback).length;
+    const fallbackCount=normalized.length-pubBarCount;
+    crawlState={
+      venues: normalized,
+      startAt,
+      origin: originInfo,
+      orderMode,
+      maxStepDistanceMeters,
+      pubBarCount,
+      fallbackCount
+    };
     updateCrawlSchedule();
   }
 
@@ -1804,8 +1949,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         remind:false
       }));
       const filtered=venues.filter(v=>v&&!isGloballyExcludedVenue(v));
-      const uniqueVenues=selectUniqueAddressVenues(filtered,filtered.length);
-      crawlState={ venues: uniqueVenues, startAt, origin, orderMode };
+      const uniqueVenues=selectUniqueAddressVenues(filtered,filtered.length).map(annotateCrawlVenue);
+      const pubBarCount=uniqueVenues.filter(venue=>!venue.crawlFallback).length;
+      const fallbackCount=uniqueVenues.length-pubBarCount;
+      crawlState={ venues: uniqueVenues, startAt, origin, orderMode, pubBarCount, fallbackCount };
       updateCrawlSchedule();
       hasAutoFitCrawlOnLoad=false;
       enterCrawlMode({ autoFit:true });
@@ -1964,6 +2111,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
           <span class="chip chip-open"></span>
+          <span class="chip chip-fallback hidden">Fallback (not a pub/bar)</span>
         </div>
         <div class="venue-card__hours hidden"></div>
         <div class="venue-card__hours-next hidden"></div>
@@ -2066,6 +2214,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       metaEl:container.querySelector(".venue-card__meta"),
       addressEl:container.querySelector(".venue-card__address"),
       openChip:container.querySelector(".chip-open"),
+      fallbackChip:container.querySelector(".chip-fallback"),
       hoursEl:container.querySelector(".venue-card__hours"),
       hoursNextEl:container.querySelector(".venue-card__hours-next"),
       sunChip:container.querySelector(".chip-sun"),
@@ -2277,6 +2426,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.openChip.classList.remove("hidden");
       card.openChip.style.display="inline-flex";
       applyToneClass(card.openChip,open.tone);
+    }
+    if(card.fallbackChip){
+      if(preferPubsAndBarsForCrawls && v.crawlFallback){
+        card.fallbackChip.classList.remove("hidden");
+        card.fallbackChip.style.display="inline-flex";
+      } else {
+        card.fallbackChip.classList.add("hidden");
+        card.fallbackChip.style.display="none";
+      }
     }
 
     if(card.hoursEl){
@@ -2555,6 +2713,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         return;
       }
       crawlState.venues=nextVenues.map((venue,index)=>({ ...venue, crawlIndex:index }));
+      const pubBarCount=crawlState.venues.filter(v=>!v.crawlFallback).length;
+      crawlState.pubBarCount=pubBarCount;
+      crawlState.fallbackCount=crawlState.venues.length-pubBarCount;
       updateCrawlSchedule();
       renderCrawlMarkers();
       updateCrawlCard(crawlCard.currentVenueId);
@@ -2772,6 +2933,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div>
           <h3>Pub crawl stops</h3>
           <p class="crawl-list__subtitle"></p>
+          <p class="crawl-list__notice hidden"></p>
         </div>
         <button type="button" class="crawl-list__close" aria-label="Close list">×</button>
       </div>
@@ -2788,7 +2950,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const panel=ensureCrawlListPanel();
     const items=panel.querySelector(".crawl-list__items");
     const subtitle=panel.querySelector(".crawl-list__subtitle");
+    const notice=panel.querySelector(".crawl-list__notice");
     subtitle.textContent=`${crawlState.venues.length} venues · Start ${formatTime(crawlState.startAt)}`;
+    if(notice){
+      if(preferPubsAndBarsForCrawls && crawlState.pubBarCount===0 && crawlState.fallbackCount>0){
+        notice.textContent="No pubs/bars found nearby — showing other venues instead.";
+        notice.classList.remove("hidden");
+      } else {
+        notice.textContent="";
+        notice.classList.add("hidden");
+      }
+    }
     items.innerHTML="";
     const firstVenueName=(crawlState.venues[0]?.name||"").trim();
     const hasFirstVenueName=!!firstVenueName;
@@ -2816,9 +2988,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         : "";
       const item=document.createElement("div");
       item.className="crawl-list__item";
+      const fallbackBadge=preferPubsAndBarsForCrawls && venue.crawlFallback
+        ? `<span class="crawl-list__badge">Fallback (not a pub/bar)</span>`
+        : "";
       item.innerHTML=`
         <div>
-          <div class="crawl-list__title">${venue.crawlIndex+1}. ${venue.name||"Venue"}</div>
+          <div class="crawl-list__title">${venue.crawlIndex+1}. ${venue.name||"Venue"} ${fallbackBadge}</div>
           <div class="crawl-list__meta">${distanceLabel}</div>
           <div class="crawl-list__uber">
             <span>${uberText}</span>
@@ -2912,14 +3087,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       row.addEventListener("click",()=>{
         if(crawlState.venues.length>=MAX_CRAWL_VENUES) return;
         if(existingAddressKeys.has(normalizeAddressKey(venue))) return;
-        const nextVenue={
+        const nextVenue=annotateCrawlVenue({
           ...venue,
           crawlIndex:crawlState.venues.length,
           address: venue.address || formatAddress(venue.tags||{}),
           hangMinutes:CRAWL_DEFAULT_HANG_MINUTES,
           remind:false
-        };
+        });
         crawlState.venues.push(nextVenue);
+        const pubBarCount=crawlState.venues.filter(v=>!v.crawlFallback).length;
+        crawlState.pubBarCount=pubBarCount;
+        crawlState.fallbackCount=crawlState.venues.length-pubBarCount;
         updateCrawlSchedule();
         renderCrawlMarkers();
         updateCrawlList();
