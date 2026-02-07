@@ -2111,7 +2111,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
           <span class="chip chip-open"></span>
-          <span class="chip chip-fallback hidden">Fallback (not a pub/bar)</span>
         </div>
         <div class="venue-card__hours hidden"></div>
         <div class="venue-card__hours-next hidden"></div>
@@ -2214,7 +2213,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       metaEl:container.querySelector(".venue-card__meta"),
       addressEl:container.querySelector(".venue-card__address"),
       openChip:container.querySelector(".chip-open"),
-      fallbackChip:container.querySelector(".chip-fallback"),
       hoursEl:container.querySelector(".venue-card__hours"),
       hoursNextEl:container.querySelector(".venue-card__hours-next"),
       sunChip:container.querySelector(".chip-sun"),
@@ -2240,6 +2238,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         website:container.querySelector('[data-action="website"]')
       }
     };
+    assert(!container.querySelector(".chip-fallback"),"Venue card should not render a fallback label.");
     return detailCard;
   }
   function ensureImageViewerModal(){
@@ -2426,15 +2425,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.openChip.classList.remove("hidden");
       card.openChip.style.display="inline-flex";
       applyToneClass(card.openChip,open.tone);
-    }
-    if(card.fallbackChip){
-      if(preferPubsAndBarsForCrawls && v.crawlFallback){
-        card.fallbackChip.classList.remove("hidden");
-        card.fallbackChip.style.display="inline-flex";
-      } else {
-        card.fallbackChip.classList.add("hidden");
-        card.fallbackChip.style.display="none";
-      }
     }
 
     if(card.hoursEl){
@@ -2988,12 +2978,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         : "";
       const item=document.createElement("div");
       item.className="crawl-list__item";
-      const fallbackBadge=preferPubsAndBarsForCrawls && venue.crawlFallback
-        ? `<span class="crawl-list__badge">Fallback (not a pub/bar)</span>`
-        : "";
       item.innerHTML=`
         <div>
-          <div class="crawl-list__title">${venue.crawlIndex+1}. ${venue.name||"Venue"} ${fallbackBadge}</div>
+          <div class="crawl-list__title">${venue.crawlIndex+1}. ${venue.name||"Venue"}</div>
           <div class="crawl-list__meta">${distanceLabel}</div>
           <div class="crawl-list__uber">
             <span>${uberText}</span>
