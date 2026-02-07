@@ -146,7 +146,6 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .chip-warn { background:#fff1f2; border-color:#fecdd3; color:#9f1239; }
 .chip-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
 .chip-muted { background:#f3f4f6; border-color:#e5e7eb; color:#4b5563; }
-.chip-fallback { background:#f3f4f6; border-color:#e5e7eb; color:#4b5563; }
 .venue-card__hours { color:#374151; font-size:.9rem; }
 .venue-card__hours-next { color:#6b7280; font-size:.85rem; }
 .venue-card__note { color:#4b5563; font-size:.95rem; }
@@ -290,7 +289,6 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .crawl-list__close { border: 1px solid #e5e7eb; background: #fff; border-radius: 12px; width: 36px; height: 36px; font-size: 1.1rem; cursor: pointer; }
 .crawl-list__item { display: flex; justify-content: space-between; gap: .75rem; padding: .75rem 1rem; border-bottom: 1px solid #f3f4f6; cursor: pointer; }
 .crawl-list__title { font-weight: 800; }
-.crawl-list__badge { display: inline-block; margin-left: .4rem; font-size: .7rem; font-weight: 600; color: #4b5563; border: 1px solid #e5e7eb; border-radius: 999px; padding: 2px 6px; background: #f9fafb; }
 .crawl-list__meta { color: #6b7280; font-size: .9rem; margin-top: .2rem; }
 .crawl-list__time { font-weight: 700; white-space: nowrap; color: #111; }
 .crawl-list__uber { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin-top: .35rem; color: #374151; font-size: .9rem; }
