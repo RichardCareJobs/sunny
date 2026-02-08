@@ -33,6 +33,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const preferPubsAndBarsForCrawls = true;
   const DEV_PLACES_LOGGING = DEBUG_PLACES || ["localhost","127.0.0.1",""].includes(window.location.hostname);
   const DEV_CRAWL_LOGGING = DEV_PLACES_LOGGING;
+  const MAP_PROVIDER = window.SUNNY_PROVIDER || "google";
+  window.SUNNY_PROVIDER = MAP_PROVIDER;
+
+  const analytics = window.SunnyAnalytics || null;
+  function trackEvent(eventName, params = {}){
+    if(!analytics || typeof analytics.track!=="function") return;
+    analytics.track(eventName, params);
+  }
 
   let map;
   let markersLayer = [];
@@ -75,6 +83,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let isCrawlMode = false;
   let hasAutoFitCrawlOnLoad = false;
   let pendingCrawlFitReason = null;
+  let crawlBuildStartTime = null;
   let crawlBuilder = null;
   let crawlControls = null;
   let crawlCard = null;
@@ -210,6 +219,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     el.dataset.state=state;
     el.textContent=message;
     el.hidden=false;
+    if(state==="error"){
+      trackEvent("error_shown",{
+        error_type:"api",
+        component:"venues"
+      });
+    }
   }
   function hideVenueStatus(){
     if(!venueStatusEl) return;
@@ -234,6 +249,37 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const city=tags["addr:city"]||tags["addr:suburb"]||tags["addr:municipality"]||"";
     const streetLine=[hn,street].filter(Boolean).join(" ").trim();
     return [streetLine,city].filter(Boolean).join(", ");
+  }
+  function getVenueDistanceMeters(venue){
+    if(!venue||!userLocation) return null;
+    if(!Number.isFinite(venue.lat)||!Number.isFinite(venue.lng)) return null;
+    if(!Number.isFinite(userLocation.lat)||!Number.isFinite(userLocation.lng)) return null;
+    const distance=haversineMeters(userLocation.lat,userLocation.lng,venue.lat,venue.lng);
+    return Number.isFinite(distance) ? Math.round(distance) : null;
+  }
+  function trackVenueCardOpened(card,venue){
+    if(!card||!venue) return;
+    const isAlreadyOpen=!card.container.classList.contains("hidden") && card.container.dataset.venueId===venue.id;
+    if(isAlreadyOpen) return;
+    const payload={
+      venue_id: String(venue.id || ""),
+      provider: MAP_PROVIDER
+    };
+    const distanceMeters=getVenueDistanceMeters(venue);
+    if(Number.isFinite(distanceMeters)) payload.distance_m=distanceMeters;
+    if(typeof venue.openNow==="boolean") payload.is_open=venue.openNow;
+    trackEvent("venue_card_opened",payload);
+  }
+  function trackVenueAction(action,venue){
+    if(!venue||!action) return;
+    const payload={
+      venue_id: String(venue.id || ""),
+      action,
+      provider: MAP_PROVIDER
+    };
+    const distanceMeters=getVenueDistanceMeters(venue);
+    if(Number.isFinite(distanceMeters)) payload.distance_m=distanceMeters;
+    trackEvent("venue_action_clicked",payload);
   }
   function clearLocationWatch(){
     if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
@@ -1565,6 +1611,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!confirmed) return;
     clearCrawlNotifications();
     crawlState=null;
+    crawlBuildStartTime=null;
     hasAutoFitCrawlOnLoad=false;
     pendingCrawlFitReason=null;
     if(crawlAddPanel) crawlAddPanel.classList.add("hidden");
@@ -2007,6 +2054,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     activeRequestController=requestController;
     const { signal }=requestController;
     const perfStart=performance.now();
+    const fetchReason=immediate ? "initial" : "map_move";
     perfLog("load start",{ requestId, immediate });
     const b=map.getBounds();
     if(!b){
@@ -2028,6 +2076,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }
+      trackEvent("venues_fetch_completed",{
+        fetch_time_ms: Math.round(performance.now()-perfStart),
+        results_count: cachedFiltered.length,
+        cache_hit: true,
+        reason: fetchReason
+      });
       perfLog("cache hit",{ requestId, ageMs: cacheAge });
       return;
     }
@@ -2060,6 +2114,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }
+      trackEvent("venues_fetch_completed",{
+        fetch_time_ms: Math.round(performance.now()-perfStart),
+        results_count: filtered.length,
+        reason: fetchReason
+      });
     } catch(e){
       if(signal.aborted){
         perfLog("load aborted",{ requestId });
@@ -2067,6 +2126,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       if(requestId!==activeRequestId) return;
       showVenueStatus("error","Couldn’t load venues. Please try again.");
+      trackEvent("venues_fetch_completed",{
+        fetch_time_ms: Math.round(performance.now()-perfStart),
+        results_count: 0,
+        reason: fetchReason
+      });
       console.error("Places error:",e);
     }
   }
@@ -2238,6 +2302,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         website:container.querySelector('[data-action="website"]')
       }
     };
+    if(detailCard.actions.directions){
+      detailCard.actions.directions.addEventListener("click",()=>{
+        if(detailCard.currentVenue) trackVenueAction("directions",detailCard.currentVenue);
+      });
+    }
+    if(detailCard.actions.website){
+      detailCard.actions.website.addEventListener("click",()=>{
+        if(detailCard.currentVenue) trackVenueAction("website",detailCard.currentVenue);
+      });
+    }
     assert(!container.querySelector(".chip-fallback"),"Venue card should not render a fallback label.");
     return detailCard;
   }
@@ -2379,6 +2453,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     const card=ensureDetailCard();
+    trackVenueCardOpened(card,v);
     openVenueId=v.id;
     card.currentVenue=v;
     fetchVenueDetails(v);
@@ -3101,13 +3176,28 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const url=new URL(window.location.href);
     url.searchParams.set("crawl",encoded);
     if(navigator.share){
-      navigator.share({ title:"Sunny pub crawl", text:"Join my pub crawl", url:url.toString() }).catch(()=>{});
+      navigator.share({ title:"Sunny pub crawl", text:"Join my pub crawl", url:url.toString() })
+        .then(()=>{
+          trackEvent("crawl_shared",{
+            venue_count: crawlState.venues?.length || 0,
+            share_method: "native_share"
+          });
+        })
+        .catch(()=>{});
       return;
     }
     navigator.clipboard?.writeText(url.toString()).then(()=>{
       alert("Crawl link copied to clipboard!");
+      trackEvent("crawl_shared",{
+        venue_count: crawlState.venues?.length || 0,
+        share_method: "copy_link"
+      });
     }).catch(()=>{
       prompt("Copy this crawl link:",url.toString());
+      trackEvent("crawl_shared",{
+        venue_count: crawlState.venues?.length || 0,
+        share_method: "share_button"
+      });
     });
   }
 
@@ -3208,6 +3298,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(!isBuildingCrawl && !isCrawlBuildInProgress) return;
       crawlBuildRequestId+=1;
       isCrawlBuildInProgress=false;
+      crawlBuildStartTime=null;
       setBuilderBusy(false);
       setBuilderLoading(false);
       setStatus("");
@@ -3432,6 +3523,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   async function buildCrawlFromBuilder(option,startAt){
     if(!option||isCrawlBuildInProgress) return;
+    crawlBuildStartTime=performance.now();
     const requestId=++crawlBuildRequestId;
     isCrawlBuildInProgress=true;
     crawlBuilder?.setBusy(true,requestId);
@@ -3565,6 +3657,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           }
           crawlBuilder.statusEl.className="crawl-builder__status error";
         }
+        if(buildResult.reason==="NOT_ENOUGH_CANDIDATES"){
+          trackEvent("not_enough_venues_shown",{
+            radius_m: radiusSteps[radiusSteps.length-1],
+            results_count: lastStats?.candidatesAfterDedup ?? 0,
+            reason: "too_few_results"
+          });
+        } else {
+          trackEvent("error_shown",{
+            error_type: "unknown",
+            component: "crawl"
+          });
+        }
+        crawlBuildStartTime=null;
         logBuild({
           requestId,
           deviceLocation,
@@ -3588,6 +3693,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         maxStepDistanceUsedMeters: buildResult.maxStepDistanceMeters
       });
       buildCrawlState(buildResult.venues,startAt,center,orderMode,usedDistance);
+      const maxLegDistance=buildResult.maxStepDistanceMeters || usedDistance;
+      const buildTimeSeconds=crawlBuildStartTime ? (performance.now()-crawlBuildStartTime)/1000 : null;
+      const crawlPayload={
+        venue_count: buildResult.venues.length
+      };
+      if(buildTimeSeconds!=null) crawlPayload.build_time_s=Number(buildTimeSeconds.toFixed(2));
+      if(Number.isFinite(maxLegDistance)){
+        crawlPayload.max_leg_distance_m=maxLegDistance;
+        crawlPayload.contains_over_200m_leg=maxLegDistance>200;
+      }
+      trackEvent("crawl_created",crawlPayload);
+      crawlBuildStartTime=null;
       hasAutoFitCrawlOnLoad=false;
       enterCrawlMode({ autoFit:true });
       updateCrawlList();

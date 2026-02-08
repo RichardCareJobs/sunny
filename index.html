@@ -102,14 +102,16 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   <!-- Force the custom pin to use /icons/marker.png -->
   <script>window.SUNNY_ICON_URL = '/icons/marker.png';</script>
 
+  <script src="analytics.js"></script>
 
   <!-- Versioned loader to always fetch fresh app.js -->
   <script>
     fetch('version.json', { cache: 'no-store' })
       .then(r => r.json()).catch(() => ({ version: Date.now() }))
       .then(v => {
+        window.SUNNY_APP_VERSION = (v && v.version) || Date.now();
         const s = document.createElement('script');
-        s.src = `app.js?v=${(v && v.version) || Date.now()}`;
+        s.src = `app.js?v=${window.SUNNY_APP_VERSION}`;
         document.head.appendChild(s);
       });
   </script>
