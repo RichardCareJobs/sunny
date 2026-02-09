@@ -30,9 +30,17 @@
     }
   }
 
+  function hasAnalyticsConsent() {
+    if (window.SunnyConsent?.hasAnalyticsConsent) {
+      return window.SunnyConsent.hasAnalyticsConsent();
+    }
+    return false;
+  }
+
   function track(eventName, params = {}) {
     try {
       if (!eventName) return;
+      if (!hasAnalyticsConsent()) return;
       window.dataLayer = window.dataLayer || [];
       const payload = {
         event: eventName,
