@@ -104,20 +104,12 @@
     links.className = "consent-banner__links";
 
     const privacyLink = document.createElement("a");
-    privacyLink.href = "privacy.html";
+    privacyLink.href = "https://sunnypubs.app/privacy-policy/";
+    privacyLink.target = "_blank";
+    privacyLink.rel = "noopener noreferrer";
     privacyLink.textContent = "Privacy policy";
 
-    const cookieLink = document.createElement("a");
-    cookieLink.href = "cookie-policy.html";
-    cookieLink.textContent = "Cookie policy";
-
-    const settingsLink = document.createElement("button");
-    settingsLink.type = "button";
-    settingsLink.className = "consent-banner__link-button";
-    settingsLink.textContent = "Cookie settings";
-    settingsLink.addEventListener("click", openCookieSettings);
-
-    links.append(privacyLink, cookieLink, settingsLink);
+    links.append(privacyLink);
 
     const actions = document.createElement("div");
     actions.className = "consent-banner__actions";
@@ -171,16 +163,6 @@
     return consentState.choice === ACCEPTED;
   }
 
-  function bindSettingsLinks() {
-    const links = document.querySelectorAll("[data-cookie-settings]");
-    links.forEach((link) => {
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        openCookieSettings();
-      });
-    });
-  }
-
   function initConsent() {
     if (initDone) return;
     initDone = true;
@@ -191,11 +173,6 @@
       updateConsent(stored.choice);
     } else {
       showConsentBanner();
-    }
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", bindSettingsLinks, { once: true });
-    } else {
-      bindSettingsLinks();
     }
   }
 
