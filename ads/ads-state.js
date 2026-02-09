@@ -48,6 +48,16 @@ const DEFAULT_VENUES = [
   },
 ];
 
+const PROFILE_FIELDS = [
+  "businessName",
+  "contactName",
+  "email",
+  "phone",
+  "abn",
+  "suburb",
+  "state",
+];
+
 function createId(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}${Date.now().toString(36)}`;
 }
@@ -74,6 +84,7 @@ function loadState() {
   if (!raw) {
     const seeded = {
       advertiser: ensureAdvertiser(null),
+      adminMode: false,
       venues: DEFAULT_VENUES,
       claims: [],
       campaigns: [],
@@ -85,10 +96,18 @@ function loadState() {
 
   try {
     const parsed = JSON.parse(raw);
+    const advertiser = ensureAdvertiser(parsed.advertiser);
+    const normalizedClaims = (parsed.claims || []).map((claim) => ({
+      ...claim,
+      status: claim.status || "pending",
+      submittedAt: claim.submittedAt || new Date().toISOString(),
+      advertiserId: claim.advertiserId || advertiser.id,
+    }));
     const nextState = {
-      advertiser: ensureAdvertiser(parsed.advertiser),
+      advertiser,
+      adminMode: Boolean(parsed.adminMode),
       venues: parsed.venues && parsed.venues.length ? parsed.venues : DEFAULT_VENUES,
-      claims: parsed.claims || [],
+      claims: normalizedClaims,
       campaigns: parsed.campaigns || [],
       events: parsed.events || [],
     };
@@ -97,6 +116,7 @@ function loadState() {
   } catch (error) {
     const fallback = {
       advertiser: ensureAdvertiser(null),
+      adminMode: false,
       venues: DEFAULT_VENUES,
       claims: [],
       campaigns: [],
@@ -126,14 +146,41 @@ function logEvent(type, meta = {}) {
   return entry;
 }
 
-function getClaimForVenue(venueId) {
-  const state = loadState();
+function getClaimByVenueId(state, venueId) {
+  if (!state || !venueId) return null;
   return state.claims.find((claim) => claim.venueId === venueId) || null;
+}
+
+function getClaimStatusForVenue(state, venueId) {
+  const claim = getClaimByVenueId(state, venueId);
+  if (claim && claim.status) {
+    return claim.status;
+  }
+  const venue = state.venues.find((item) => item.id === venueId);
+  if (venue && venue.claimed) {
+    return "approved";
+  }
+  return "unclaimed";
+}
+
+function isVenueApproved(state, venueId) {
+  const venue = state.venues.find((item) => item.id === venueId);
+  if (!venue) return false;
+  const status = getClaimStatusForVenue(state, venueId);
+  return status === "approved" && Boolean(venue.claimed);
 }
 
 function getCampaignsForVenue(venueId) {
   const state = loadState();
   return state.campaigns.filter((campaign) => campaign.venueId === venueId);
+}
+
+function isProfileComplete(advertiser) {
+  return PROFILE_FIELDS.every((field) => Boolean(advertiser && advertiser[field]));
+}
+
+function getMissingProfileFields(advertiser) {
+  return PROFILE_FIELDS.filter((field) => !advertiser || !advertiser[field]);
 }
 
 window.AdsState = {
@@ -143,7 +190,11 @@ window.AdsState = {
   saveState,
   logEvent,
   pushDataLayer,
-  getClaimForVenue,
+  getClaimByVenueId,
+  getClaimStatusForVenue,
+  isVenueApproved,
   getCampaignsForVenue,
+  isProfileComplete,
+  getMissingProfileFields,
   createId,
 };

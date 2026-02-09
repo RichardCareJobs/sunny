@@ -30,6 +30,19 @@ const AdsViews = (() => {
     };
   }
 
+  function formatFieldLabel(field) {
+    const map = {
+      businessName: "Business name",
+      contactName: "Contact name",
+      email: "Email",
+      phone: "Phone",
+      abn: "ABN",
+      suburb: "Suburb",
+      state: "State",
+    };
+    return map[field] || field;
+  }
+
   function renderToast() {
     const toast = AdsRouter.consumeToast();
     if (!toast) return "";
@@ -43,10 +56,41 @@ const AdsViews = (() => {
     const claimedVenues = state.venues.filter(
       (venue) => venue.claimed && venue.claimedBy === profile.id,
     );
+    const approvedVenues = state.venues.filter(
+      (venue) => AdsState.isVenueApproved(state, venue.id) && venue.claimedBy === profile.id,
+    );
     const activeCampaigns = state.campaigns.filter(
       (campaign) => campaign.status === "active",
     );
-    const profileIncomplete = profileStatus.percent < 100;
+    const profileIncomplete = !AdsState.isProfileComplete(profile);
+    const hasApprovedVenue = approvedVenues.length > 0;
+    const checklistItems = [
+      {
+        label: "Complete profile",
+        done: !profileIncomplete,
+        href: "#/profile",
+      },
+      {
+        label: "Submit venue claim",
+        done: state.claims.some((claim) => claim.advertiserId === profile.id),
+        href: "#/venues",
+      },
+      {
+        label: "Get claim approved",
+        done: hasApprovedVenue,
+        href: "#/venues",
+      },
+      {
+        label: "Create Boost campaign",
+        done: state.campaigns.length > 0,
+        href: "#/campaigns",
+      },
+    ];
+    const primaryCta = profileIncomplete
+      ? { label: "Complete profile", href: "#/profile" }
+      : !hasApprovedVenue
+        ? { label: "Claim a venue", href: "#/venues" }
+        : { label: "Create campaign", href: "#/campaigns" };
 
     render(`
       ${renderToast()}
@@ -75,6 +119,24 @@ const AdsViews = (() => {
             ? `<div class="banner">Finish your advertiser profile to launch campaigns. <a href="#/profile">Complete profile</a></div>`
             : ""
         }
+        <div class="actions-row">
+          <a class="button" href="${primaryCta.href}">${primaryCta.label}</a>
+        </div>
+      </section>
+      <section class="card">
+        <h2>Getting started</h2>
+        <p class="muted">Work through these steps to launch your first Boost campaign.</p>
+        <ul class="checklist">
+          ${checklistItems
+            .map(
+              (item) => `
+              <li class="checklist-item ${item.done ? "done" : ""}">
+                <a href="${item.href}">${item.label}</a>
+              </li>
+            `,
+            )
+            .join("")}
+        </ul>
       </section>
       <section class="card">
         <h2>Quick actions</h2>
@@ -91,6 +153,7 @@ const AdsViews = (() => {
   function renderVenues() {
     const state = AdsState.loadState();
     const advertiser = state.advertiser;
+    let activeFilter = "all";
 
     render(`
       ${renderToast()}
@@ -102,17 +165,28 @@ const AdsViews = (() => {
           </div>
           <input id="venue-search" class="input" type="search" placeholder="Search by name or suburb" />
         </div>
+        <div class="toggle-group" role="tablist" aria-label="Venue filters">
+          <button class="toggle active" type="button" data-filter="all">All venues</button>
+          <button class="toggle" type="button" data-filter="mine">My venues</button>
+        </div>
         <div id="venue-list" class="cards-grid"></div>
       </section>
     `);
 
     const list = document.getElementById("venue-list");
     const searchInput = document.getElementById("venue-search");
+    const toggles = document.querySelectorAll(".toggle-group .toggle");
 
     function renderList(filter = "") {
       if (!list) return;
       const normalized = filter.toLowerCase();
       const filtered = state.venues.filter((venue) => {
+        const claim = AdsState.getClaimByVenueId(state, venue.id);
+        const isMine =
+          venue.claimedBy === advertiser.id || (claim && claim.advertiserId === advertiser.id);
+        if (activeFilter === "mine" && !isMine) {
+          return false;
+        }
         return (
           venue.name.toLowerCase().includes(normalized) ||
           venue.suburb.toLowerCase().includes(normalized)
@@ -121,26 +195,52 @@ const AdsViews = (() => {
 
       list.innerHTML = filtered
         .map((venue) => {
-          const claim = AdsState.getClaimForVenue(venue.id);
-          const isMine = venue.claimed && venue.claimedBy === advertiser.id;
-          const isClaimed = venue.claimed && !isMine;
-          const statusLabel = isMine
-            ? `Claimed (${claim ? claim.status : "approved"})`
-            : isClaimed
-              ? "Claimed by another advertiser"
-              : "Unclaimed";
-          const action = !venue.claimed
-            ? `<a class="button" href="#/claim?venueId=${venue.id}">Claim</a>`
-            : isMine
-              ? `<a class="button ghost" href="#/campaigns">Manage</a>`
-              : `<span class="button disabled">Unavailable</span>`;
+          const claim = AdsState.getClaimByVenueId(state, venue.id);
+          const claimStatus = AdsState.getClaimStatusForVenue(state, venue.id);
+          const isMine =
+            venue.claimedBy === advertiser.id || (claim && claim.advertiserId === advertiser.id);
+          const isClaimedByOther = venue.claimed && venue.claimedBy !== advertiser.id;
+          let statusLabel = "Unclaimed";
+          let statusClass = "unclaimed";
+          let action = `<a class="button" href="#/claim?venueId=${venue.id}">Request claim</a>`;
+
+          if (claimStatus === "pending") {
+            statusLabel = "Claim pending review";
+            statusClass = "pending";
+            action = `<span class="button disabled">Pending</span>`;
+          }
+
+          if (claimStatus === "rejected") {
+            statusLabel = "Claim rejected";
+            statusClass = "rejected";
+            action = `<a class="button ghost" href="#/claim?venueId=${venue.id}">Resubmit claim</a>`;
+          }
+
+          if (claimStatus === "approved") {
+            statusLabel = "Approved";
+            statusClass = "approved";
+            if (isClaimedByOther) {
+              statusLabel = "Claimed by another account";
+              statusClass = "rejected";
+              action = `<span class="button disabled">Unavailable</span>`;
+            } else if (isMine) {
+              action = `
+                <div class="actions-row">
+                  <a class="button ghost" href="#/campaigns">Manage venue</a>
+                  <a class="button" href="#/campaigns">Create campaign</a>
+                </div>
+              `;
+            } else {
+              action = `<span class="button disabled">Unavailable</span>`;
+            }
+          }
           return `
             <article class="venue-card">
               <h3>${venue.name}</h3>
               <p class="muted">${venue.address}</p>
               <div class="tags">${venue.tags.map((tag) => `<span>${tag}</span>`).join("")}</div>
               <div class="venue-footer">
-                <span class="status">${statusLabel}</span>
+                <span class="status-pill ${statusClass}">${statusLabel}</span>
                 ${action}
               </div>
             </article>
@@ -154,6 +254,17 @@ const AdsViews = (() => {
     if (searchInput) {
       searchInput.addEventListener("input", (event) => {
         renderList(event.target.value);
+      });
+    }
+
+    if (toggles.length) {
+      toggles.forEach((toggle) => {
+        toggle.addEventListener("click", () => {
+          toggles.forEach((button) => button.classList.remove("active"));
+          toggle.classList.add("active");
+          activeFilter = toggle.dataset.filter || "all";
+          renderList(searchInput ? searchInput.value : "");
+        });
       });
     }
   }
@@ -187,11 +298,9 @@ const AdsViews = (() => {
       return;
     }
 
-    const existingClaim = state.claims.find(
-      (claim) => claim.venueId === venueId && venue.claimedBy === advertiser.id,
-    );
+    const existingClaim = AdsState.getClaimByVenueId(state, venueId);
 
-    if (existingClaim) {
+    if (existingClaim && existingClaim.status !== "rejected") {
       render(`
         <section class="card">
           <h2>${venue.name}</h2>
@@ -236,6 +345,7 @@ const AdsViews = (() => {
         const claim = {
           id: AdsState.createId("c"),
           venueId,
+          advertiserId: advertiser.id,
           status: "pending",
           submittedAt: new Date().toISOString(),
           proofType,
@@ -243,10 +353,6 @@ const AdsViews = (() => {
         };
         const nextState = AdsState.loadState();
         nextState.claims.unshift(claim);
-        nextState.venues = nextState.venues.map((item) => {
-          if (item.id !== venueId) return item;
-          return { ...item, claimed: true, claimedBy: advertiser.id };
-        });
         AdsState.saveState(nextState);
         AdsState.logEvent("claim_submitted", { venueId, proofType });
         AdsRouter.setToast("Claim submitted for review.");
@@ -336,57 +442,98 @@ const AdsViews = (() => {
   function renderCampaigns() {
     const state = AdsState.loadState();
     const advertiser = state.advertiser;
-    const claimedVenues = state.venues.filter(
-      (venue) => venue.claimed && venue.claimedBy === advertiser.id,
+    const profileComplete = AdsState.isProfileComplete(advertiser);
+    const missingFields = AdsState.getMissingProfileFields(advertiser);
+    const approvedVenues = state.venues.filter(
+      (venue) => AdsState.isVenueApproved(state, venue.id) && venue.claimedBy === advertiser.id,
     );
-
-    if (!claimedVenues.length) {
-      render(`
-        <section class="card">
-          <h2>Campaigns</h2>
-          <p>You need a claimed venue before launching a campaign.</p>
-          <a class="button" href="#/venues">Claim a venue</a>
-        </section>
-      `);
-      return;
-    }
+    const hasApprovedVenues = approvedVenues.length > 0;
+    const isBlocked = !profileComplete || !hasApprovedVenues;
+    const missingFieldsList = missingFields
+      .map((field) => `<li>${formatFieldLabel(field)}</li>`)
+      .join("");
 
     render(`
       ${renderToast()}
+      ${
+        !profileComplete
+          ? `
+        <section class="card">
+          <h2>Complete your profile to launch campaigns</h2>
+          <p class="muted">We need a few more details before you can create campaigns.</p>
+          <ul class="list">${missingFieldsList}</ul>
+          <a class="button" href="#/profile">Complete profile</a>
+        </section>
+      `
+          : ""
+      }
+      ${
+        profileComplete && !hasApprovedVenues
+          ? `
+        <section class="card">
+          <h2>You need an approved venue before creating campaigns</h2>
+          <p class="muted">Submit a claim and wait for approval to launch Boost.</p>
+          <a class="button" href="#/venues">Claim a venue</a>
+        </section>
+      `
+          : ""
+      }
       <section class="card">
         <h2>Create campaign</h2>
+        <div id="campaign-error" class="banner danger" style="display:none;"></div>
         <form id="campaign-form" class="form">
           <label>
             Venue
-            <select class="input" name="venueId">
-              ${claimedVenues
-                .map((venue) => `<option value="${venue.id}">${venue.name}</option>`)
-                .join("")}
+            <select class="input" name="venueId" ${isBlocked ? "disabled" : ""}>
+              ${
+                approvedVenues.length
+                  ? approvedVenues
+                      .map((venue) => `<option value="${venue.id}">${venue.name}</option>`)
+                      .join("")
+                  : `<option value="">No approved venues yet</option>`
+              }
             </select>
           </label>
           <fieldset class="plan-fieldset">
             <legend>Plan</legend>
             <label class="radio">
-              <input type="radio" name="plan" value="boost" checked />
+              <input type="radio" name="plan" value="boost" checked ${
+                isBlocked ? "disabled" : ""
+              } />
               Boost — $19 / month
             </label>
             <label class="radio">
-              <input type="radio" name="plan" value="boost_plus" />
+              <input type="radio" name="plan" value="boost_plus" ${
+                isBlocked ? "disabled" : ""
+              } />
               Boost+ — $39 / month
             </label>
           </fieldset>
           <label>
             Radius (km)
-            <input class="input" name="radiusKm" type="number" min="1" value="5" />
+            <input
+              class="input"
+              name="radiusKm"
+              type="number"
+              min="1"
+              value="5"
+              ${isBlocked ? "disabled" : ""}
+            />
           </label>
           <label>
             Status
-            <select class="input" name="status">
+            <select class="input" name="status" ${isBlocked ? "disabled" : ""}>
               <option value="active" selected>Active</option>
               <option value="paused">Paused</option>
             </select>
           </label>
-          <button type="submit" class="button">Create campaign</button>
+          <button
+            type="submit"
+            class="button ${isBlocked ? "disabled" : ""}"
+            ${isBlocked ? 'aria-disabled="true"' : ""}
+          >
+            Create campaign
+          </button>
         </form>
       </section>
       <section class="card">
@@ -435,15 +582,51 @@ const AdsViews = (() => {
     renderList();
 
     const form = document.getElementById("campaign-form");
+    const errorBanner = document.getElementById("campaign-error");
     if (form) {
       form.addEventListener("submit", (event) => {
         event.preventDefault();
+        const latestState = AdsState.loadState();
+        const latestAdvertiser = latestState.advertiser;
+        const latestProfileComplete = AdsState.isProfileComplete(latestAdvertiser);
         const formData = new FormData(form);
+        const venueId = formData.get("venueId");
+        const selectedVenue = latestState.venues.find((venue) => venue.id === venueId);
+        const venueApproved =
+          selectedVenue &&
+          AdsState.isVenueApproved(latestState, venueId) &&
+          selectedVenue.claimedBy === latestAdvertiser.id;
+
+        if (!latestProfileComplete) {
+          if (errorBanner) {
+            errorBanner.style.display = "block";
+            errorBanner.textContent = "Complete your profile before creating campaigns.";
+          }
+          AdsState.logEvent("campaign_create_blocked", {
+            reason: "profile_incomplete",
+          });
+          return;
+        }
+
+        if (!venueApproved) {
+          if (errorBanner) {
+            errorBanner.style.display = "block";
+            errorBanner.textContent = "Select a venue with an approved claim to continue.";
+          }
+          AdsState.logEvent("campaign_create_blocked", {
+            reason: "venue_not_approved",
+          });
+          return;
+        }
+
+        if (errorBanner) {
+          errorBanner.style.display = "none";
+        }
         const plan = formData.get("plan");
         const monthlyPrice = plan === "boost" ? 19 : 39;
         const campaign = {
           id: AdsState.createId("cmp"),
-          venueId: formData.get("venueId"),
+          venueId,
           plan,
           monthlyPrice,
           radiusKm: Number(formData.get("radiusKm")) || 5,
@@ -499,16 +682,169 @@ const AdsViews = (() => {
     }
   }
 
+  function renderAdmin() {
+    const state = AdsState.loadState();
+    const isAdmin = state.adminMode;
+
+    if (!isAdmin) {
+      render(`
+        <section class="card">
+          <h2>Admin access only</h2>
+          <p class="muted">Enable admin mode with <code>?admin=1</code> to review claims.</p>
+          <a class="button" href="#/dashboard">Back to dashboard</a>
+        </section>
+      `);
+      return;
+    }
+
+    const rows = state.claims.map((claim) => {
+      const venue = state.venues.find((item) => item.id === claim.venueId);
+      const status = claim.status || "pending";
+      const statusClass = status;
+      const actions =
+        status === "pending"
+          ? `
+            <button class="button ghost" data-action="approve" data-id="${claim.id}">Approve</button>
+            <button class="button danger" data-action="reject" data-id="${claim.id}">Reject</button>
+          `
+          : `
+            <button class="button ghost" data-action="reset" data-id="${claim.id}">Reset to pending</button>
+          `;
+      return `
+        <tr>
+          <td>${venue ? venue.name : "Venue"}</td>
+          <td>${formatDate(claim.submittedAt)}</td>
+          <td>${claim.proofType || "-"}</td>
+          <td>${claim.notes || "-"}</td>
+          <td><span class="status-pill ${statusClass}">${status}</span></td>
+          <td>
+            <div class="actions-row">
+              ${actions}
+            </div>
+          </td>
+        </tr>
+      `;
+    });
+
+    render(`
+      ${renderToast()}
+      <section class="card">
+        <h2>Claim admin</h2>
+        <p class="muted">Review and approve venue claims. Latest submissions appear first.</p>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Venue</th>
+                <th>Submitted</th>
+                <th>Proof</th>
+                <th>Notes</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${
+                rows.length
+                  ? rows.join("")
+                  : `<tr><td colspan="6" class="muted">No claims submitted yet.</td></tr>`
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    `);
+
+    const table = document.querySelector("table");
+    if (!table) return;
+    table.addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      const action = button.dataset.action;
+      const claimId = button.dataset.id;
+      if (!action || !claimId) return;
+      const nextState = AdsState.loadState();
+      const claimIndex = nextState.claims.findIndex((item) => item.id === claimId);
+      if (claimIndex === -1) return;
+      const claim = nextState.claims[claimIndex];
+      const venue = nextState.venues.find((item) => item.id === claim.venueId);
+      if (!venue) return;
+
+      if (action === "approve") {
+        claim.status = "approved";
+        venue.claimed = true;
+        venue.claimedBy = claim.advertiserId;
+        AdsState.logEvent("claim_approved", { venueId: venue.id });
+        AdsState.pushDataLayer("ads_claim_approved", {
+          venueId: venue.id,
+          venueName: venue.name,
+        });
+        AdsRouter.setToast("Claim approved.");
+      }
+
+      if (action === "reject") {
+        claim.status = "rejected";
+        venue.claimed = false;
+        venue.claimedBy = null;
+        AdsState.logEvent("claim_rejected", { venueId: venue.id });
+        AdsState.pushDataLayer("ads_claim_rejected", {
+          venueId: venue.id,
+          venueName: venue.name,
+        });
+        AdsRouter.setToast("Claim rejected.");
+      }
+
+      if (action === "reset") {
+        claim.status = "pending";
+        venue.claimed = false;
+        venue.claimedBy = null;
+        AdsRouter.setToast("Claim reset to pending.");
+      }
+
+      AdsState.saveState(nextState);
+      renderAdmin();
+    });
+  }
+
   function renderResults() {
     const state = AdsState.loadState();
     const activeCampaigns = state.campaigns.filter(
       (campaign) => campaign.status === "active",
     );
-    const estimatedAppearances = activeCampaigns.reduce((sum, campaign) => {
-      return sum + (campaign.plan === "boost" ? 100 : 250);
-    }, 0);
+    const now = new Date();
+    const appearanceEvents = state.events.filter((event) => event.type === "appearance");
+    const totalDelivered = appearanceEvents.filter((event) => event.meta && event.meta.venueId)
+      .length;
     const offerReveals = state.events.filter((event) => event.type === "offer_reveal").length;
-    const appearanceEvents = state.events.filter((event) => event.type === "appearance").length;
+    const campaignRows = activeCampaigns.map((campaign) => {
+      const venue = state.venues.find((item) => item.id === campaign.venueId);
+      const guarantee = campaign.plan === "boost" ? 100 : 250;
+      const delivered = appearanceEvents.filter(
+        (event) => event.meta && event.meta.venueId === campaign.venueId,
+      ).length;
+      const percent = Math.min(100, Math.round((delivered / guarantee) * 100));
+      const startDate = new Date(campaign.startDate);
+      const daysElapsed = Math.min(
+        30,
+        Math.max(1, Math.floor((now - startDate) / (1000 * 60 * 60 * 24)) + 1),
+      );
+      const expectedRatio = daysElapsed / 30;
+      const deliveryStatus = delivered / guarantee >= expectedRatio ? "On track" : "Needs more delivery";
+      return `
+        <article class="campaign-card">
+          <h3>${venue ? venue.name : "Venue"} — ${campaign.plan === "boost" ? "Boost" : "Boost+"}</h3>
+          <p class="muted">Guarantee: ${guarantee} promoted appearances/month</p>
+          <p class="muted">Delivered this month: ${delivered}</p>
+          <div class="progress">
+            <span style="width: ${percent}%"></span>
+          </div>
+          <div class="status-row">
+            <span class="status">${percent}% delivered</span>
+            <span class="muted">${deliveryStatus}</span>
+          </div>
+        </article>
+      `;
+    });
 
     render(`
       ${renderToast()}
@@ -517,8 +853,8 @@ const AdsViews = (() => {
         <div class="stats">
           <div>
             <span class="label">Promoted appearances delivered</span>
-            <strong>${estimatedAppearances}</strong>
-            <span class="muted">This is estimated in v0.</span>
+            <strong>${totalDelivered}</strong>
+            <span class="muted">Tracked for approved venues.</span>
           </div>
           <div>
             <span class="label">Offer reveals</span>
@@ -527,7 +863,7 @@ const AdsViews = (() => {
           </div>
           <div>
             <span class="label">Simulated appearances</span>
-            <strong>${appearanceEvents}</strong>
+            <strong>${appearanceEvents.length}</strong>
             <span class="muted">Manual test events.</span>
           </div>
         </div>
@@ -535,6 +871,14 @@ const AdsViews = (() => {
           <button class="button ghost" id="btn-appearance">Simulate promoted appearance</button>
           <button class="button" id="btn-reveal">Simulate offer reveal</button>
         </div>
+      </section>
+      <section class="card">
+        <h2>Campaign delivery</h2>
+        ${
+          campaignRows.length
+            ? `<div class="cards-grid">${campaignRows.join("")}</div>`
+            : `<p class="muted">No active campaigns to report yet.</p>`
+        }
       </section>
       <section class="card">
         <h2>Event log</h2>
@@ -574,7 +918,14 @@ const AdsViews = (() => {
 
     if (appearanceButton) {
       appearanceButton.addEventListener("click", () => {
-        AdsState.logEvent("appearance", { source: "simulator" });
+        const latestState = AdsState.loadState();
+        const activeCampaign = latestState.campaigns.find(
+          (campaign) => campaign.status === "active",
+        );
+        AdsState.logEvent("appearance", {
+          source: "simulator",
+          venueId: activeCampaign ? activeCampaign.venueId : null,
+        });
         AdsRouter.setToast("Appearance event logged.");
         renderResults();
       });
@@ -595,6 +946,7 @@ const AdsViews = (() => {
     claim: renderClaim,
     profile: renderProfile,
     campaigns: renderCampaigns,
+    admin: renderAdmin,
     results: renderResults,
   };
 })();
