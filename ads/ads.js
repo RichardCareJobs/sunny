@@ -1,17 +1,12 @@
-const log = document.getElementById("log");
-const demoButton = document.getElementById("btn-demo");
+document.addEventListener("DOMContentLoaded", () => {
+  const routes = {
+    "/dashboard": AdsViews.dashboard,
+    "/venues": AdsViews.venues,
+    "/claim": AdsViews.claim,
+    "/profile": AdsViews.profile,
+    "/campaigns": AdsViews.campaigns,
+    "/results": AdsViews.results,
+  };
 
-function appendLog(message) {
-  if (!log) return;
-  const timestamp = new Date().toLocaleString();
-  log.textContent = `[${timestamp}] ${message}`;
-}
-
-if (demoButton) {
-  demoButton.addEventListener("click", () => {
-    appendLog("Demo action fired. Advertiser workflows coming soon.");
-    if (window.dataLayer) {
-      window.dataLayer.push({ event: "ads_demo_action", section: "ads_console" });
-    }
-  });
-}
+  AdsRouter.init(routes);
+});
