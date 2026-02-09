@@ -21,35 +21,28 @@
   <!-- End Google Tag Manager (noscript) -->
 
   <header class="top">
-    <a class="back" href="/">← Back to Sunny</a>
-    <div class="title">
-      <h1>Advertiser Console</h1>
-      <p class="sub">Manage venues, campaigns, and results</p>
+    <div class="brand">
+      <a class="back" href="/">← Back to Sunny</a>
+      <div class="title">
+        <h1>Advertiser Console</h1>
+        <p class="sub">Claim venues, build campaigns, and track results</p>
+      </div>
     </div>
+    <nav class="nav">
+      <a href="#/dashboard" data-route="/dashboard">Dashboard</a>
+      <a href="#/venues" data-route="/venues">Venues</a>
+      <a href="#/profile" data-route="/profile">Profile</a>
+      <a href="#/campaigns" data-route="/campaigns">Campaigns</a>
+      <a href="#/results" data-route="/results">Results</a>
+    </nav>
   </header>
 
-  <main class="container">
-    <section class="card">
-      <h2>Status</h2>
-      <p>This is a placeholder for the advertiser platform. Next steps: venue claim, profile, campaigns, reporting.</p>
-      <div class="actions">
-        <button id="btn-demo" type="button">Run demo action</button>
-      </div>
-      <pre id="log" class="log" aria-live="polite"></pre>
-    </section>
-
-    <section class="card">
-      <h2>Planned features</h2>
-      <ul>
-        <li>Claim a venue</li>
-        <li>Advertiser profile + payments</li>
-        <li>Create campaigns (Boost, Offers, Crawl Boost)</li>
-        <li>Reporting (appearances, opens, directions, offer reveals)</li>
-      </ul>
-    </section>
-  </main>
+  <main class="container" id="view" aria-live="polite"></main>
 
   <script src="/analytics.js"></script>
+  <script src="./ads-state.js"></script>
+  <script src="./ads-router.js"></script>
+  <script src="./ads-views.js"></script>
   <script src="./ads.js"></script>
 </body>
 </html>
