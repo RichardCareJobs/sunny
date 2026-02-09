@@ -153,10 +153,6 @@
     closeBanner();
   }
 
-  function openCookieSettings() {
-    showConsentBanner();
-  }
-
   function hasAnalyticsConsent() {
     const stored = readStoredConsent();
     if (stored) consentState.choice = stored.choice;
@@ -182,7 +178,6 @@
     initConsent,
     showConsentBanner,
     applyConsent,
-    openCookieSettings,
     closeBanner,
     hasAnalyticsConsent
   };
