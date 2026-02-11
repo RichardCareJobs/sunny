@@ -77,6 +77,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const CRAWL_TIME_STEP_MINUTES = 15;
   const MAX_CRAWL_VENUES = 12;
   const CRAWL_MAX_STEP_METERS = 200;
+  const SHARED_CRAWL_VERSION = 1;
+  const MAX_SHARED_COMPRESSED_CHARS = 6000;
+  const MAX_SHARED_DECOMPRESSED_CHARS = 50000;
 
   let crawlLayer = [];
   let crawlState = null;
@@ -1617,10 +1620,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(crawlAddPanel) crawlAddPanel.classList.add("hidden");
     exitCrawlMode();
     const url=new URL(window.location.href);
+    let didChange=false;
     if(url.searchParams.has("crawl")){
       url.searchParams.delete("crawl");
-      window.history.replaceState({}, "", url.toString());
+      didChange=true;
     }
+    if(url.searchParams.has("c")){
+      url.searchParams.delete("c");
+      didChange=true;
+    }
+    if(url.hash&&url.hash.startsWith("#c=")){
+      url.hash="";
+      didChange=true;
+    }
+    if(didChange) window.history.replaceState({}, "", url.toString());
     resetCrawlBuilderState();
   }
 
@@ -1980,31 +1993,143 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return btoa(unescape(encodeURIComponent(json)));
   }
 
+  function toRoundedCoord(value){
+    const num=Number(value);
+    if(!Number.isFinite(num)) return null;
+    return Math.round(num*1e6)/1e6;
+  }
+
+  function buildCompactSharedCrawlPayload(){
+    if(!crawlState?.venues?.length) return null;
+    const originLat=toRoundedCoord(crawlState.origin?.lat);
+    const originLng=toRoundedCoord(crawlState.origin?.lng);
+    const payload={
+      v: SHARED_CRAWL_VERSION,
+      startAt: crawlState.startAt instanceof Date ? crawlState.startAt.toISOString() : null,
+      orderMode: crawlState.orderMode || "location",
+      origin: (originLat!==null&&originLng!==null)
+        ? {
+          lat: originLat,
+          lng: originLng,
+          ...(crawlState.origin?.label ? { label: String(crawlState.origin.label).slice(0,80) } : {})
+        }
+        : null,
+      venues: crawlState.venues.map((venue)=>({
+        id: venue?.id,
+        ...(venue?.name ? { name: venue.name } : {}),
+        ...(Number.isFinite(Number(venue?.lat)) ? { lat: toRoundedCoord(venue.lat) } : {}),
+        ...(Number.isFinite(Number(venue?.lng)) ? { lng: toRoundedCoord(venue.lng) } : {}),
+        ...(venue?.hangMinutes ? { hang: Math.max(15,Math.round(Number(venue.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES)) } : {})
+      }))
+    };
+    return payload;
+  }
+
+  function compressSharedPayload(payload){
+    if(!payload) return null;
+    if(!window.LZString?.compressToEncodedURIComponent){
+      console.warn("LZString missing, using legacy crawl serializer.");
+      return null;
+    }
+    const json=JSON.stringify(payload);
+    if(json.length>MAX_SHARED_DECOMPRESSED_CHARS) throw new Error("SHARE_PAYLOAD_TOO_LARGE");
+    const compressed=window.LZString.compressToEncodedURIComponent(json);
+    if(!compressed) throw new Error("SHARE_COMPRESS_FAILED");
+    if(compressed.length>MAX_SHARED_COMPRESSED_CHARS) throw new Error("SHARE_PAYLOAD_TOO_LARGE");
+    return compressed;
+  }
+
+  function decompressSharedPayload(encoded){
+    if(!encoded||typeof encoded!=="string") return null;
+    if(encoded.length>MAX_SHARED_COMPRESSED_CHARS) throw new Error("SHARED_LINK_TOO_LARGE");
+    if(!window.LZString?.decompressFromEncodedURIComponent){
+      throw new Error("SHARED_LINK_DECODER_UNAVAILABLE");
+    }
+    const json=window.LZString.decompressFromEncodedURIComponent(encoded);
+    if(!json) throw new Error("SHARED_LINK_DECOMPRESS_FAILED");
+    if(json.length>MAX_SHARED_DECOMPRESSED_CHARS) throw new Error("SHARED_LINK_TOO_LARGE");
+    const payload=JSON.parse(json);
+    return payload;
+  }
+
+  function normalizeSharedVenue(venue,index){
+    if(!venue||typeof venue!=="object") return null;
+    const id=typeof venue.id==="string"&&venue.id.trim() ? venue.id.trim() : null;
+    if(!id) return null;
+    const hangMinutes=Math.max(15,Number(venue.hang||venue.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES);
+    const nextVenue={
+      id,
+      name: typeof venue.name==="string" ? venue.name : "",
+      crawlIndex:index,
+      hangMinutes,
+      remind:false
+    };
+    if(Number.isFinite(Number(venue.lat))&&Number.isFinite(Number(venue.lng))){
+      nextVenue.lat=Number(venue.lat);
+      nextVenue.lng=Number(venue.lng);
+    }
+    return nextVenue;
+  }
+
+  function buildHydratedCrawlState(rawData){
+    if(!rawData||!Array.isArray(rawData.venues)) return null;
+    const startAt=rawData.startAt ? new Date(rawData.startAt) : new Date();
+    const validStartAt=startAt instanceof Date&&!Number.isNaN(startAt.getTime()) ? startAt : new Date();
+    const origin=(rawData.origin&&isValidCoord(rawData.origin.lat,rawData.origin.lng))
+      ? {
+        lat:Number(rawData.origin.lat),
+        lng:Number(rawData.origin.lng),
+        ...(rawData.origin.label ? { label:String(rawData.origin.label) } : {})
+      }
+      : null;
+    const orderMode=rawData.orderMode||"location";
+    const normalizedVenues=rawData.venues
+      .map((venue,index)=>normalizeSharedVenue(venue,index))
+      .filter(Boolean)
+      .filter(v=>!isGloballyExcludedVenue(v));
+    if(!normalizedVenues.length) return null;
+    const uniqueVenues=selectUniqueAddressVenues(normalizedVenues,normalizedVenues.length).map(annotateCrawlVenue);
+    const pubBarCount=uniqueVenues.filter(venue=>!venue.crawlFallback).length;
+    const fallbackCount=uniqueVenues.length-pubBarCount;
+    return { venues: uniqueVenues, startAt:validStartAt, origin, orderMode, pubBarCount, fallbackCount };
+  }
+
+  function applyHydratedCrawlState(nextState){
+    if(!nextState) return false;
+    crawlState=nextState;
+    updateCrawlSchedule();
+    hasAutoFitCrawlOnLoad=false;
+    enterCrawlMode({ autoFit:true });
+    updateCrawlList();
+    return true;
+  }
+
+  function showInvalidSharedCrawlMessage(){
+    window.alert("Invalid shared crawl link. Please check the URL and try again.");
+  }
+
+  function hydrateCrawlFromCompactLink(encoded){
+    if(!encoded) return false;
+    try{
+      const data=decompressSharedPayload(encoded);
+      const nextState=buildHydratedCrawlState(data);
+      if(!nextState) throw new Error("SHARED_LINK_INVALID");
+      return applyHydratedCrawlState(nextState);
+    } catch(err){
+      console.warn("Unable to hydrate compact crawl link",err);
+      showInvalidSharedCrawlMessage();
+      return false;
+    }
+  }
+
   function hydrateCrawlFromLink(encoded){
     if(!encoded) return false;
     try{
       const json=decodeURIComponent(escape(atob(encoded)));
       const data=JSON.parse(json);
-      if(!data||!Array.isArray(data.venues)) return false;
-      const startAt=data.startAt ? new Date(data.startAt) : new Date();
-      const origin=data.origin || null;
-      const orderMode=data.orderMode || "location";
-      const venues=data.venues.map((v,index)=>({
-        ...v,
-        crawlIndex:index,
-        hangMinutes:Number(v.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES,
-        remind:false
-      }));
-      const filtered=venues.filter(v=>v&&!isGloballyExcludedVenue(v));
-      const uniqueVenues=selectUniqueAddressVenues(filtered,filtered.length).map(annotateCrawlVenue);
-      const pubBarCount=uniqueVenues.filter(venue=>!venue.crawlFallback).length;
-      const fallbackCount=uniqueVenues.length-pubBarCount;
-      crawlState={ venues: uniqueVenues, startAt, origin, orderMode, pubBarCount, fallbackCount };
-      updateCrawlSchedule();
-      hasAutoFitCrawlOnLoad=false;
-      enterCrawlMode({ autoFit:true });
-      updateCrawlList();
-      return true;
+      const nextState=buildHydratedCrawlState(data);
+      if(!nextState) return false;
+      return applyHydratedCrawlState(nextState);
     } catch(err){
       console.warn("Unable to hydrate crawl link",err);
       return false;
@@ -3171,12 +3296,29 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function shareCrawl(){
     if(!crawlState) return;
-    const encoded=serializeCrawl();
-    if(!encoded) return;
-    const url=new URL(window.location.href);
-    url.searchParams.set("crawl",encoded);
+    let shareUrl=null;
+    try{
+      const compactPayload=buildCompactSharedCrawlPayload();
+      const compactEncoded=compressSharedPayload(compactPayload);
+      if(compactEncoded){
+        const url=new URL(window.location.href);
+        url.searchParams.delete("crawl");
+        url.searchParams.delete("c");
+        url.hash=`c=${compactEncoded}`;
+        shareUrl=url.toString();
+      }
+    } catch(err){
+      console.warn("Unable to build compact crawl share URL",err);
+    }
+    if(!shareUrl){
+      const legacyEncoded=serializeCrawl();
+      if(!legacyEncoded) return;
+      const fallbackUrl=new URL(window.location.href);
+      fallbackUrl.searchParams.set("crawl",legacyEncoded);
+      shareUrl=fallbackUrl.toString();
+    }
     if(navigator.share){
-      navigator.share({ title:"Sunny pub crawl", text:"Join my pub crawl", url:url.toString() })
+      navigator.share({ title:"Sunny pub crawl", text:"Join my pub crawl", url:shareUrl })
         .then(()=>{
           trackEvent("crawl_shared",{
             venue_count: crawlState.venues?.length || 0,
@@ -3186,14 +3328,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         .catch(()=>{});
       return;
     }
-    navigator.clipboard?.writeText(url.toString()).then(()=>{
+    navigator.clipboard?.writeText(shareUrl).then(()=>{
       alert("Crawl link copied to clipboard!");
       trackEvent("crawl_shared",{
         venue_count: crawlState.venues?.length || 0,
         share_method: "copy_link"
       });
     }).catch(()=>{
-      prompt("Copy this crawl link:",url.toString());
+      prompt("Copy this crawl link:",shareUrl);
       trackEvent("crawl_shared",{
         venue_count: crawlState.venues?.length || 0,
         share_method: "share_button"
@@ -3862,10 +4004,39 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     renderMarkers();
     debouncedLoadVisible();
     ensureCrawlFab();
+    const pathMatch=window.location.pathname.match(/^\/c\/([^/]+)$/);
+    if(pathMatch){
+      window.alert("Resolving shared crawl… This short-link format needs the short-link service, which is not configured in this build.");
+    }
     const params=new URLSearchParams(window.location.search);
+    const hashParams=new URLSearchParams(window.location.hash.replace(/^#/,""));
+    const hashCompactParam=hashParams.get("c");
+    if(hashCompactParam&&hydrateCrawlFromCompactLink(hashCompactParam)) return;
+    const compactParam=params.get("c");
+    if(compactParam&&hydrateCrawlFromCompactLink(compactParam)) return;
     const crawlParam=params.get("crawl");
     if(crawlParam) hydrateCrawlFromLink(crawlParam);
   }
+
+  window.__sunnyDevRoundTripSharedCrawl=(state)=>{
+    const previousState=crawlState;
+    try{
+      crawlState=state;
+      const payload=buildCompactSharedCrawlPayload();
+      const encoded=compressSharedPayload(payload);
+      const hydrated=buildHydratedCrawlState(decompressSharedPayload(encoded));
+      return {
+        encodedLength: encoded?.length || 0,
+        inputVenueCount: Array.isArray(state?.venues) ? state.venues.length : 0,
+        outputVenueCount: hydrated?.venues?.length || 0,
+        orderMode: hydrated?.orderMode || null,
+        hasOrigin: !!hydrated?.origin,
+        ok: !!hydrated
+      };
+    } finally {
+      crawlState=previousState;
+    }
+  };
 
   let domReady=false;
   let mapsReady=false;
