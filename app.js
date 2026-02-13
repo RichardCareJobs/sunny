@@ -29,7 +29,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
-  const DEBUG_CRAWL = true;
+  const DEBUG_CRAWL = false;
   const OUTDOOR_ONLY = true;
   const preferPubsAndBarsForCrawls = true;
   const DEV_PLACES_LOGGING = DEBUG_PLACES || ["localhost","127.0.0.1",""].includes(window.location.hostname);
@@ -95,6 +95,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let crawlListPanel = null;
   let crawlAddPanel = null;
   let crawlNotifications = new Map();
+  let recentCrawlSignatures = [];
   let crawlBuildRequestId = 0;
   let isCrawlBuildInProgress = false;
   let placesService = null;
@@ -1798,17 +1799,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
   }
 
-  function orderCrawlVenuesWithPubPreference(venues,origin,mode,startAt,maxStepMeters){
+  function orderCrawlVenuesWithPubPreference(venues,origin,mode,startAt,maxStepMeters,options={}){
     const pubBars=venues.filter(venue=>!venue.crawlFallback);
     const fallbacks=venues.filter(venue=>venue.crawlFallback);
     if(!pubBars.length){
-      return orderVenues(fallbacks,origin,mode,startAt,maxStepMeters);
+      return orderVenues(fallbacks,origin,mode,startAt,maxStepMeters,options);
     }
-    const orderedPubs=orderVenues(pubBars,origin,mode,startAt,maxStepMeters);
+    const orderedPubs=orderVenues(pubBars,origin,mode,startAt,maxStepMeters,options);
     if(!orderedPubs.ok) return orderedPubs;
     if(!fallbacks.length) return orderedPubs;
     const fallbackOrigin=orderedPubs.venues[orderedPubs.venues.length-1];
-    const orderedFallbacks=orderVenues(fallbacks,fallbackOrigin,mode,startAt,maxStepMeters);
+    const orderedFallbacks=orderVenues(fallbacks,fallbackOrigin,mode,startAt,maxStepMeters,options);
     if(!orderedFallbacks.ok) return orderedFallbacks;
     return {
       ok:true,
@@ -1915,10 +1916,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       selectionMeta=selectCrawlVenuesWithPubPreference(selectionPool,count);
       selectionPool=selectionMeta.selected;
     }
-    if(preferPubsAndBarsForCrawls && selectionMeta){
-      return orderCrawlVenuesWithPubPreference(selectionPool,origin,orderMode,startAt,maxStepMeters);
-    }
-    return orderVenues(selectionPool,origin,orderMode,startAt,maxStepMeters);
+    return buildCrawlWithRetries(selectionPool,{
+      origin,
+      mode: orderMode,
+      startAt,
+      maxStepMeters,
+      maxAttempts: 20,
+      preferPubBar: preferPubsAndBarsForCrawls && !!selectionMeta
+    });
   }
 
   function generateCrawlVenues(origin,count,startAt,orderMode,options){
@@ -1976,41 +1981,32 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return altitudeDeg;
   }
 
-  function pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters){
+  function pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters,{ topKRandom=3 }={}){
     const candidates=[];
     remaining.forEach((venue,index)=>{
       const distance=haversineMeters(current.lat,current.lng,venue.lat,venue.lng);
       if(Number.isFinite(distance) && distance<=maxStepMeters){
-        candidates.push({ venue, index, distance });
+        candidates.push({ venue, index, distance, score: mode==="sun" ? getSunScore(venue,startAt) : -distance });
       }
     });
     if(!candidates.length) return null;
-    const pool=candidates;
-    let bestIndex=pool[0]?.index ?? 0;
-    let bestDistance=Infinity;
-    let bestScore=-Infinity;
-    pool.forEach((item)=>{
+    const ranked=[...candidates].sort((a,b)=>{
       if(mode==="sun"){
-        const score=getSunScore(item.venue,startAt);
-        if(score>bestScore || (score===bestScore && item.distance<bestDistance)){
-          bestScore=score;
-          bestDistance=item.distance;
-          bestIndex=item.index;
-        }
-      }else{
-        if(item.distance<bestDistance){
-          bestDistance=item.distance;
-          bestIndex=item.index;
-        }
+        if(b.score!==a.score) return b.score-a.score;
+        return a.distance-b.distance;
       }
+      return a.distance-b.distance;
     });
-    const [next]=remaining.splice(bestIndex,1);
-    return { venue: next, distance: bestDistance };
+    const pickPool=ranked.slice(0,Math.max(1,Math.min(topKRandom,ranked.length)));
+    const chosen=pickPool[Math.floor(Math.random()*pickPool.length)];
+    const [next]=remaining.splice(chosen.index,1);
+    return { venue: next, distance: chosen.distance };
   }
 
-  function orderVenues(venues,origin,mode,startAt,maxStepMeters){
+  function orderVenues(venues,origin,mode,startAt,maxStepMeters,options={}){
     if(!Array.isArray(venues)) return { ok:false, reason:"OTHER", venues: [] };
     if(!isValidCoord(origin?.lat,origin?.lng)) return { ok:false, reason:"INVALID_COORDS", venues: [] };
+    const { preferredSeedIds=[], topKRandom=3 }=options;
     const candidates=venues.filter(v=>v&&isValidCoord(v.lat,v.lng));
     if(candidates.length===0) return { ok:false, reason:"INVALID_COORDS", venues: [] };
     const seedRanked=[...candidates]
@@ -2020,7 +2016,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }))
       .filter(item=>Number.isFinite(item.distance))
       .sort((a,b)=>a.distance-b.distance);
-    const seedIndices=new Set(seedRanked.slice(0,Math.min(10,seedRanked.length)).map(item=>item.index));
+    const seedIndices=new Set();
+    preferredSeedIds.forEach((id)=>{
+      const idx=candidates.findIndex(v=>v.id===id);
+      if(idx>=0) seedIndices.add(idx);
+    });
+    seedRanked.slice(0,Math.min(10,seedRanked.length)).forEach(item=>seedIndices.add(item.index));
     if(mode==="sun"){
       const sunRanked=[...candidates]
         .map((venue,index)=>({ index, score:getSunScore(venue,startAt) }))
@@ -2043,7 +2044,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       let maxDistance=firstDistance;
       let failed=false;
       while(remaining.length){
-        const next=pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters);
+        const next=pickNextCrawlVenue(remaining,current,mode,startAt,maxStepMeters,{ topKRandom });
         if(!next){
           failed=true;
           break;
@@ -2063,6 +2064,93 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return { ok:false, reason:"NO_VALID_PATH_WITHIN_CONSTRAINTS", venues: [] };
   }
 
+
+
+  function shuffleVenues(list=[]){
+    const arr=[...(Array.isArray(list)?list:[])];
+    for(let i=arr.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [arr[i],arr[j]]=[arr[j],arr[i]];
+    }
+    return arr;
+  }
+
+  function computeDenseStartVenueIds(candidates,maxStepMeters,limit=15){
+    const ranked=(Array.isArray(candidates)?candidates:[]).map((venue)=>{
+      let neighborCount=0;
+      candidates.forEach((other)=>{
+        if(!other||other.id===venue.id) return;
+        const distance=haversineMeters(venue.lat,venue.lng,other.lat,other.lng);
+        if(Number.isFinite(distance) && distance<=maxStepMeters) neighborCount+=1;
+      });
+      return { id: venue.id, neighborCount };
+    }).sort((a,b)=>b.neighborCount-a.neighborCount);
+    return ranked.slice(0,Math.min(limit,ranked.length)).map(item=>item.id);
+  }
+
+  function getCrawlSignature(venues=[]){
+    const ids=(Array.isArray(venues)?venues:[]).map(v=>String(v?.id||"").trim()).filter(Boolean).sort();
+    return ids.join("|");
+  }
+
+  function rememberCrawlSignature(signature){
+    if(!signature) return;
+    recentCrawlSignatures=recentCrawlSignatures.filter(item=>item!==signature);
+    recentCrawlSignatures.push(signature);
+    if(recentCrawlSignatures.length>5){
+      recentCrawlSignatures=recentCrawlSignatures.slice(-5);
+    }
+  }
+
+  function tryBuildCrawlOnce(candidates,{ origin, mode, startAt, maxStepMeters, preferPubBar },attemptConfig={}){
+    const shuffled=attemptConfig.shuffle ? shuffleVenues(candidates) : [...candidates];
+    const preferredSeedIds=[];
+    if(attemptConfig.startVenueId) preferredSeedIds.push(attemptConfig.startVenueId);
+    if(preferPubBar){
+      return orderCrawlVenuesWithPubPreference(shuffled,origin,mode,startAt,maxStepMeters,{ preferredSeedIds, topKRandom: 3 });
+    }
+    return orderVenues(shuffled,origin,mode,startAt,maxStepMeters,{ preferredSeedIds, topKRandom: 3 });
+  }
+
+  function buildCrawlWithRetries(candidates,options={}){
+    const { origin, mode, startAt, maxStepMeters, maxAttempts=20, preferPubBar=false }=options;
+    const denseStarts=computeDenseStartVenueIds(candidates,maxStepMeters,15);
+    let firstSuccessfulRecentResult=null;
+    let lastFailureReason="NO_VALID_PATH_WITHIN_CONSTRAINTS";
+    for(let attemptIndex=0;attemptIndex<maxAttempts;attemptIndex++){
+      const startVenueId=denseStarts.length ? denseStarts[attemptIndex%denseStarts.length] : null;
+      const attempt=tryBuildCrawlOnce(candidates,{ origin, mode, startAt, maxStepMeters, preferPubBar },{
+        startVenueId,
+        shuffle: attemptIndex>0
+      });
+      if(!attempt.ok){
+        lastFailureReason=attempt.reason||lastFailureReason;
+        if(DEBUG_CRAWL){
+          console.log("[CrawlDebug] attempt failed",{ attemptIndex: attemptIndex+1, startVenueId, reason: attempt.reason||"UNKNOWN" });
+        }
+        continue;
+      }
+      const signature=getCrawlSignature(attempt.venues);
+      const isRecent=signature && recentCrawlSignatures.includes(signature);
+      if(isRecent){
+        if(!firstSuccessfulRecentResult) firstSuccessfulRecentResult=attempt;
+        if(DEBUG_CRAWL){
+          console.log("[CrawlDebug] attempt rejected recent signature",{ attemptIndex: attemptIndex+1, startVenueId, signature });
+        }
+        continue;
+      }
+      rememberCrawlSignature(signature);
+      if(DEBUG_CRAWL){
+        console.log("[CrawlDebug] attempt success",{ attemptIndex: attemptIndex+1, startVenueId, signature });
+      }
+      return attempt;
+    }
+    if(firstSuccessfulRecentResult){
+      rememberCrawlSignature(getCrawlSignature(firstSuccessfulRecentResult.venues));
+      return firstSuccessfulRecentResult;
+    }
+    return { ok:false, reason:lastFailureReason, venues: [] };
+  }
   function clearCrawlNotifications(){
     crawlNotifications.forEach((timeoutId)=>clearTimeout(timeoutId));
     crawlNotifications.clear();
