@@ -80,6 +80,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const SHARED_CRAWL_VERSION = 1;
   const MAX_SHARED_COMPRESSED_CHARS = 6000;
   const MAX_SHARED_DECOMPRESSED_CHARS = 50000;
+  const INCLUDE_NO_OUTDOOR_STORAGE_KEY = "sunny_include_no_outdoor";
 
   let crawlLayer = [];
   let crawlState = null;
@@ -101,6 +102,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let activeRequestId = 0;
   let activeRequestController = null;
   const MAX_PAGES_PER_PASS = 1;
+  let includeNoOutdoorVenues = loadIncludeNoOutdoorPreference();
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/marker.png";
   let markerIcon = null;
@@ -169,7 +171,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const radius=Math.round(radiusMeters || 0);
     const lat=roundToGrid(center.lat,VIEWPORT_CACHE_GRID_DEG);
     const lng=roundToGrid(center.lng,VIEWPORT_CACHE_GRID_DEG);
-    return `crawl:${lat.toFixed(3)}:${lng.toFixed(3)}:r${radius}:${getFilterHash()}`;
+    return `crawl:${lat.toFixed(3)}:${lng.toFixed(3)}:r${radius}:${getFilterHash()}:includeNoOutdoor:${shouldIncludeNoOutdoorVenues()?1:0}`;
   }
   function getViewportCacheEntry(key){
     return viewportCache.get(key) || null;
@@ -245,6 +247,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return Number.isFinite(lat)&&Number.isFinite(lng);
   }
   function formatDistanceKm(km){ return km<1 ? `${Math.round(km*1000)} m` : `${km.toFixed(1)} km`; }
+
+  function loadIncludeNoOutdoorPreference(){
+    try{
+      return localStorage.getItem(INCLUDE_NO_OUTDOOR_STORAGE_KEY)==="1";
+    } catch {
+      return false;
+    }
+  }
+  function persistIncludeNoOutdoorPreference(value){
+    includeNoOutdoorVenues=!!value;
+    try{
+      localStorage.setItem(INCLUDE_NO_OUTDOOR_STORAGE_KEY,includeNoOutdoorVenues?"1":"0");
+    } catch {}
+  }
+  function shouldIncludeNoOutdoorVenues(){
+    return !!includeNoOutdoorVenues;
+  }
   function formatAddress(tags={}){
     if(tags["addr:full"]) return tags["addr:full"];
     const hn=tags["addr:housenumber"]||"";
@@ -1411,11 +1430,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return !hit;
     });
     const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place));
-    const outdoorFiltered=cafeFiltered.filter(place=>{
+    const crawlEligible=cafeFiltered.map(place=>{
       const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
-      return OUTDOOR_ONLY ? outdoorLikely : true;
+      return place;
     });
+    const outdoorFiltered=shouldIncludeNoOutdoorVenues() ? crawlEligible : crawlEligible.filter(place=>place.outdoorLikely);
     const compositionAdjusted=enforcePubFirstComposition(outdoorFiltered,{ includeCafes });
     const finalPlaces=compositionAdjusted.slice(0,Math.max(MIN_TOTAL_RESULTS,compositionAdjusted.length));
     if(DEBUG_FILTERS||DEV_PLACES_LOGGING){
@@ -1648,8 +1668,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return getMapCenter();
   }
 
+
+  function passesBaseCrawlFilters(place){
+    return !!place && isValidCoord(place.lat,place.lng) && !isGloballyExcludedVenue(place);
+  }
+  function isOutdoorEligible(place){
+    return !!place && (!!place.outdoorLikely || getOutdoorLikely(place));
+  }
+  function classifyCrawlEligibility(place){
+    const passesBase=passesBaseCrawlFilters(place);
+    const isOutdoor=passesBase && isOutdoorEligible(place);
+    return {
+      passesBase,
+      isOutdoor,
+      passesWhenOutdoorOnly: passesBase && isOutdoor
+    };
+  }
   function chooseCrawlVenuesFromList(list,origin,count=4){
-    const venues=(Array.isArray(list)?list:[]).filter(v=>v&&isValidCoord(v.lat,v.lng)&&!isGloballyExcludedVenue(v));
+    const venues=(Array.isArray(list)?list:[]).filter(v=>passesBaseCrawlFilters(v));
     if(venues.length===0) return [];
     return venues
       .map(v=>({ venue:v, distance:haversine(origin.lat,origin.lng,v.lat,v.lng) }))
@@ -1658,6 +1694,34 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       .slice(0,count);
   }
 
+
+
+  function selectCrawlVenuesWithOutdoorRule(venues,count,{ includeNoOutdoor=false }={}){
+    const selected=[];
+    const usedAddresses=new Set();
+    const maxNonOutdoor=Math.floor(count/2);
+    let nonOutdoorSelected=0;
+    const addVenueIfEligible=(venue,requireOutdoor)=>{
+      if(selected.length>=count) return;
+      const eligibility=classifyCrawlEligibility(venue);
+      if(!eligibility.passesBase) return;
+      if(requireOutdoor && !eligibility.isOutdoor) return;
+      if(!requireOutdoor && eligibility.isOutdoor) return;
+      const key=normalizeAddressKey(venue);
+      if(!key||usedAddresses.has(key)) return;
+      if(!eligibility.isOutdoor){
+        if(!includeNoOutdoor || nonOutdoorSelected>=maxNonOutdoor) return;
+        nonOutdoorSelected+=1;
+      }
+      usedAddresses.add(key);
+      selected.push(venue);
+    };
+    venues.forEach(venue=>addVenueIfEligible(venue,true));
+    if(includeNoOutdoor && selected.length<count){
+      venues.forEach(venue=>addVenueIfEligible(venue,false));
+    }
+    return { selected, maxNonOutdoor, nonOutdoorSelected };
+  }
   function chooseCrawlVenues(origin,count=4){
     return chooseCrawlVenuesFromList(Object.values(allVenues),origin,count);
   }
@@ -1748,13 +1812,25 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     assert(mixed.selected[0] && !mixed.selected[0].crawlFallback && mixed.selected[2]?.crawlFallback,"Expected pubs first then fallback venues.");
     const noPubs=selectCrawlVenuesWithPubPreference([{ id:"1", name:"Cafe", types:["cafe"] }],1);
     assert(noPubs.selected[0]?.crawlFallback,"Expected fallback when no pubs.");
+    const outdoorMix=[
+      { id:"o1", name:"Outdoor 1", lat:0, lng:0, outdoorLikely:true, address:"1 Main" },
+      { id:"o2", name:"Outdoor 2", lat:0, lng:0.001, outdoorLikely:true, address:"2 Main" },
+      { id:"o3", name:"Outdoor 3", lat:0, lng:0.002, outdoorLikely:true, address:"3 Main" },
+      { id:"n1", name:"Indoor 1", lat:0, lng:0.003, outdoorLikely:false, address:"4 Main" },
+      { id:"n2", name:"Indoor 2", lat:0, lng:0.004, outdoorLikely:false, address:"5 Main" },
+      { id:"n3", name:"Indoor 3", lat:0, lng:0.005, outdoorLikely:false, address:"6 Main" }
+    ];
+    const limitedMix=selectCrawlVenuesWithOutdoorRule(outdoorMix,5,{ includeNoOutdoor:true });
+    assert(limitedMix.selected.filter(v=>!classifyCrawlEligibility(v).isOutdoor).length<=2,"Expected max non-outdoor cap floor(N/2) for size 5.");
+    const outdoorOnly=selectCrawlVenuesWithOutdoorRule(outdoorMix,4,{ includeNoOutdoor:false });
+    assert(outdoorOnly.selected.every(v=>classifyCrawlEligibility(v).isOutdoor),"Expected outdoor-only selection when toggle is off.");
   }
   if(DEV_CRAWL_LOGGING) runCrawlSelectionAssertions();
 
   function getCrawlCandidatesFromStore(center,radiusMeters){
     const totalVenuesInStore=Object.values(allVenues).length;
     const withValidCoords=Object.values(allVenues).filter(v=>v&&isValidCoord(v.lat,v.lng));
-    const candidatesAfterTypeFilter=withValidCoords.filter(v=>!isGloballyExcludedVenue(v));
+    const candidatesAfterTypeFilter=withValidCoords.filter(v=>passesBaseCrawlFilters(v));
     const withinRadius=candidatesAfterTypeFilter.filter(v=>{
       const distance=haversineMeters(center.lat,center.lng,v.lat,v.lng);
       return Number.isFinite(distance) && distance<=radiusMeters;
@@ -1787,19 +1863,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const orderedPool=pool.slice(startIndex).concat(pool.slice(0,startIndex));
       selectionPool=orderedPool;
     }
+    const includeNonOutdoor=shouldIncludeNoOutdoorVenues();
+    const selectionByOutdoor=selectCrawlVenuesWithOutdoorRule(selectionPool,count,{ includeNoOutdoor: includeNonOutdoor });
+    if(selectionByOutdoor.selected.length<count){
+      return { ok:false, reason:"NOT_ENOUGH_CANDIDATES", venues: selectionByOutdoor.selected };
+    }
+    selectionPool=selectionByOutdoor.selected;
     if(preferPubsAndBarsForCrawls){
       selectionMeta=selectCrawlVenuesWithPubPreference(selectionPool,count);
       selectionPool=selectionMeta.selected;
     }
-    // Enforce unique addresses so a crawl never repeats a location.
-    const uniqueSelected=selectUniqueAddressVenues(selectionPool,count);
-    if(uniqueSelected.length<count){
-      return { ok:false, reason:"NOT_ENOUGH_CANDIDATES", venues: uniqueSelected };
-    }
     if(preferPubsAndBarsForCrawls && selectionMeta){
-      return orderCrawlVenuesWithPubPreference(uniqueSelected,origin,orderMode,startAt,maxStepMeters);
+      return orderCrawlVenuesWithPubPreference(selectionPool,origin,orderMode,startAt,maxStepMeters);
     }
-    return orderVenues(uniqueSelected,origin,orderMode,startAt,maxStepMeters);
+    return orderVenues(selectionPool,origin,orderMode,startAt,maxStepMeters);
   }
 
   function generateCrawlVenues(origin,count,startAt,orderMode,options){
@@ -3368,12 +3445,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <div class="crawl-builder__suggestions"></div>
             <div class="crawl-builder__status" role="status"></div>
           </div>
-          <div class="crawl-builder__section crawl-order">
-            <h3>Order places based on sun or location?</h3>
-            <div class="crawl-builder__order-options">
-              <button type="button" class="crawl-order-option" data-order="sun">Sun</button>
-              <button type="button" class="crawl-order-option" data-order="location">Location</button>
-            </div>
+          <div class="crawl-builder__section">
+            <label class="crawl-card__toggle">
+              <input type="checkbox" class="crawl-card__toggle-input" data-crawl-setting="include-no-outdoor">
+              <span class="crawl-card__toggle-track"></span>
+              <span class="crawl-card__toggle-label">Include venues with no outdoor area</span>
+            </label>
           </div>
           <div class="crawl-builder__section crawl-start hidden">
             <h3>When do you want to start?</h3>
@@ -3392,7 +3469,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const optionButtons=Array.from(container.querySelectorAll(".crawl-option"));
     const startSection=container.querySelector(".crawl-start");
     const startButtons=Array.from(container.querySelectorAll(".crawl-start-option"));
-    const orderButtons=Array.from(container.querySelectorAll(".crawl-order-option"));
+    const includeNoOutdoorToggle=container.querySelector('[data-crawl-setting="include-no-outdoor"]');
     const timeInput=container.querySelector(".crawl-builder__time-input");
     const statusEl=container.querySelector(".crawl-builder__status");
     const input=container.querySelector(".crawl-builder__input");
@@ -3434,6 +3511,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         btn.classList.toggle("is-loading",busy);
       });
       timeInput.disabled=busy;
+      if(includeNoOutdoorToggle) includeNoOutdoorToggle.disabled=busy;
       updateInputDisabled();
     }
     function cancelCrawlBuild(){
@@ -3534,11 +3612,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(option==="around") input.focus();
       startSection.classList.remove("hidden");
     }
-    function setOrderMode(mode){
-      orderMode=mode;
-      orderButtons.forEach(btn=>btn.classList.toggle("is-selected",btn.dataset.order===mode));
-    }
-
     optionButtons.forEach(btn=>{
       btn.addEventListener("click",async()=>{
         if(btn.disabled) return;
@@ -3557,11 +3630,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
 
-    orderButtons.forEach(btn=>{
-      btn.addEventListener("click",()=>{
-        setOrderMode(btn.dataset.order);
+    if(includeNoOutdoorToggle){
+      includeNoOutdoorToggle.checked=shouldIncludeNoOutdoorVenues();
+      includeNoOutdoorToggle.addEventListener("change",()=>{
+        persistIncludeNoOutdoorPreference(includeNoOutdoorToggle.checked);
       });
-    });
+    }
 
     startButtons.forEach(btn=>{
       btn.addEventListener("click",async()=>{
@@ -3638,7 +3712,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         setBuilderLoading(false);
         crawlBuilder.locationOverride=null;
         if(suggestionsEl) suggestionsEl.innerHTML="";
-        setOrderMode("location");
+        orderMode="location";
+        if(includeNoOutdoorToggle) includeNoOutdoorToggle.checked=shouldIncludeNoOutdoorVenues();
         startButtons.forEach(btn=>btn.classList.remove("is-selected"));
         startSection.classList.remove("hidden");
         timeInput.classList.add("hidden");
