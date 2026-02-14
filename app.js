@@ -12,6 +12,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
   const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
   const FAVOURITES_STORAGE_KEY = "sunny:favourites:v1";
+  const SUNNY_SAVES_STORAGE_KEY = "sunny_saves_v1";
   const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 3;
   const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 5;
   const VIEWPORT_CACHE_GRID_DEG = 0.002;
@@ -95,6 +96,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let favouritesSheet = null;
   let favouritesSheetBody = null;
   let favouritesBackdrop = null;
+  let savesList = [];
+  let savesFabButton = null;
+  let savesFabBadge = null;
+  let savesSheet = null;
+  let savesSheetBody = null;
+  let savesBackdrop = null;
+  let savesSortMode = "recent";
   let bottomRightActions = null;
 
   const CRAWL_DEFAULT_HANG_MINUTES = 45;
@@ -245,6 +253,131 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } catch {
       return [];
     }
+  }
+  function parseAddedAt(value){
+    const dateMs=Date.parse(String(value||""));
+    if(Number.isFinite(dateMs)) return dateMs;
+    return Date.now();
+  }
+  function normalizeSaveEntry(entry){
+    if(!entry||typeof entry!=="object") return null;
+    const placeId=String(entry.placeId||entry.place_id||entry.id||"").trim();
+    const name=String(entry.name||"").trim();
+    const lat=Number(entry.lat);
+    const lng=Number(entry.lng);
+    if(!placeId||!name||!Number.isFinite(lat)||!Number.isFinite(lng)) return null;
+    return {
+      placeId,
+      name,
+      address:String(entry.address||entry.suburb||entry.vicinity||"").trim(),
+      lat,
+      lng,
+      addedAt:new Date(parseAddedAt(entry.addedAt)).toISOString()
+    };
+  }
+  function dedupeSaves(list){
+    const items=Array.isArray(list)?list:[];
+    const byPlaceId=new Map();
+    items.forEach((entry)=>{
+      const normalized=normalizeSaveEntry(entry);
+      if(!normalized) return;
+      const existing=byPlaceId.get(normalized.placeId);
+      if(!existing||parseAddedAt(normalized.addedAt)>=parseAddedAt(existing.addedAt)){
+        byPlaceId.set(normalized.placeId,normalized);
+      }
+    });
+    return Array.from(byPlaceId.values());
+  }
+  function loadSaves(){
+    try{
+      const raw=localStorage.getItem(SUNNY_SAVES_STORAGE_KEY);
+      if(!raw) return [];
+      const parsed=JSON.parse(raw);
+      const deduped=dedupeSaves(parsed);
+      if(Array.isArray(parsed)&&parsed.length!==deduped.length){
+        try{ localStorage.setItem(SUNNY_SAVES_STORAGE_KEY,JSON.stringify(deduped)); } catch {}
+      }
+      return deduped;
+    } catch {
+      return [];
+    }
+  }
+  function saveSaves(list){
+    const normalized=dedupeSaves(list);
+    try{
+      localStorage.setItem(SUNNY_SAVES_STORAGE_KEY,JSON.stringify(normalized));
+      return true;
+    } catch {
+      showAppToast("Wishlist unavailable on this device right now");
+      return false;
+    }
+  }
+  function isSaved(placeId){
+    const id=String(placeId||"").trim();
+    if(!id) return false;
+    return savesList.some((entry)=>entry.placeId===id);
+  }
+  function toSaveVenue(venue){
+    if(!venue||typeof venue!=="object") return null;
+    const placeId=String(venue.placeId||venue.place_id||venue.id||"").trim();
+    if(!placeId) return null;
+    const lat=Number(venue.lat);
+    const lng=Number(venue.lng);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)) return null;
+    return {
+      placeId,
+      name:String(venue.name||"Unnamed venue").trim()||"Unnamed venue",
+      address:String(venue.address||venue.suburb||venue.vicinity||venue.tags?.vicinity||venue.tags?.formatted_address||"").trim(),
+      lat,
+      lng,
+      addedAt:new Date().toISOString()
+    };
+  }
+  function updateVenueCardSaveButton(venueId=openVenueId){
+    const card=detailCard;
+    if(!card?.saveButton) return;
+    const id=String(venueId||"").trim();
+    const active=!!id&&isSaved(id);
+    card.saveButton.classList.toggle("is-active",active);
+    card.saveButton.setAttribute("aria-pressed",active?"true":"false");
+    const label=card.saveButton.querySelector(".venue-card__save-label");
+    if(label) label.textContent="Wishlist";
+    const checkIcon=card.saveButton.querySelector(".venue-card__save-check");
+    if(checkIcon) checkIcon.classList.toggle("hidden",!active);
+  }
+  function updateSavesFab(){
+    if(!savesFabButton||!savesFabBadge) return;
+    const count=savesList.length;
+    savesFabButton.classList.toggle("has-saves",count>0);
+    savesFabBadge.textContent=String(count);
+    savesFabBadge.classList.toggle("hidden",count===0);
+  }
+  function setSaves(nextList,{persist=true}={}){
+    const next=dedupeSaves(nextList);
+    savesList=next;
+    if(persist&&!saveSaves(next)) return false;
+    updateSavesFab();
+    updateVenueCardSaveButton();
+    renderSavesSheet();
+    return true;
+  }
+  function addSave(place){
+    const entry=toSaveVenue(place);
+    if(!entry) return false;
+    const list=savesList.filter((saved)=>saved.placeId!==entry.placeId);
+    list.push(entry);
+    return setSaves(list);
+  }
+  function removeSave(placeId){
+    const id=String(placeId||"").trim();
+    if(!id) return false;
+    return setSaves(savesList.filter((saved)=>saved.placeId!==id));
+  }
+  function toggleSave(place){
+    const placeId=String(place?.placeId||place?.place_id||place?.id||"").trim();
+    if(!placeId) return false;
+    if(isSaved(placeId)) return removeSave(placeId);
+    return addSave(place);
   }
   function saveFavourites(list){
     const normalized=dedupeFavourites(list);
@@ -3519,6 +3652,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <button class="venue-card__fab-item venue-card__rate-btn" type="button" data-action="rate">Rate outdoor area</button>
         </div>
         <div class="venue-card__actions">
+          <!-- Wishlist toggle button stays visually distinct from favourites (heart) and ratings (stars). -->
+          <button class="action action-button venue-card__save-toggle" type="button" aria-label="Toggle wishlist" aria-pressed="false"><span class="venue-card__save-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="venue-card__save-label">Wishlist</span><span class="venue-card__save-check hidden" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
           <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
           <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
@@ -3540,6 +3675,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     document.body.appendChild(container);
     const closeBtn=container.querySelector(".venue-card__close");
     const favouriteBtn=container.querySelector(".venue-card__favourite");
+    const saveBtn=container.querySelector(".venue-card__save-toggle");
     closeBtn.addEventListener("click",()=>hideVenueCard());
     if(favouriteBtn){
       favouriteBtn.addEventListener("click",(event)=>{
@@ -3550,6 +3686,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           if(removeFavourite(venue.id)) showAppToast("Removed from favourites");
         } else {
           if(addFavourite(venue)) showAppToast("Saved to favourites");
+        }
+      });
+    }
+    if(saveBtn){
+      saveBtn.addEventListener("click",(event)=>{
+        event.stopPropagation();
+        const venue=detailCard?.currentVenue;
+        if(!venue) return;
+        if(toggleSave(venue)){
+          showAppToast(isSaved(venue.id)?"Added to Wishlist":"Removed from Wishlist");
         }
       });
     }
@@ -3630,6 +3776,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
       favouriteButton:favouriteBtn,
+      saveButton:saveBtn,
       photoStripEl:container.querySelector(".venue-card__photo-strip"),
       ratingDisplay:container.querySelector(".rating-display"),
       rateButton:rateButtons[0]||null,
@@ -3818,6 +3965,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.container.dataset.venueId=v.id;
     card.nameEl.textContent=v.name||"Outdoor venue";
     updateVenueCardFavouriteButton(v.id);
+    updateVenueCardSaveButton(v.id);
     card.metaEl.textContent=[kind,distance].filter(Boolean).join(" · ")||"";
     if(address){
       card.addressEl.textContent=address;
@@ -5228,6 +5376,186 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return button;
   }
 
+  // Insert Wishlist button between Crawl and Favourites controls.
+  function ensureSavesFab(){
+    if(savesFabButton) return savesFabButton;
+    const container=ensureBottomRightActions();
+    const button=document.createElement("button");
+    button.id="saves-fab";
+    button.className="saves-fab";
+    button.type="button";
+    button.setAttribute("aria-label","Wishlist");
+    button.innerHTML=`
+      <svg class="saves-fab__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <span class="saves-fab__badge hidden">0</span>`;
+    button.addEventListener("click",()=>toggleSavesSheet());
+    container.appendChild(button);
+    savesFabButton=button;
+    savesFabBadge=button.querySelector(".saves-fab__badge");
+    updateSavesFab();
+    return button;
+  }
+
+  function ensureSavesSheet(){
+    if(savesSheet&&savesBackdrop) return { sheet:savesSheet, backdrop:savesBackdrop };
+    const backdrop=document.createElement("div");
+    backdrop.className="backdrop";
+    backdrop.setAttribute("aria-hidden","true");
+    const sheet=document.createElement("div");
+    sheet.className="sheet saves-sheet";
+    sheet.setAttribute("role","dialog");
+    sheet.setAttribute("aria-modal","true");
+    sheet.setAttribute("aria-label","Wishlist");
+    sheet.innerHTML=`
+      <div class="sheet-head">
+        <h3>Wishlist</h3>
+        <button class="icon-btn" type="button" aria-label="Close Wishlist">×</button>
+      </div>
+      <div class="saves-sheet__sort-area">
+        <div class="saves-sheet__sort-label">Sort by</div>
+        <div class="saves-sheet__sort-wrap">
+          <button type="button" class="saves-sort is-active" data-sort="recent">Recently added</button>
+          <button type="button" class="saves-sort" data-sort="nearby">Nearby</button>
+        </div>
+        <div class="saves-sheet__sort-note hidden" role="status" aria-live="polite"></div>
+      </div>
+      <div class="sheet-body saves-sheet__body"></div>
+    `;
+    document.body.appendChild(backdrop);
+    document.body.appendChild(sheet);
+    backdrop.addEventListener("click",closeSavesSheet);
+    sheet.querySelector(".icon-btn")?.addEventListener("click",closeSavesSheet);
+    sheet.querySelectorAll(".saves-sort").forEach((button)=>{
+      button.addEventListener("click",()=>{
+        savesSortMode=button.dataset.sort==="nearby"?"nearby":"recent";
+        if(savesSortMode==="nearby"&&userLocation===null) requestUserLocationOnce();
+        renderSavesSheet();
+      });
+    });
+    savesBackdrop=backdrop;
+    savesSheet=sheet;
+    savesSheetBody=sheet.querySelector(".saves-sheet__body");
+    renderSavesSheet();
+    return { sheet, backdrop };
+  }
+
+  function openSavesSheet(){
+    ensureSavesSheet();
+    if(userLocation===null) requestUserLocationOnce();
+    renderSavesSheet();
+    savesBackdrop?.classList.add("show");
+    savesSheet?.classList.add("show");
+  }
+
+  function closeSavesSheet(){
+    savesBackdrop?.classList.remove("show");
+    savesSheet?.classList.remove("show");
+  }
+
+  function toggleSavesSheet(){
+    ensureSavesSheet();
+    const isOpen=savesSheet?.classList.contains("show");
+    if(isOpen) closeSavesSheet();
+    else openSavesSheet();
+  }
+
+  function getShortAddress(address){
+    const text=String(address||"").trim();
+    if(!text) return "Address unavailable";
+    return text.split(",").slice(0,2).join(", ").trim()||text;
+  }
+
+  async function openVenueFromSave(entry){
+    if(!entry||!map) return;
+    closeSavesSheet();
+    map.panTo({ lat: entry.lat, lng: entry.lng });
+    if((map.getZoom?.()||0)<16) map.setZoom(16);
+    const venue=allVenues?.[entry.placeId];
+    if(venue){
+      openVenueId=venue.id;
+      showVenueCard(venue);
+      return;
+    }
+    openVenueId=entry.placeId;
+    const marker=markersById.get(entry.placeId);
+    if(marker&&google?.maps?.event){
+      google.maps.event.trigger(marker,"click");
+      return;
+    }
+    const placeId=String(entry.placeId||"").trim();
+    if(placeId){
+      try{
+        const loaded=await getVenueDetailsByPlaceIdWithRetry(placeId);
+        if(loaded){
+          mergeVenues([loaded]);
+          showVenueCard(loaded);
+          return;
+        }
+      } catch {}
+    }
+    showAppToast("Venue not currently loaded on map. Zoom in or move map to load it.");
+  }
+
+  function renderSavesSheet(){
+    if(!savesSheetBody) return;
+    const hasUserLocation=!!(userLocation&&typeof userLocation.lat==="number"&&typeof userLocation.lng==="number");
+    const canUseNearby=savesSortMode==="nearby"&&hasUserLocation;
+    const sortNote=savesSheet?.querySelector(".saves-sheet__sort-note");
+    if(savesSheet){
+      if(!hasUserLocation&&savesSortMode==="nearby"){
+        if(sortNote){
+          sortNote.textContent="Enable location to sort by Nearby.";
+          sortNote.classList.remove("hidden");
+        }
+      } else if(sortNote){
+        sortNote.textContent="";
+        sortNote.classList.add("hidden");
+      }
+      savesSheet.querySelectorAll(".saves-sort").forEach((button)=>{
+        button.classList.toggle("is-active",button.dataset.sort===savesSortMode);
+      });
+    }
+    const sorted=savesList.slice().sort((a,b)=>{
+      if(canUseNearby){
+        const aHasCoords=Number.isFinite(a.lat)&&Number.isFinite(a.lng);
+        const bHasCoords=Number.isFinite(b.lat)&&Number.isFinite(b.lng);
+        if(aHasCoords&&!bHasCoords) return -1;
+        if(!aHasCoords&&bHasCoords) return 1;
+        if(!aHasCoords&&!bHasCoords) return parseAddedAt(b.addedAt)-parseAddedAt(a.addedAt);
+        const da=haversine(userLocation.lat,userLocation.lng,a.lat,a.lng);
+        const db=haversine(userLocation.lat,userLocation.lng,b.lat,b.lng);
+        return da-db;
+      }
+      return parseAddedAt(b.addedAt)-parseAddedAt(a.addedAt);
+    });
+    if(!sorted.length){
+      savesSheetBody.innerHTML='<div class="saves-empty">Your Wishlist is empty. Tap Wishlist on a venue to add it here.</div>';
+      return;
+    }
+    savesSheetBody.innerHTML="";
+    sorted.forEach((entry)=>{
+      const row=document.createElement("div");
+      row.className="saves-row";
+      row.innerHTML=`
+        <div class="saves-row__content">
+          <div class="saves-row__name"></div>
+          <div class="saves-row__meta"></div>
+        </div>
+        <div class="saves-row__actions">
+          <button type="button" class="saves-row__btn" data-action="view">View</button>
+          <button type="button" class="saves-row__btn saves-row__btn--remove" data-action="remove">Remove</button>
+        </div>
+      `;
+      row.querySelector(".saves-row__name").textContent=entry.name;
+      row.querySelector(".saves-row__meta").textContent=getShortAddress(entry.address);
+      row.querySelector('[data-action="view"]').addEventListener("click",()=>openVenueFromSave(entry));
+      row.querySelector('[data-action="remove"]').addEventListener("click",()=>{
+        if(removeSave(entry.placeId)) showAppToast("Removed from Wishlist");
+      });
+      savesSheetBody.appendChild(row);
+    });
+  }
+
   function ensureFavouritesSheet(){
     if(favouritesSheet&&favouritesBackdrop) return { sheet:favouritesSheet, backdrop:favouritesBackdrop };
     const backdrop=document.createElement("div");
@@ -5460,10 +5788,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     favouritesList=loadFavourites();
     setFavourites(favouritesList,{ persist:false });
+    savesList=loadSaves();
+    setSaves(savesList,{ persist:false });
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
     ensureCrawlFab();
+    ensureSavesFab();
     ensureFavouritesFab();
     const pathMatch=window.location.pathname.match(/^\/c\/([^/]+)$/);
     if(pathMatch){
