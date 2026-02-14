@@ -79,9 +79,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const CRAWL_TIME_STEP_MINUTES = 15;
   const MAX_CRAWL_VENUES = 12;
   const CRAWL_MAX_STEP_METERS = 200;
-  const SHARED_CRAWL_VERSION = 1;
+  const SHARED_CRAWL_VERSION = 2;
+  const MAX_SHARED_SKINNY_VENUES = 15;
   const MAX_SHARED_COMPRESSED_CHARS = 6000;
   const MAX_SHARED_DECOMPRESSED_CHARS = 50000;
+  const SHARED_CRAWL_REHYDRATE_CONCURRENCY = 4;
   const INCLUDE_NO_OUTDOOR_STORAGE_KEY = "sunny_include_no_outdoor";
   const INITIAL_LOCATION_VIEW_STORAGE_KEY = "sunny_initial_location_view";
 
@@ -2376,76 +2378,205 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return Math.round(num*1e6)/1e6;
   }
 
-  function buildCompactSharedCrawlPayload(){
+  function base64UrlEncode(bytes){
+    if(!(bytes instanceof Uint8Array)) throw new Error("SHARE_BASE64URL_INPUT_INVALID");
+    let binary="";
+    const chunkSize=0x8000;
+    for(let i=0;i<bytes.length;i+=chunkSize){
+      const chunk=bytes.subarray(i,i+chunkSize);
+      binary+=String.fromCharCode(...chunk);
+    }
+    return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");
+  }
+
+  function base64UrlDecode(token){
+    if(typeof token!=="string"||!token) throw new Error("SHARED_LINK_TOKEN_INVALID");
+    if(!/^[A-Za-z0-9_-]+$/.test(token)) throw new Error("SHARED_LINK_TOKEN_INVALID");
+    const padded=token.padEnd(token.length+(4-token.length%4)%4,"=").replace(/-/g,"+").replace(/_/g,"/");
+    const binary=atob(padded);
+    const bytes=new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i+=1) bytes[i]=binary.charCodeAt(i);
+    return bytes;
+  }
+
+  function encodeCrawlToken(skinnyPayload){
+    if(!window.pako?.deflate) throw new Error("SHARED_LINK_ENCODER_UNAVAILABLE");
+    const json=JSON.stringify(skinnyPayload);
+    if(json.length>MAX_SHARED_DECOMPRESSED_CHARS) throw new Error("SHARE_PAYLOAD_TOO_LARGE");
+    const utf8Bytes=new TextEncoder().encode(json);
+    const deflated=window.pako.deflate(utf8Bytes);
+    const token=base64UrlEncode(deflated);
+    if(token.length>MAX_SHARED_COMPRESSED_CHARS) throw new Error("SHARE_PAYLOAD_TOO_LARGE");
+    return token;
+  }
+
+  function decodeCrawlToken(token){
+    if(!window.pako?.inflate) throw new Error("SHARED_LINK_DECODER_UNAVAILABLE");
+    if(typeof token!=="string"||token.length>MAX_SHARED_COMPRESSED_CHARS) throw new Error("SHARED_LINK_TOO_LARGE");
+    const deflated=base64UrlDecode(token);
+    const inflated=window.pako.inflate(deflated);
+    const json=new TextDecoder().decode(inflated);
+    if(json.length>MAX_SHARED_DECOMPRESSED_CHARS) throw new Error("SHARED_LINK_TOO_LARGE");
+    return JSON.parse(json);
+  }
+
+  function safeParseUrlParamC(){
+    const params=new URLSearchParams(window.location.search);
+    const raw=params.get("c");
+    if(typeof raw!=="string"||!raw) return null;
+    if(!/^[A-Za-z0-9_-]+$/.test(raw)) return null;
+    return raw;
+  }
+
+  function clampSharedVenueCount(venues){
+    if(!Array.isArray(venues)) return [];
+    return venues.slice(0,MAX_SHARED_SKINNY_VENUES);
+  }
+
+  function buildSkinnySharedCrawlPayload(){
     if(!crawlState?.venues?.length) return null;
     const originLat=toRoundedCoord(crawlState.origin?.lat);
     const originLng=toRoundedCoord(crawlState.origin?.lng);
-    const payload={
+    const originPlaceId=typeof crawlState.origin?.placeId==="string"&&crawlState.origin.placeId.trim()
+      ? crawlState.origin.placeId.trim()
+      : null;
+    const origin=(originLat!==null&&originLng!==null)
+      ? {
+        lat: originLat,
+        lng: originLng,
+        ...(crawlState.origin?.label ? { label: String(crawlState.origin.label).slice(0,80) } : {}),
+        ...(originPlaceId ? { placeId: originPlaceId } : {})
+      }
+      : (originPlaceId ? { placeId: originPlaceId } : null);
+    const venues=clampSharedVenueCount(crawlState.venues)
+      .map((venue)=>{
+        const placeId=typeof venue?.id==="string"&&venue.id.trim() ? venue.id.trim() : null;
+        if(!placeId) return null;
+        return {
+          placeId,
+          hangMinutes: Math.max(15,Math.round(Number(venue?.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES))
+        };
+      })
+      .filter(Boolean);
+    if(!venues.length) return null;
+    return {
       v: SHARED_CRAWL_VERSION,
       startAt: crawlState.startAt instanceof Date ? crawlState.startAt.toISOString() : null,
+      origin,
       orderMode: crawlState.orderMode || "location",
-      origin: (originLat!==null&&originLng!==null)
-        ? {
-          lat: originLat,
-          lng: originLng,
-          ...(crawlState.origin?.label ? { label: String(crawlState.origin.label).slice(0,80) } : {})
-        }
-        : null,
-      venues: crawlState.venues.map((venue)=>({
-        id: venue?.id,
-        ...(venue?.name ? { name: venue.name } : {}),
-        ...(Number.isFinite(Number(venue?.lat)) ? { lat: toRoundedCoord(venue.lat) } : {}),
-        ...(Number.isFinite(Number(venue?.lng)) ? { lng: toRoundedCoord(venue.lng) } : {}),
-        ...(venue?.hangMinutes ? { hang: Math.max(15,Math.round(Number(venue.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES)) } : {})
-      }))
+      venues
     };
-    return payload;
-  }
-
-  function compressSharedPayload(payload){
-    if(!payload) return null;
-    if(!window.LZString?.compressToEncodedURIComponent){
-      console.warn("LZString missing, using legacy crawl serializer.");
-      return null;
-    }
-    const json=JSON.stringify(payload);
-    if(json.length>MAX_SHARED_DECOMPRESSED_CHARS) throw new Error("SHARE_PAYLOAD_TOO_LARGE");
-    const compressed=window.LZString.compressToEncodedURIComponent(json);
-    if(!compressed) throw new Error("SHARE_COMPRESS_FAILED");
-    if(compressed.length>MAX_SHARED_COMPRESSED_CHARS) throw new Error("SHARE_PAYLOAD_TOO_LARGE");
-    return compressed;
-  }
-
-  function decompressSharedPayload(encoded){
-    if(!encoded||typeof encoded!=="string") return null;
-    if(encoded.length>MAX_SHARED_COMPRESSED_CHARS) throw new Error("SHARED_LINK_TOO_LARGE");
-    if(!window.LZString?.decompressFromEncodedURIComponent){
-      throw new Error("SHARED_LINK_DECODER_UNAVAILABLE");
-    }
-    const json=window.LZString.decompressFromEncodedURIComponent(encoded);
-    if(!json) throw new Error("SHARED_LINK_DECOMPRESS_FAILED");
-    if(json.length>MAX_SHARED_DECOMPRESSED_CHARS) throw new Error("SHARED_LINK_TOO_LARGE");
-    const payload=JSON.parse(json);
-    return payload;
   }
 
   function normalizeSharedVenue(venue,index){
     if(!venue||typeof venue!=="object") return null;
-    const id=typeof venue.id==="string"&&venue.id.trim() ? venue.id.trim() : null;
-    if(!id) return null;
-    const hangMinutes=Math.max(15,Number(venue.hang||venue.hangMinutes)||CRAWL_DEFAULT_HANG_MINUTES);
-    const nextVenue={
-      id,
-      name: typeof venue.name==="string" ? venue.name : "",
-      crawlIndex:index,
+    const placeId=(typeof venue.placeId==="string"&&venue.placeId.trim())
+      ? venue.placeId.trim()
+      : (typeof venue.id==="string"&&venue.id.trim() ? venue.id.trim() : null);
+    if(!placeId) return null;
+    const hangMinutes=Math.max(15,Math.round(Number(venue.hangMinutes??venue.hang)||CRAWL_DEFAULT_HANG_MINUTES));
+    return {
+      placeId,
       hangMinutes,
-      remind:false
+      crawlIndex:index,
+      ...(typeof venue.name==="string" ? { name: venue.name } : {}),
+      ...(Number.isFinite(Number(venue.lat))&&Number.isFinite(Number(venue.lng)) ? { lat:Number(venue.lat), lng:Number(venue.lng) } : {})
     };
-    if(Number.isFinite(Number(venue.lat))&&Number.isFinite(Number(venue.lng))){
-      nextVenue.lat=Number(venue.lat);
-      nextVenue.lng=Number(venue.lng);
-    }
-    return nextVenue;
+  }
+
+  function normalizeSharedOrigin(origin){
+    if(!origin||typeof origin!=="object") return null;
+    const lat=toRoundedCoord(origin.lat);
+    const lng=toRoundedCoord(origin.lng);
+    const hasCoords=lat!==null&&lng!==null&&isValidCoord(lat,lng);
+    const placeId=typeof origin.placeId==="string"&&origin.placeId.trim() ? origin.placeId.trim() : null;
+    if(!hasCoords&&!placeId) return null;
+    return {
+      ...(hasCoords ? { lat, lng } : {}),
+      ...(origin.label ? { label:String(origin.label).slice(0,80) } : {}),
+      ...(placeId ? { placeId } : {})
+    };
+  }
+
+  function normalizeSkinnyPayload(rawData){
+    if(!rawData||typeof rawData!=="object") return null;
+    const venues=clampSharedVenueCount(rawData.venues)
+      .map((venue,index)=>normalizeSharedVenue(venue,index))
+      .filter(Boolean);
+    if(!venues.length) return null;
+    const startAt=rawData.startAt ? new Date(rawData.startAt) : new Date();
+    const validStartAt=startAt instanceof Date&&!Number.isNaN(startAt.getTime()) ? startAt : new Date();
+    return {
+      v: Number(rawData.v)||1,
+      startAt: validStartAt,
+      origin: normalizeSharedOrigin(rawData.origin),
+      orderMode: rawData.orderMode||"location",
+      venues
+    };
+  }
+
+  function getVenueDetailsByPlaceId(placeId){
+    return new Promise((resolve,reject)=>{
+      if(!placesService) return reject(new Error("PLACES_SERVICE_UNAVAILABLE"));
+      placesService.getDetails({
+        placeId,
+        fields:["place_id","name","geometry","formatted_address","vicinity","types","opening_hours","business_status","outdoor_seating","photos"]
+      },(place,status)=>{
+        if(status!==google.maps.places.PlacesServiceStatus.OK||!place){
+          reject(new Error(`PLACE_DETAILS_FAILED:${status||"UNKNOWN"}`));
+          return;
+        }
+        const normalized=normalizePlace(place);
+        if(!normalized){
+          reject(new Error("PLACE_DETAILS_INVALID"));
+          return;
+        }
+        resolve(normalized);
+      });
+    });
+  }
+
+  async function mapWithConcurrency(items,concurrency,mapper){
+    const list=Array.isArray(items)?items:[];
+    const result=new Array(list.length);
+    let cursor=0;
+    const workers=Array.from({ length: Math.max(1,Math.min(concurrency,list.length||1)) },()=> (async()=>{
+      while(true){
+        const idx=cursor;
+        cursor+=1;
+        if(idx>=list.length) return;
+        result[idx]=await mapper(list[idx],idx);
+      }
+    })());
+    await Promise.all(workers);
+    return result;
+  }
+
+  async function hydrateCrawlFromSkinny(skinny){
+    const normalized=normalizeSkinnyPayload(skinny);
+    if(!normalized) throw new Error("SHARED_LINK_INVALID");
+    const venues=await mapWithConcurrency(normalized.venues,SHARED_CRAWL_REHYDRATE_CONCURRENCY,async(item,index)=>{
+      const hydrated=await getVenueDetailsByPlaceId(item.placeId);
+      return annotateCrawlVenue({
+        ...hydrated,
+        crawlIndex:index,
+        hangMinutes:item.hangMinutes,
+        remind:false
+      });
+    });
+    const filtered=filterGloballyExcludedVenues(venues,"shared-link");
+    const uniqueVenues=selectUniqueAddressVenues(filtered,filtered.length).map(annotateCrawlVenue);
+    if(!uniqueVenues.length) throw new Error("SHARED_LINK_INVALID");
+    const pubBarCount=uniqueVenues.filter((venue)=>!venue.crawlFallback).length;
+    const fallbackCount=uniqueVenues.length-pubBarCount;
+    return {
+      venues: uniqueVenues,
+      startAt: normalized.startAt,
+      origin: normalized.origin,
+      orderMode: normalized.orderMode,
+      pubBarCount,
+      fallbackCount
+    };
   }
 
   function buildHydratedCrawlState(rawData){
@@ -2463,6 +2594,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const normalizedVenues=rawData.venues
       .map((venue,index)=>normalizeSharedVenue(venue,index))
       .filter(Boolean)
+      .map((venue)=>({
+        id: venue.placeId,
+        name: typeof venue.name==="string" ? venue.name : "",
+        crawlIndex: venue.crawlIndex,
+        hangMinutes: venue.hangMinutes,
+        remind:false,
+        ...(Number.isFinite(Number(venue.lat))&&Number.isFinite(Number(venue.lng)) ? { lat:Number(venue.lat), lng:Number(venue.lng) } : {})
+      }))
       .filter(v=>!isGloballyExcludedVenue(v));
     if(!normalizedVenues.length) return null;
     const uniqueVenues=selectUniqueAddressVenues(normalizedVenues,normalizedVenues.length).map(annotateCrawlVenue);
@@ -2482,20 +2621,30 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function showInvalidSharedCrawlMessage(){
-    window.alert("Invalid shared crawl link. Please check the URL and try again.");
+    window.alert("Invalid shared crawl link");
   }
 
-  function hydrateCrawlFromCompactLink(encoded){
-    if(!encoded) return false;
+  function showSharedCrawlVenueLoadFailure(){
+    window.alert("Some venues could not be loaded");
+  }
+
+  async function hydrateCrawlFromCompactLink(token){
+    if(!token) return false;
+    showVenueStatus("loading","Loading shared crawl…");
     try{
-      const data=decompressSharedPayload(encoded);
-      const nextState=buildHydratedCrawlState(data);
-      if(!nextState) throw new Error("SHARED_LINK_INVALID");
+      const skinny=decodeCrawlToken(token);
+      const nextState=await hydrateCrawlFromSkinny(skinny);
       return applyHydratedCrawlState(nextState);
     } catch(err){
       console.warn("Unable to hydrate compact crawl link",err);
-      showInvalidSharedCrawlMessage();
+      if(String(err?.message||"").startsWith("PLACE_DETAILS_")){
+        showSharedCrawlVenueLoadFailure();
+      } else {
+        showInvalidSharedCrawlMessage();
+      }
       return false;
+    } finally {
+      hideVenueStatus();
     }
   }
 
@@ -2512,6 +2661,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return false;
     }
   }
+
 
   // Map
   function setupMap(){
@@ -3723,13 +3873,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!crawlState) return;
     let shareUrl=null;
     try{
-      const compactPayload=buildCompactSharedCrawlPayload();
-      const compactEncoded=compressSharedPayload(compactPayload);
-      if(compactEncoded){
+      const skinnyPayload=buildSkinnySharedCrawlPayload();
+      const token=encodeCrawlToken(skinnyPayload);
+      if(token){
         const url=new URL(window.location.href);
         url.searchParams.delete("crawl");
-        url.searchParams.delete("c");
-        url.hash=`c=${compactEncoded}`;
+        url.searchParams.set("c",token);
+        url.hash="";
         shareUrl=url.toString();
       }
     } catch(err){
@@ -4418,7 +4568,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     },opts);
   }
 
-  function boot(){
+  async function boot(){
     requestUserLocationOnce();
     const cached=loadLocal(VENUE_CACHE_KEY);
     if(cached&&typeof cached==="object"){
@@ -4436,12 +4586,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(pathMatch){
       window.alert("Resolving shared crawl… This short-link format needs the short-link service, which is not configured in this build.");
     }
+    const compactParam=safeParseUrlParamC();
+    if(compactParam){
+      const loaded=await hydrateCrawlFromCompactLink(compactParam);
+      if(loaded) return;
+    }
     const params=new URLSearchParams(window.location.search);
-    const hashParams=new URLSearchParams(window.location.hash.replace(/^#/,""));
-    const hashCompactParam=hashParams.get("c");
-    if(hashCompactParam&&hydrateCrawlFromCompactLink(hashCompactParam)) return;
-    const compactParam=params.get("c");
-    if(compactParam&&hydrateCrawlFromCompactLink(compactParam)) return;
     const crawlParam=params.get("crawl");
     if(crawlParam) hydrateCrawlFromLink(crawlParam);
   }
@@ -4450,16 +4600,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const previousState=crawlState;
     try{
       crawlState=state;
-      const payload=buildCompactSharedCrawlPayload();
-      const encoded=compressSharedPayload(payload);
-      const hydrated=buildHydratedCrawlState(decompressSharedPayload(encoded));
+      const payload=buildSkinnySharedCrawlPayload();
+      const encoded=encodeCrawlToken(payload);
+      const decoded=decodeCrawlToken(encoded);
+      const normalized=normalizeSkinnyPayload(decoded);
+      const hydrated=normalized ? { venues: normalized.venues, orderMode: normalized.orderMode, origin: normalized.origin } : null;
       return {
         encodedLength: encoded?.length || 0,
         inputVenueCount: Array.isArray(state?.venues) ? state.venues.length : 0,
-        outputVenueCount: hydrated?.venues?.length || 0,
-        orderMode: hydrated?.orderMode || null,
-        hasOrigin: !!hydrated?.origin,
-        ok: !!hydrated
+        outputVenueCount: normalized?.venues?.length || 0,
+        orderMode: normalized?.orderMode || null,
+        hasOrigin: !!normalized?.origin,
+        ok: !!normalized && encoded===encodeCrawlToken(decoded)
       };
     } finally {
       crawlState=previousState;
@@ -4472,7 +4624,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function tryBoot(){
     if(hasBooted||!domReady||!mapsReady) return;
     hasBooted=true;
-    boot();
+    boot().catch((err)=>console.error("Boot failed",err));
   }
   window.__sunnyBoot=()=>{
     mapsReady=true;
