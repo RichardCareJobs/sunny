@@ -342,9 +342,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.saveButton.setAttribute("aria-pressed",active?"true":"false");
     const label=card.saveButton.querySelector(".venue-card__save-label");
     if(label) label.textContent="Wishlist";
-    const saveIcon=card.saveButton.querySelector(".venue-card__save-icon");
     const checkIcon=card.saveButton.querySelector(".venue-card__save-check");
-    if(saveIcon) saveIcon.classList.toggle("hidden",active);
     if(checkIcon) checkIcon.classList.toggle("hidden",!active);
   }
   function updateSavesFab(){
@@ -5413,9 +5411,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <h3>Wishlist</h3>
         <button class="icon-btn" type="button" aria-label="Close Wishlist">×</button>
       </div>
-      <div class="saves-sheet__sort-wrap">
-        <button type="button" class="saves-sort is-active" data-sort="recent">Recently saved</button>
-        <button type="button" class="saves-sort" data-sort="closest">Closest to map</button>
+      <div class="saves-sheet__sort-area">
+        <div class="saves-sheet__sort-label">Sort by</div>
+        <div class="saves-sheet__sort-wrap">
+          <button type="button" class="saves-sort is-active" data-sort="recent">Recently added</button>
+          <button type="button" class="saves-sort" data-sort="nearby">Nearby</button>
+        </div>
+        <div class="saves-sheet__sort-note hidden" role="status" aria-live="polite"></div>
       </div>
       <div class="sheet-body saves-sheet__body"></div>
     `;
@@ -5425,7 +5427,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     sheet.querySelector(".icon-btn")?.addEventListener("click",closeSavesSheet);
     sheet.querySelectorAll(".saves-sort").forEach((button)=>{
       button.addEventListener("click",()=>{
-        savesSortMode=button.dataset.sort==="closest"?"closest":"recent";
+        savesSortMode=button.dataset.sort==="nearby"?"nearby":"recent";
+        if(savesSortMode==="nearby"&&userLocation===null) requestUserLocationOnce();
         renderSavesSheet();
       });
     });
@@ -5438,6 +5441,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function openSavesSheet(){
     ensureSavesSheet();
+    if(userLocation===null) requestUserLocationOnce();
     renderSavesSheet();
     savesBackdrop?.classList.add("show");
     savesSheet?.classList.add("show");
@@ -5494,21 +5498,32 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function renderSavesSheet(){
     if(!savesSheetBody) return;
-    const center=map?.getCenter?.();
-    const centerLat=center?.lat?.();
-    const centerLng=center?.lng?.();
-    const canSortByClosest=Number.isFinite(centerLat)&&Number.isFinite(centerLng);
+    const hasUserLocation=!!(userLocation&&typeof userLocation.lat==="number"&&typeof userLocation.lng==="number");
+    const canUseNearby=savesSortMode==="nearby"&&hasUserLocation;
+    const sortNote=savesSheet?.querySelector(".saves-sheet__sort-note");
     if(savesSheet){
-      savesSheet.querySelector('[data-sort="closest"]')?.classList.toggle("hidden",!canSortByClosest);
-      if(!canSortByClosest&&savesSortMode==="closest") savesSortMode="recent";
+      if(!hasUserLocation&&savesSortMode==="nearby"){
+        if(sortNote){
+          sortNote.textContent="Enable location to sort by Nearby.";
+          sortNote.classList.remove("hidden");
+        }
+      } else if(sortNote){
+        sortNote.textContent="";
+        sortNote.classList.add("hidden");
+      }
       savesSheet.querySelectorAll(".saves-sort").forEach((button)=>{
         button.classList.toggle("is-active",button.dataset.sort===savesSortMode);
       });
     }
     const sorted=savesList.slice().sort((a,b)=>{
-      if(savesSortMode==="closest"&&canSortByClosest){
-        const da=haversine(centerLat,centerLng,a.lat,a.lng);
-        const db=haversine(centerLat,centerLng,b.lat,b.lng);
+      if(canUseNearby){
+        const aHasCoords=Number.isFinite(a.lat)&&Number.isFinite(a.lng);
+        const bHasCoords=Number.isFinite(b.lat)&&Number.isFinite(b.lng);
+        if(aHasCoords&&!bHasCoords) return -1;
+        if(!aHasCoords&&bHasCoords) return 1;
+        if(!aHasCoords&&!bHasCoords) return parseAddedAt(b.addedAt)-parseAddedAt(a.addedAt);
+        const da=haversine(userLocation.lat,userLocation.lng,a.lat,a.lng);
+        const db=haversine(userLocation.lat,userLocation.lng,b.lat,b.lng);
         return da-db;
       }
       return parseAddedAt(b.addedAt)-parseAddedAt(a.addedAt);
