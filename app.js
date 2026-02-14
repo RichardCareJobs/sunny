@@ -73,6 +73,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let venueStatusEl = null;
   let sharedCrawlOverlayEl = null;
   let sharedCrawlDebugPanelEl = null;
+  let sharedCrawlInviteEl = null;
+  let sharedCrawlInviteDismissTimer = null;
+  let sharedCrawlInviteCleanup = null;
   let pendingSharedCrawl = null;
   let sharedCrawlLoadingController = null;
   let sharedCrawlLoadRequestId = 0;
@@ -89,6 +92,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_SHARED_COMPRESSED_CHARS = 6000;
   const MAX_SHARED_DECOMPRESSED_CHARS = 50000;
   const SHARED_CRAWL_REHYDRATE_CONCURRENCY = 4;
+  const SHARED_CRAWL_INVITE_AUTO_DISMISS_MS = 4000;
   const INCLUDE_NO_OUTDOOR_STORAGE_KEY = "sunny_include_no_outdoor";
   const INITIAL_LOCATION_VIEW_STORAGE_KEY = "sunny_initial_location_view";
 
@@ -464,6 +468,66 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function dismissAllSharedCrawlLoading(reason='dismiss_all'){
     ensureSharedCrawlLoadingController().dismissAll(reason);
+  }
+
+  function wasOpenedFromSharedCrawlLink(){
+    const params=new URLSearchParams(window.location.search);
+    return !!(params.get("c")||params.get("crawl"));
+  }
+
+  function closeSharedCrawlInvite(reason="dismissed"){
+    if(sharedCrawlInviteDismissTimer){
+      clearTimeout(sharedCrawlInviteDismissTimer);
+      sharedCrawlInviteDismissTimer=null;
+    }
+    if(typeof sharedCrawlInviteCleanup==="function"){
+      sharedCrawlInviteCleanup();
+      sharedCrawlInviteCleanup=null;
+    }
+    if(!sharedCrawlInviteEl) return;
+    sharedCrawlInviteEl.remove();
+    sharedCrawlInviteEl=null;
+    if(reason){
+      logSharedLoaderDebug("invite_dismiss",{ reason });
+    }
+  }
+
+  function showSharedCrawlInvite(originLabel=""){
+    if(sharedCrawlInviteEl||!wasOpenedFromSharedCrawlLink()) return;
+    if(!crawlState?.venues?.length) return;
+    const wrapper=document.createElement("div");
+    wrapper.className="shared-crawl-invite";
+    wrapper.innerHTML=`
+      <div class="shared-crawl-invite__backdrop" data-action="close"></div>
+      <div class="shared-crawl-invite__card" role="dialog" aria-modal="true" aria-labelledby="shared-crawl-invite-title" aria-describedby="shared-crawl-invite-body" tabindex="-1">
+        <h2 class="shared-crawl-invite__title" id="shared-crawl-invite-title">Come join my pub crawl I planned on Sunny!</h2>
+        <p class="shared-crawl-invite__body" id="shared-crawl-invite-body">Here’s the route — tap a venue for details, or start navigating.</p>
+        ${originLabel?`<p class="shared-crawl-invite__meta">Starting near ${originLabel}</p>`:""}
+        <div class="shared-crawl-invite__actions">
+          <button type="button" class="shared-crawl-invite__btn shared-crawl-invite__btn--primary" data-action="go">Let’s go</button>
+          <button type="button" class="shared-crawl-invite__btn shared-crawl-invite__btn--secondary" data-action="close">Close</button>
+        </div>
+      </div>
+    `;
+    const onClick=(event)=>{
+      const action=event.target?.closest?.("[data-action]")?.dataset?.action;
+      if(action==="go"||action==="close") closeSharedCrawlInvite(action);
+    };
+    const onKeyDown=(event)=>{
+      if(event.key!=="Escape") return;
+      event.preventDefault();
+      closeSharedCrawlInvite("escape");
+    };
+    wrapper.addEventListener("click",onClick);
+    window.addEventListener("keydown",onKeyDown);
+    sharedCrawlInviteCleanup=()=>{
+      wrapper.removeEventListener("click",onClick);
+      window.removeEventListener("keydown",onKeyDown);
+    };
+    document.body.appendChild(wrapper);
+    sharedCrawlInviteEl=wrapper;
+    wrapper.querySelector(".shared-crawl-invite__card")?.focus();
+    sharedCrawlInviteDismissTimer=setTimeout(()=>closeSharedCrawlInvite("auto"),SHARED_CRAWL_INVITE_AUTO_DISMISS_MS);
   }
 
   // Distance
@@ -3035,6 +3099,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       await waitForSharedCrawlRendered();
       hideSharedCrawlOverlay();
       hideSharedCrawlLoading(null,"success_rendered");
+      showSharedCrawlInvite(nextState.origin?.label||"");
       if(failedPlaceIds.length){
         showSharedCrawlVenueLoadFailure();
       }
@@ -3086,14 +3151,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
   }
 
-  function hydrateCrawlFromLink(encoded){
+  async function hydrateCrawlFromLink(encoded){
     if(!encoded) return false;
     try{
       const json=decodeURIComponent(escape(atob(encoded)));
       const data=JSON.parse(json);
       const nextState=buildHydratedCrawlState(data);
       if(!nextState) return false;
-      return applyHydratedCrawlState(nextState);
+      const applied=applyHydratedCrawlState(nextState,{ openList:true });
+      if(!applied||!nextState.venues?.length) return false;
+      await waitForSharedCrawlRendered();
+      showSharedCrawlInvite(nextState.origin?.label||"");
+      return true;
     } catch(err){
       console.warn("Unable to hydrate crawl link",err);
       return false;
@@ -5038,7 +5107,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     const params=new URLSearchParams(window.location.search);
     const crawlParam=params.get("crawl");
-    if(crawlParam) hydrateCrawlFromLink(crawlParam);
+    if(crawlParam) await hydrateCrawlFromLink(crawlParam);
   }
 
   function runSharedCrawlCodecChecks(){
@@ -5115,7 +5184,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     mapsReady=true;
     tryBoot();
   };
-  window.addEventListener("pagehide",()=>dismissAllSharedCrawlLoading("navigation"));
+  window.addEventListener("pagehide",()=>{
+    dismissAllSharedCrawlLoading("navigation");
+    closeSharedCrawlInvite("navigation");
+  });
   if(window.__sunnyMapsReady){
     mapsReady=true;
   }
