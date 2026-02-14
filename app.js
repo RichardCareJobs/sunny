@@ -74,6 +74,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let sharedCrawlOverlayEl = null;
   let sharedCrawlDebugPanelEl = null;
   let pendingSharedCrawl = null;
+  let sharedCrawlLoadingHandle = 0;
+  let sharedCrawlLoadRequestId = 0;
 
   let venueCountToast = null;
   let venueCountTimer = null;
@@ -379,6 +381,22 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function hideSharedCrawlOverlay(){
     if(!sharedCrawlOverlayEl) return;
     sharedCrawlOverlayEl.hidden=true;
+  }
+
+  function showSharedCrawlLoading(){
+    sharedCrawlLoadingHandle+=1;
+    const handle=sharedCrawlLoadingHandle;
+    showSharedCrawlOverlay("Loading shared crawl...");
+    showVenueStatus("loading","Loading shared crawl…");
+    return handle;
+  }
+
+  function hideSharedCrawlLoading(handle){
+    if(handle!=null&&handle!==sharedCrawlLoadingHandle) return;
+    hideSharedCrawlOverlay();
+    if(venueStatusEl&&venueStatusEl.dataset.state==="loading"&&String(venueStatusEl.textContent||"").includes("Loading shared crawl")){
+      hideVenueStatus();
+    }
   }
 
   // Distance
@@ -2715,16 +2733,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         placeId,
         fields:["place_id","name","geometry","formatted_address","vicinity","types","opening_hours","business_status","outdoor_seating","photos"]
       },(place,status)=>{
-        if(status!==google.maps.places.PlacesServiceStatus.OK||!place){
-          reject(new Error(`PLACE_DETAILS_FAILED:${status||"UNKNOWN"}`));
-          return;
+        try{
+          if(status!==google.maps.places.PlacesServiceStatus.OK||!place){
+            reject(new Error(`PLACE_DETAILS_FAILED:${status||"UNKNOWN"}`));
+            return;
+          }
+          const normalized=normalizePlace(place);
+          if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
+            reject(new Error("PLACE_DETAILS_INVALID"));
+            return;
+          }
+          resolve(normalized);
+        } catch(err){
+          reject(err instanceof Error ? err : new Error("PLACE_DETAILS_EXCEPTION"));
         }
-        const normalized=normalizePlace(place);
-        if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
-          reject(new Error("PLACE_DETAILS_INVALID"));
-          return;
-        }
-        resolve(normalized);
       });
     });
   }
@@ -2890,7 +2912,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function showInvalidSharedCrawlMessage(message="Invalid shared crawl link (couldn’t decode)"){
     showSharedCrawlOverlay(message,{ isError:true, actions:[
-      { label:"Return to map", onClick:()=>{ hideSharedCrawlOverlay(); pendingSharedCrawl=null; } }
+      { label:"Return to map", onClick:()=>{ hideSharedCrawlLoading(); pendingSharedCrawl=null; } }
     ]});
   }
 
@@ -2904,18 +2926,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function showSharedCrawlZeroResults(token){
     showSharedCrawlOverlay("This shared crawl couldn’t be loaded. (0 venues found)",{ isError:true, actions:[
-      { label:"Try again", onClick:()=>{ hydrateCrawlFromCompactLink(token,{ isRetry:true }); } },
-      { label:"Return to map", onClick:()=>{ hideSharedCrawlOverlay(); pendingSharedCrawl=null; } }
+      { label:"Try again", onClick:()=>{ loadSharedCrawlFromUrlToken(token,{ isRetry:true }); } },
+      { label:"Return to map", onClick:()=>{ hideSharedCrawlLoading(); pendingSharedCrawl=null; } }
     ]});
   }
 
   async function hydrateCrawlFromCompactLink(token,{ isRetry=false }={}){
     if(!token) return false;
     const debug=isSharedCrawlDebugMode()||isDebugShareMode();
-    let keepStatusVisible=false;
     updateDebugShareState({ hydrationStatus:"pending", tokenPresent:!!token, tokenLength:token.length });
-    if(!isRetry) showSharedCrawlOverlay("Loading shared crawl...");
-    showVenueStatus("loading","Loading shared crawl…");
     const decodeStarted=performance.now();
     try{
       await ensureGooglePlacesReady();
@@ -2944,7 +2963,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hideSharedCrawlOverlay();
       updateDebugShareState({ hydrationStatus:"done", hydratedCount: nextState.venues.length, failedCount: failedPlaceIds.length, failureStatuses:[...new Set(failedStatuses)], decodeStatus:"ok" });
       if(failedPlaceIds.length){
-        keepStatusVisible=true;
         showSharedCrawlVenueLoadFailure();
       }
       if(debug){
@@ -2966,7 +2984,28 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       return false;
     } finally {
-      if(!keepStatusVisible) hideVenueStatus();
+      // loading cleanup is handled by loadSharedCrawlFromUrlToken
+    }
+  }
+
+  async function loadSharedCrawlFromUrlToken(token,{ isRetry=false }={}){
+    if(!token) return false;
+    const requestId=++sharedCrawlLoadRequestId;
+    const loadingHandle=showSharedCrawlLoading();
+    const timeoutId=setTimeout(()=>{
+      if(requestId!==sharedCrawlLoadRequestId) return;
+      hideSharedCrawlLoading(loadingHandle);
+      showVenueStatus("error","Shared crawl is taking longer than expected…");
+    },15000);
+    try{
+      const loaded=await hydrateCrawlFromCompactLink(token,{ isRetry });
+      return loaded;
+    } catch(err){
+      console.warn("Shared crawl load pipeline failed",err);
+      return false;
+    } finally {
+      clearTimeout(timeoutId);
+      hideSharedCrawlLoading(loadingHandle);
     }
   }
 
@@ -4899,10 +4938,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   async function boot(){
     pendingSharedCrawl=detectPendingSharedCrawl();
-    if(pendingSharedCrawl?.token){
-      showSharedCrawlOverlay("Loading shared crawl...");
-      showVenueStatus("loading","Loading shared crawl…");
-    }
     requestUserLocationOnce();
     const cached=loadLocal(VENUE_CACHE_KEY);
     if(cached&&typeof cached==="object"){
@@ -4921,7 +4956,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       window.alert("Resolving shared crawl… This short-link format needs the short-link service, which is not configured in this build.");
     }
     if(pendingSharedCrawl?.token){
-      await hydrateCrawlFromCompactLink(pendingSharedCrawl.token);
+      await loadSharedCrawlFromUrlToken(pendingSharedCrawl.token);
       return;
     }
     const params=new URLSearchParams(window.location.search);
