@@ -30,6 +30,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
   const DEBUG_CRAWL = true;
+  const DEBUG_REFRESH = true;
   const OUTDOOR_ONLY = true;
   const preferPubsAndBarsForCrawls = true;
   const DEV_PLACES_LOGGING = DEBUG_PLACES || ["localhost","127.0.0.1",""].includes(window.location.hostname);
@@ -292,12 +293,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const zoom=map.getZoom();
     saveInitialLocationView({ center:{ lat:center.lat(), lng:center.lng() }, zoom: Number.isFinite(zoom)?zoom:13 });
   }
-  function waitForMapIdle(timeoutMs=1200){
-    if(!map) return Promise.resolve();
+  function waitForMapIdle(mapInstance=map,timeoutMs=1500){
+    if(!mapInstance) return Promise.resolve();
     return new Promise((resolve)=>{
       let done=false;
       const finish=()=>{ if(done) return; done=true; resolve(); };
-      google.maps.event.addListenerOnce(map,"idle",finish);
+      google.maps.event.addListenerOnce(mapInstance,"idle",finish);
       setTimeout(finish,timeoutMs);
     });
   }
@@ -319,6 +320,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       await waitForMapIdle();
     }
     return { existed, currentZoom, restoredZoom, fallback:true };
+  }
+
+  async function loadVenuesForCurrentBounds(){
+    await loadVisibleTiles({ immediate: true });
+    return getVenuesInViewSnapshot().slice();
   }
 
   function formatAddress(tags={}){
@@ -3464,27 +3470,57 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   async function refreshCrawlVenues(){
     if(!crawlState?.venues?.length) return;
-    const origin=crawlState.origin || getCrawlOrigin();
     const venueCount=Math.max(1,crawlState.venues.length);
     const orderMode=crawlState.orderMode || "location";
     const startAt=crawlState.startAt instanceof Date ? crawlState.startAt : new Date();
     const currentVenueIds=crawlState.venues.map(v=>v.id);
     const maxStepDistanceMeters=crawlState.maxStepDistanceMeters || CRAWL_MAX_STEP_METERS;
     const restoreInfo=await restoreInitialLocationViewForRefresh();
-    await loadVisibleTiles({ immediate: true });
-    const venuesInView=getVenuesInViewSnapshot();
-    if(DEBUG_CRAWL){
-      console.log("[CrawlDebug] refresh view",{
-        hadInitialLocationView: restoreInfo.existed,
-        currentZoom: restoreInfo.currentZoom,
-        restoredZoom: restoreInfo.restoredZoom,
-        fallbackUsed: restoreInfo.fallback,
-        candidateCountFound: venuesInView.length
+    const boundsAfterIdle=map?.getBounds?.();
+    const venuesInView=await loadVenuesForCurrentBounds();
+    await ensureOutdoorFlags(venuesInView);
+    const baseFiltered=venuesInView.filter(v=>passesBaseCrawlFilters(v));
+    const deduped=selectUniqueAddressVenues(baseFiltered.slice(),baseFiltered.length);
+    const outdoorCount=deduped.filter(v=>classifyCrawlEligibility(v).isOutdoor).length;
+    const nonOutdoorCount=Math.max(0,deduped.length-outdoorCount);
+    const maxNonOutdoor=Math.floor(venueCount/2);
+    const includeNonOutdoor=shouldIncludeNoOutdoorVenues();
+    const candidateCount=includeNonOutdoor
+      ? outdoorCount+Math.min(nonOutdoorCount,maxNonOutdoor)
+      : outdoorCount;
+    if(DEBUG_REFRESH){
+      console.log("[RefreshDebug]",{
+        zoomBeforeRestore: restoreInfo.currentZoom,
+        zoomAfterRestore: restoreInfo.restoredZoom,
+        boundsAfterIdle: boundsAfterIdle ? {
+          ne:{ lat: boundsAfterIdle.getNorthEast().lat(), lng: boundsAfterIdle.getNorthEast().lng() },
+          sw:{ lat: boundsAfterIdle.getSouthWest().lat(), lng: boundsAfterIdle.getSouthWest().lng() }
+        } : null,
+        venuesReturnedCount: venuesInView.length,
+        candidatesCount: candidateCount,
+        requiredStops: venueCount,
+        errorBranch: candidateCount<venueCount ? "INSUFFICIENT_CANDIDATES_PRECHECK" : null
       });
     }
-    const refreshResult=await generateCrawlVenues(origin,venueCount,startAt,orderMode,{ refresh:true, currentVenueIds, maxStepMeters: maxStepDistanceMeters, areaContext: "refresh" });
+    if(candidateCount<venueCount){
+      alert("Not enough venues available, zoom out to refresh pub crawl");
+      return;
+    }
+    const origin=getMapCenter();
+    const refreshResult=await generateCrawlVenuesFromList(venuesInView,origin,venueCount,startAt,orderMode,{ refresh:true, currentVenueIds, maxStepMeters: maxStepDistanceMeters, areaContext: "refresh" });
     if(!refreshResult.ok){
       const insufficientReasons=new Set(["NOT_ENOUGH_CANDIDATES","insufficient outdoor venues","nonOutdoor cap prevents completion","no path length N exists under maxDistance","graph too sparse"]);
+      if(DEBUG_REFRESH){
+        console.log("[RefreshDebug]",{
+          zoomBeforeRestore: restoreInfo.currentZoom,
+          zoomAfterRestore: restoreInfo.restoredZoom,
+          venuesReturnedCount: venuesInView.length,
+          candidatesCount: candidateCount,
+          requiredStops: venueCount,
+          errorBranch: insufficientReasons.has(refreshResult.reason) ? "INSUFFICIENT_BUILD_RESULT" : "GENERIC_BUILD_FAILURE",
+          failureReason: refreshResult.reason || "UNKNOWN"
+        });
+      }
       if(insufficientReasons.has(refreshResult.reason)){
         alert("Not enough venues available, zoom out to refresh pub crawl");
       } else {
@@ -3501,6 +3537,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     refreshCrawlReminders();
     showCrawlControls();
   }
+
 
   function ensureCrawlListPanel(){
     if(crawlListPanel) return crawlListPanel;
