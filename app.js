@@ -82,6 +82,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_SHARED_COMPRESSED_CHARS = 6000;
   const MAX_SHARED_DECOMPRESSED_CHARS = 50000;
   const INCLUDE_NO_OUTDOOR_STORAGE_KEY = "sunny_include_no_outdoor";
+  const INITIAL_LOCATION_VIEW_STORAGE_KEY = "sunny_initial_location_view";
 
   let crawlLayer = [];
   let crawlState = null;
@@ -105,6 +106,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let activeRequestController = null;
   const MAX_PAGES_PER_PASS = 1;
   let includeNoOutdoorVenues = loadIncludeNoOutdoorPreference();
+  let initialLocationView = loadInitialLocationView();
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/marker.png";
   let markerIcon = null;
@@ -266,6 +268,59 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function shouldIncludeNoOutdoorVenues(){
     return !!includeNoOutdoorVenues;
   }
+  function loadInitialLocationView(){
+    try{
+      const raw=localStorage.getItem(INITIAL_LOCATION_VIEW_STORAGE_KEY);
+      if(!raw) return null;
+      const parsed=JSON.parse(raw);
+      if(!parsed||!Number.isFinite(parsed?.center?.lat)||!Number.isFinite(parsed?.center?.lng)) return null;
+      const zoom=Number.isFinite(parsed?.zoom) ? parsed.zoom : 13;
+      return { center:{ lat:parsed.center.lat, lng:parsed.center.lng }, zoom };
+    } catch {
+      return null;
+    }
+  }
+  function saveInitialLocationView(view){
+    initialLocationView=view;
+    try{ localStorage.setItem(INITIAL_LOCATION_VIEW_STORAGE_KEY,JSON.stringify(view)); } catch {}
+  }
+  function setInitialLocationViewFromMap({ force=false }={}){
+    if(!map) return;
+    if(initialLocationView&&!force) return;
+    const center=map.getCenter();
+    if(!center) return;
+    const zoom=map.getZoom();
+    saveInitialLocationView({ center:{ lat:center.lat(), lng:center.lng() }, zoom: Number.isFinite(zoom)?zoom:13 });
+  }
+  function waitForMapIdle(timeoutMs=1200){
+    if(!map) return Promise.resolve();
+    return new Promise((resolve)=>{
+      let done=false;
+      const finish=()=>{ if(done) return; done=true; resolve(); };
+      google.maps.event.addListenerOnce(map,"idle",finish);
+      setTimeout(finish,timeoutMs);
+    });
+  }
+  async function restoreInitialLocationViewForRefresh(){
+    const existed=!!initialLocationView;
+    const currentZoom=map?.getZoom?.() ?? null;
+    let restoredZoom=currentZoom;
+    if(map&&initialLocationView?.center&&Number.isFinite(initialLocationView?.zoom)){
+      map.setCenter(initialLocationView.center);
+      map.setZoom(initialLocationView.zoom);
+      restoredZoom=initialLocationView.zoom;
+      await waitForMapIdle();
+      return { existed, currentZoom, restoredZoom, fallback:false };
+    }
+    if(map){
+      const fallbackZoom=Math.max(10,Math.min(16,(Number.isFinite(currentZoom)?currentZoom:13)-2));
+      map.setZoom(fallbackZoom);
+      restoredZoom=fallbackZoom;
+      await waitForMapIdle();
+    }
+    return { existed, currentZoom, restoredZoom, fallback:true };
+  }
+
   function formatAddress(tags={}){
     if(tags["addr:full"]) return tags["addr:full"];
     const hn=tags["addr:housenumber"]||"";
@@ -403,6 +458,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(hasCenteredOnUser&&!force) return;
     const zoom=Math.max(map.getZoom(),targetZoom);
     panToLocation(userLocation.lat,userLocation.lng,zoom);
+    setInitialLocationViewFromMap();
     hasCenteredOnUser=true;
   }
   function panToLocation(lat,lng,zoom=null){
@@ -3414,13 +3470,26 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const startAt=crawlState.startAt instanceof Date ? crawlState.startAt : new Date();
     const currentVenueIds=crawlState.venues.map(v=>v.id);
     const maxStepDistanceMeters=crawlState.maxStepDistanceMeters || CRAWL_MAX_STEP_METERS;
+    const restoreInfo=await restoreInitialLocationViewForRefresh();
+    await loadVisibleTiles({ immediate: true });
     const venuesInView=getVenuesInViewSnapshot();
-    if(!venuesInView.length){
-      await loadVisibleTiles({ immediate: true });
+    if(DEBUG_CRAWL){
+      console.log("[CrawlDebug] refresh view",{
+        hadInitialLocationView: restoreInfo.existed,
+        currentZoom: restoreInfo.currentZoom,
+        restoredZoom: restoreInfo.restoredZoom,
+        fallbackUsed: restoreInfo.fallback,
+        candidateCountFound: venuesInView.length
+      });
     }
     const refreshResult=await generateCrawlVenues(origin,venueCount,startAt,orderMode,{ refresh:true, currentVenueIds, maxStepMeters: maxStepDistanceMeters, areaContext: "refresh" });
     if(!refreshResult.ok){
-      alert(`Couldn’t build a crawl within ${formatDistanceKm(maxStepDistanceMeters/1000)} between stops. Try increasing the distance limit or reducing number of stops.`);
+      const insufficientReasons=new Set(["NOT_ENOUGH_CANDIDATES","insufficient outdoor venues","nonOutdoor cap prevents completion","no path length N exists under maxDistance","graph too sparse"]);
+      if(insufficientReasons.has(refreshResult.reason)){
+        alert("Not enough venues available, zoom out to refresh pub crawl");
+      } else {
+        alert(`Couldn’t build a crawl within ${formatDistanceKm(maxStepDistanceMeters/1000)} between stops. Try increasing the distance limit or reducing number of stops.`);
+      }
       return;
     }
     buildCrawlState(refreshResult.venues,startAt,origin,orderMode,maxStepDistanceMeters);
@@ -3781,8 +3850,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           setStatus("Location confirmed.","success");
           if(map&&item.bounds){
             map.fitBounds(item.bounds);
+            waitForMapIdle().then(()=>setInitialLocationViewFromMap({ force:true }));
           } else if(map){
             panToLocation(item.lat,item.lng,13);
+            setInitialLocationViewFromMap({ force:true });
           }
         });
         suggestionsEl.appendChild(btn);
@@ -4048,6 +4119,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           crawlBuilder.statusEl.className="crawl-builder__status error";
         }
         return;
+      }
+      if(option==="around"&&center){
+        saveInitialLocationView({ center:{ lat:center.lat, lng:center.lng }, zoom: map?.getZoom?.() ?? 13 });
       }
       const orderMode=crawlBuilder?.orderMode || "location";
       let buildResult={ ok:false, reason:"NOT_ENOUGH_CANDIDATES" };
