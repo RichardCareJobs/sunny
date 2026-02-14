@@ -185,6 +185,8 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .venue-card__actions .action-button { display:inline-flex; align-items:center; gap:.38rem; cursor:pointer; font:inherit; }
 .venue-card__save-icon { width:16px; height:16px; display:inline-flex; color:#ff6a00; }
 .venue-card__save-icon svg { width:16px; height:16px; display:block; }
+.venue-card__save-check { width:15px; height:15px; display:inline-flex; color:#15803d; }
+.venue-card__save-check svg { width:15px; height:15px; display:block; }
 .venue-card__save-toggle.is-active { border-color:#ff6a00; background:#fff7ed; color:#b45309; }
 .venue-card__actions .action.primary { background:#111; color:#fff; border-color:#111; }
 .venue-card__actions .action.muted { color:#0a66c2; }

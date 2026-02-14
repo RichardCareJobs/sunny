@@ -308,7 +308,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       localStorage.setItem(SUNNY_SAVES_STORAGE_KEY,JSON.stringify(normalized));
       return true;
     } catch {
-      showAppToast("Sunny Saves unavailable on this device right now");
+      showAppToast("Wishlist unavailable on this device right now");
       return false;
     }
   }
@@ -341,7 +341,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.saveButton.classList.toggle("is-active",active);
     card.saveButton.setAttribute("aria-pressed",active?"true":"false");
     const label=card.saveButton.querySelector(".venue-card__save-label");
-    if(label) label.textContent=active?"Saved":"Save";
+    if(label) label.textContent="Wishlist";
+    const saveIcon=card.saveButton.querySelector(".venue-card__save-icon");
+    const checkIcon=card.saveButton.querySelector(".venue-card__save-check");
+    if(saveIcon) saveIcon.classList.toggle("hidden",active);
+    if(checkIcon) checkIcon.classList.toggle("hidden",!active);
   }
   function updateSavesFab(){
     if(!savesFabButton||!savesFabBadge) return;
@@ -3650,8 +3654,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <button class="venue-card__fab-item venue-card__rate-btn" type="button" data-action="rate">Rate outdoor area</button>
         </div>
         <div class="venue-card__actions">
-          <!-- Sunny Saves toggle button stays visually distinct from favourites (heart) and ratings (stars). -->
-          <button class="action action-button venue-card__save-toggle" type="button" aria-label="Toggle Sunny Save" aria-pressed="false"><span class="venue-card__save-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="venue-card__save-label">Save</span></button>
+          <!-- Wishlist toggle button stays visually distinct from favourites (heart) and ratings (stars). -->
+          <button class="action action-button venue-card__save-toggle" type="button" aria-label="Toggle wishlist" aria-pressed="false"><span class="venue-card__save-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="venue-card__save-label">Wishlist</span><span class="venue-card__save-check hidden" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
           <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
           <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
@@ -3693,7 +3697,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const venue=detailCard?.currentVenue;
         if(!venue) return;
         if(toggleSave(venue)){
-          showAppToast(isSaved(venue.id)?"Saved to Sunny Saves":"Removed from Sunny Saves");
+          showAppToast(isSaved(venue.id)?"Added to Wishlist":"Removed from Wishlist");
         }
       });
     }
@@ -5374,7 +5378,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return button;
   }
 
-  // Insert Sunny Saves button between Crawl and Favourites controls.
+  // Insert Wishlist button between Crawl and Favourites controls.
   function ensureSavesFab(){
     if(savesFabButton) return savesFabButton;
     const container=ensureBottomRightActions();
@@ -5382,7 +5386,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     button.id="saves-fab";
     button.className="saves-fab";
     button.type="button";
-    button.setAttribute("aria-label","Sunny Saves");
+    button.setAttribute("aria-label","Wishlist");
     button.innerHTML=`
       <svg class="saves-fab__icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
       <span class="saves-fab__badge hidden">0</span>`;
@@ -5403,11 +5407,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     sheet.className="sheet saves-sheet";
     sheet.setAttribute("role","dialog");
     sheet.setAttribute("aria-modal","true");
-    sheet.setAttribute("aria-label","Sunny Saves");
+    sheet.setAttribute("aria-label","Wishlist");
     sheet.innerHTML=`
       <div class="sheet-head">
-        <h3>Sunny Saves</h3>
-        <button class="icon-btn" type="button" aria-label="Close Sunny Saves">×</button>
+        <h3>Wishlist</h3>
+        <button class="icon-btn" type="button" aria-label="Close Wishlist">×</button>
       </div>
       <div class="saves-sheet__sort-wrap">
         <button type="button" class="saves-sort is-active" data-sort="recent">Recently saved</button>
@@ -5510,7 +5514,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return parseAddedAt(b.addedAt)-parseAddedAt(a.addedAt);
     });
     if(!sorted.length){
-      savesSheetBody.innerHTML='<div class="saves-empty">No saved venues yet. Tap Save on a venue to add it here.</div>';
+      savesSheetBody.innerHTML='<div class="saves-empty">Your Wishlist is empty. Tap Wishlist on a venue to add it here.</div>';
       return;
     }
     savesSheetBody.innerHTML="";
@@ -5531,7 +5535,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       row.querySelector(".saves-row__meta").textContent=getShortAddress(entry.address);
       row.querySelector('[data-action="view"]').addEventListener("click",()=>openVenueFromSave(entry));
       row.querySelector('[data-action="remove"]').addEventListener("click",()=>{
-        if(removeSave(entry.placeId)) showAppToast("Removed from Sunny Saves");
+        if(removeSave(entry.placeId)) showAppToast("Removed from Wishlist");
       });
       savesSheetBody.appendChild(row);
     });
