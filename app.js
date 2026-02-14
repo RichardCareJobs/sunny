@@ -74,7 +74,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let sharedCrawlOverlayEl = null;
   let sharedCrawlDebugPanelEl = null;
   let pendingSharedCrawl = null;
-  let sharedCrawlLoadingHandle = 0;
+  let sharedCrawlLoadingController = null;
   let sharedCrawlLoadRequestId = 0;
 
   let venueCountToast = null;
@@ -383,23 +383,89 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     sharedCrawlOverlayEl.hidden=true;
   }
 
+  function logSharedLoaderDebug(message,meta={}){
+    if(!isDebugShareMode()) return;
+    console.log(`[SharedCrawlLoader] ${message}`,meta);
+  }
+
+  function ensureSharedCrawlLoadingController(){
+    if(sharedCrawlLoadingController) return sharedCrawlLoadingController;
+    let activeHandle=null;
+    let counter=0;
+    const findLoaderNodes=()=>Array.from(document.querySelectorAll('#shared-crawl-loading, [data-shared-crawl-loading="1"]'));
+    const removeLoaderNodes=()=>{
+      findLoaderNodes().forEach((node)=>node.remove());
+    };
+    const show=()=>{
+      const replaced=activeHandle;
+      if(replaced){
+        removeLoaderNodes();
+        activeHandle=null;
+        logSharedLoaderDebug('dismiss',{ reason:'replaced', handle:replaced });
+      }
+      counter+=1;
+      const handle=`shared-loader-${counter}`;
+      const el=document.createElement('div');
+      el.id='shared-crawl-loading';
+      el.dataset.sharedCrawlLoading='1';
+      el.dataset.handle=handle;
+      el.style.position='fixed';
+      el.style.inset='0';
+      el.style.zIndex='4050';
+      el.style.display='flex';
+      el.style.alignItems='center';
+      el.style.justifyContent='center';
+      el.style.background='rgba(17,17,17,0.78)';
+      el.style.color='#fff';
+      el.style.padding='24px';
+      el.style.textAlign='center';
+      el.style.fontWeight='700';
+      el.textContent='Loading shared crawl...';
+      document.body.appendChild(el);
+      showVenueStatus('loading','Loading shared crawl…');
+      activeHandle=handle;
+      logSharedLoaderDebug('show',{ handle });
+      return handle;
+    };
+    const dismiss=(handle,reason='dismissed')=>{
+      if(handle&&activeHandle&&handle!==activeHandle) return;
+      const previous=activeHandle;
+      removeLoaderNodes();
+      if(venueStatusEl&&String(venueStatusEl.textContent||'').includes('Loading shared crawl')) hideVenueStatus();
+      activeHandle=null;
+      logSharedLoaderDebug('dismiss',{ reason, handle:previous||handle||null });
+      const lingering=findLoaderNodes();
+      if(lingering.length){
+        lingering.forEach((node)=>node.remove());
+        logSharedLoaderDebug('force-removed stuck loader node',{ reason, lingeringCount:lingering.length });
+      }
+      setTimeout(()=>{
+        const stale=findLoaderNodes();
+        if(stale.length){
+          stale.forEach((node)=>node.remove());
+          logSharedLoaderDebug('watchdog force-removed stuck loader node',{ reason, lingeringCount:stale.length });
+        }
+      },1000);
+    };
+    const dismissAll=(reason='dismiss_all')=>dismiss(null,reason);
+    const isVisible=()=>!!activeHandle&&findLoaderNodes().length>0;
+    const getActiveHandle=()=>activeHandle;
+    sharedCrawlLoadingController={ show, dismiss, dismissAll, isVisible, getActiveHandle };
+    return sharedCrawlLoadingController;
+  }
+
   function showSharedCrawlLoading(){
-    sharedCrawlLoadingHandle+=1;
-    const handle=sharedCrawlLoadingHandle;
-    showSharedCrawlOverlay("Loading shared crawl...");
-    showVenueStatus("loading","Loading shared crawl…");
-    return handle;
+    return ensureSharedCrawlLoadingController().show();
   }
 
-  function hideSharedCrawlLoading(handle){
-    if(handle!=null&&handle!==sharedCrawlLoadingHandle) return;
-    hideSharedCrawlOverlay();
-    if(venueStatusEl&&venueStatusEl.dataset.state==="loading"&&String(venueStatusEl.textContent||"").includes("Loading shared crawl")){
-      hideVenueStatus();
-    }
+  function hideSharedCrawlLoading(handle,reason='dismissed'){
+    ensureSharedCrawlLoadingController().dismiss(handle,reason);
   }
 
-  // Distance
+  function dismissAllSharedCrawlLoading(reason='dismiss_all'){
+    ensureSharedCrawlLoadingController().dismissAll(reason);
+  }
+
   // Distance
   function haversine(a,b,c,d){ const R=6371,toRad=x=>x*Math.PI/180; const dLat=toRad(c-a), dLon=toRad(d-b);
     const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2;
@@ -1856,6 +1922,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function clearCrawlAndReturnToMap(){
+    dismissAllSharedCrawlLoading("user_close_crawl");
     if(!crawlState) return;
     const confirmed=window.confirm("Clear this pub crawl?");
     if(!confirmed) return;
@@ -2910,6 +2977,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return true;
   }
 
+  async function waitForSharedCrawlRendered(){
+    await new Promise((resolve)=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  }
+
   function showInvalidSharedCrawlMessage(message="Invalid shared crawl link (couldn’t decode)"){
     showSharedCrawlOverlay(message,{ isError:true, actions:[
       { label:"Return to map", onClick:()=>{ hideSharedCrawlLoading(); pendingSharedCrawl=null; } }
@@ -2960,8 +3031,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const applied=applyHydratedCrawlState(nextState,{ openList:true });
       if(!applied) throw new Error("SHARED_LINK_INVALID");
       pendingSharedCrawl={ ...pendingSharedCrawl, token:"", debugState: pendingSharedCrawl?.debugState||{} };
-      hideSharedCrawlOverlay();
       updateDebugShareState({ hydrationStatus:"done", hydratedCount: nextState.venues.length, failedCount: failedPlaceIds.length, failureStatuses:[...new Set(failedStatuses)], decodeStatus:"ok" });
+      await waitForSharedCrawlRendered();
+      hideSharedCrawlOverlay();
+      hideSharedCrawlLoading(null,"success_rendered");
       if(failedPlaceIds.length){
         showSharedCrawlVenueLoadFailure();
       }
@@ -2973,6 +3046,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const message=String(err?.message||"");
       console.warn("Unable to hydrate compact crawl link",err);
       updateDebugShareState({ decodeStatus:"error", decodeMessage:message, hydrationStatus:"done" });
+      hideSharedCrawlLoading(null,"error");
       if(message==="SHARED_LINK_NO_VENUES"){
         showInvalidSharedCrawlMessage("Invalid shared crawl link (no venues in payload)");
       } else if(message.startsWith("SHARED_LINK_")||message.includes("TOKEN")||message.includes("decode")||message.includes("Unexpected token")||message.includes("GOOGLE_PLACES_NOT_READY")){
@@ -2992,20 +3066,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!token) return false;
     const requestId=++sharedCrawlLoadRequestId;
     const loadingHandle=showSharedCrawlLoading();
+    let timedOut=false;
     const timeoutId=setTimeout(()=>{
       if(requestId!==sharedCrawlLoadRequestId) return;
-      hideSharedCrawlLoading(loadingHandle);
+      timedOut=true;
+      hideSharedCrawlLoading(loadingHandle,"timeout");
       showVenueStatus("error","Shared crawl is taking longer than expected…");
-    },15000);
+    },10000);
     try{
       const loaded=await hydrateCrawlFromCompactLink(token,{ isRetry });
       return loaded;
     } catch(err){
       console.warn("Shared crawl load pipeline failed",err);
+      hideSharedCrawlLoading(loadingHandle,"error");
       return false;
     } finally {
       clearTimeout(timeoutId);
-      hideSharedCrawlLoading(loadingHandle);
+      if(!timedOut) hideSharedCrawlLoading(loadingHandle,"finally");
     }
   }
 
@@ -5038,6 +5115,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     mapsReady=true;
     tryBoot();
   };
+  window.addEventListener("pagehide",()=>dismissAllSharedCrawlLoading("navigation"));
   if(window.__sunnyMapsReady){
     mapsReady=true;
   }
