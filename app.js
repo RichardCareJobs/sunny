@@ -3329,7 +3329,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!document.getElementById("map")){ const m=document.createElement("div"); m.id="map"; m.style.position="absolute"; m.style.left="0"; m.style.right="0"; m.style.top="0"; m.style.bottom="0"; document.body.appendChild(m); }
     map=new google.maps.Map(document.getElementById("map"),{
       center:{ lat: DEFAULT_VIEW.lat, lng: DEFAULT_VIEW.lng },
-      zoom: DEFAULT_VIEW.zoom
+      zoom: DEFAULT_VIEW.zoom,
+      clickableIcons: false,
+      styles:[
+        { featureType: "poi", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
+        { featureType: "poi", elementType: "labels.text", stylers: [{ visibility: "off" }] }
+      ]
     });
     markerIcon={
       url: MARKER_ICON_URL,
