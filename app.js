@@ -48,6 +48,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let map;
   let markersLayer = [];
   const markersById = new Map();
+  const markerLastSeenAt = new Map();
   let markerClusterer = null;
   const CLUSTER_THRESHOLD = 60;
   let locateButton = null;
@@ -62,9 +63,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
-  const MOVE_DEBOUNCE_MS = 300;
+  const MOVE_DEBOUNCE_MS = 220;
+  const MARKER_BATCH_SIZE = 50;
+  const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   let moveTimer = null;
   let hasInitialMapLoad = false;
+  let pendingMarkerRenderToken = 0;
 
   let openVenueId = null;
   let isRenderingMarkers = false;
@@ -132,6 +136,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   const MARKER_ICON_URL = window.SUNNY_ICON_URL || "/icons/marker.png";
   let markerIcon = null;
+  let markerScaledSize = null;
+  let markerAnchorPoint = null;
   const viewportCache = new Map();
   const crawlVenueCache = new Map();
 
@@ -2060,8 +2066,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function mergeVenues(list){
     let added=0;
+    const now=Date.now();
     for(const v of list){
       if(!v||isGloballyExcludedVenue(v)) continue;
+      // Keep a lightweight "last seen" timestamp so markers can be reused and only purged after prolonged absence.
+      markerLastSeenAt.set(v.id,now);
       if(!allVenues[v.id]){
         allVenues[v.id]=v;
         added++;
@@ -2073,9 +2082,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function clearMarkersLayer(){
+    pendingMarkerRenderToken++;
     clearMarkerClusterer();
     markersById.forEach(marker=>marker.setMap(null));
     markersById.clear();
+    markerLastSeenAt.clear();
     markersLayer=[];
   }
 
@@ -3336,10 +3347,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         { featureType: "poi", elementType: "labels.text", stylers: [{ visibility: "off" }] }
       ]
     });
+    markerScaledSize=new google.maps.Size(32, 32);
+    markerAnchorPoint=new google.maps.Point(16, 16);
     markerIcon={
       url: MARKER_ICON_URL,
-      scaledSize: new google.maps.Size(32, 32),
-      anchor: new google.maps.Point(16, 16)
+      scaledSize: markerScaledSize,
+      anchor: markerAnchorPoint
     };
     placesService=new google.maps.places.PlacesService(map);
     autocompleteService=new google.maps.places.AutocompleteService();
@@ -3934,33 +3947,85 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     },3000);
   }
 
+
+  function applyMarkerVisibility(visibleMarkers){
+    const shouldCluster=visibleMarkers.length>CLUSTER_THRESHOLD && !!getMarkerClustererClass();
+    if(shouldCluster){
+      const clusterer=ensureMarkerClusterer();
+      if(clusterer){
+        clusterer.clearMarkers();
+        clusterer.addMarkers(visibleMarkers);
+      }
+      return;
+    }
+    if(markerClusterer) clearMarkerClusterer();
+    visibleMarkers.forEach((marker)=>{
+      marker.setMap(map);
+      marker.setVisible(true);
+    });
+  }
+
+  function processMarkerBatch(items,handleItem,onDone){
+    if(!Array.isArray(items)||!items.length){
+      onDone();
+      return;
+    }
+    let index=0;
+    const step=()=>{
+      const end=Math.min(index+MARKER_BATCH_SIZE,items.length);
+      for(;index<end;index++) handleItem(items[index]);
+      if(index<items.length){
+        requestAnimationFrame(step);
+      } else {
+        onDone();
+      }
+    };
+    requestAnimationFrame(step);
+  }
+
   function renderMarkers({ perfStart=null, cacheStatus=null }={}){
     if(!map) return;
     if(isCrawlMode&&crawlState&&crawlState.venues&&crawlState.venues.length){
       clearMarkersLayer();
       return;
     }
+    const renderToken=++pendingMarkerRenderToken;
     const reopenVenueId=openVenueId;
     let reopenVenue=null;
     isRenderingMarkers=true;
     const b=map.getBounds();
-    if(!b){ isRenderingMarkers=false; return; }
+    if(!b){
+      isRenderingMarkers=false;
+      return;
+    }
+    const now=Date.now();
     const visibleVenues=[];
-    Object.values(allVenues).forEach(v=>{
+    Object.values(allVenues).forEach((v)=>{
       if(!v||typeof v.lat!=="number"||typeof v.lng!=="number") return;
       if(isGloballyExcludedVenue(v)) return;
       if(!b.contains(new google.maps.LatLng(v.lat,v.lng))) return;
       visibleVenues.push(v);
+      markerLastSeenAt.set(v.id,now);
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
-    const visibleIds=new Set(visibleVenues.map(v=>v.id));
+    const visibleIds=new Set(visibleVenues.map((v)=>v.id));
+
+    // Reuse existing markers: hide off-screen markers immediately, and remove only after a stale grace window.
     markersById.forEach((marker,id)=>{
-      if(!visibleIds.has(id)){
-        marker.setMap(null);
+      if(visibleIds.has(id)) return;
+      marker.setVisible(false);
+      marker.setMap(null);
+      const lastSeen=markerLastSeenAt.get(id)||0;
+      if(now-lastSeen>MARKER_STALE_REMOVE_MS){
         markersById.delete(id);
+        markerLastSeenAt.delete(id);
       }
     });
-    visibleVenues.forEach(v=>{
+
+    const visibleMarkers=[];
+    // Batch marker create/update work per frame to keep map interactions responsive.
+    processMarkerBatch(visibleVenues,(v)=>{
+      if(renderToken!==pendingMarkerRenderToken) return;
       let marker=markersById.get(v.id);
       if(!marker){
         marker=new google.maps.Marker({
@@ -3977,38 +4042,32 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(!pos||pos.lat()!==v.lat||pos.lng()!==v.lng){
           marker.setPosition({ lat: v.lat, lng: v.lng });
         }
-        if(markerIcon&&marker.getIcon()!==markerIcon){
-          marker.setIcon(markerIcon);
-        }
+        if(markerIcon&&marker.getIcon()!==markerIcon) marker.setIcon(markerIcon);
+      }
+      marker.setVisible(true);
+      visibleMarkers.push(marker);
+    },()=>{
+      if(renderToken!==pendingMarkerRenderToken){
+        isRenderingMarkers=false;
+        return;
+      }
+      applyMarkerVisibility(visibleMarkers);
+      markersLayer=visibleMarkers;
+      isRenderingMarkers=false;
+      showVenueCount(visibleMarkers.length);
+      if(perfStart){
+        perfLog("markers rendered",{ ms: Math.round(performance.now()-perfStart), count: visibleMarkers.length, cache: cacheStatus || "none" });
+      } else if(cacheStatus){
+        perfLog("markers rendered",{ count: visibleMarkers.length, cache: cacheStatus });
+      }
+      if(reopenVenue){
+        showVenueCard(reopenVenue);
+      } else if(reopenVenueId){
+        hideVenueCard();
       }
     });
-    const visibleMarkers=visibleVenues.map(v=>markersById.get(v.id)).filter(Boolean);
-    const shouldCluster=visibleMarkers.length>CLUSTER_THRESHOLD && !!getMarkerClustererClass();
-    if(shouldCluster){
-      const clusterer=ensureMarkerClusterer();
-      if(clusterer){
-        visibleMarkers.forEach(marker=>marker.setMap(null));
-        clusterer.clearMarkers();
-        clusterer.addMarkers(visibleMarkers);
-      }
-    } else {
-      if(markerClusterer) clearMarkerClusterer();
-      visibleMarkers.forEach(marker=>marker.setMap(map));
-    }
-    markersLayer=visibleMarkers;
-    isRenderingMarkers=false;
-    showVenueCount(visibleMarkers.length);
-    if(perfStart){
-      perfLog("markers rendered",{ ms: Math.round(performance.now()-perfStart), count: visibleMarkers.length, cache: cacheStatus || "none" });
-    } else if(cacheStatus){
-      perfLog("markers rendered",{ count: visibleMarkers.length, cache: cacheStatus });
-    }
-    if(reopenVenue){
-      showVenueCard(reopenVenue);
-    } else if(reopenVenueId){
-      hideVenueCard();
-    }
   }
+
 
   function createCrawlMarkerIcon(number){
     return {
