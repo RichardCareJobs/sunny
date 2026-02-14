@@ -313,13 +313,50 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
   }
   function isSaved(placeId){
-    const id=String(placeId||"").trim();
+    const id=normalizePlaceId(placeId);
     if(!id) return false;
     return savesList.some((entry)=>entry.placeId===id);
   }
+  function normalizePlaceId(value){
+    if(value&&typeof value==="object"){
+      return String(value.place_id||value.placeId||value.id||"").trim();
+    }
+    return String(value||"").trim();
+  }
+  function createWishlistBookmarkIcon(){
+    const icon=document.createElement("span");
+    icon.className="venue-card__save-icon";
+    icon.setAttribute("aria-hidden","true");
+    icon.innerHTML='<svg viewBox="0 0 24 24" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>';
+    return icon;
+  }
+  function createWishlistTickIcon(){
+    const icon=document.createElement("span");
+    icon.className="venue-card__save-check";
+    icon.setAttribute("aria-hidden","true");
+    icon.innerHTML='<svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    return icon;
+  }
+  function renderWishlistButton(buttonEl,placeId){
+    if(!buttonEl) return;
+    const id=normalizePlaceId(placeId);
+    const onWishlist=!!id&&isSaved(id);
+    buttonEl.innerHTML="";
+    buttonEl.appendChild(createWishlistBookmarkIcon());
+    const label=document.createElement("span");
+    label.className="venue-card__save-label";
+    label.textContent="Wishlist";
+    buttonEl.appendChild(label);
+    if(onWishlist===true){
+      buttonEl.appendChild(createWishlistTickIcon());
+    }
+    buttonEl.dataset.onWishlist=onWishlist?"1":"0";
+    buttonEl.classList.toggle("is-active",onWishlist);
+    buttonEl.setAttribute("aria-pressed",onWishlist?"true":"false");
+  }
   function toSaveVenue(venue){
     if(!venue||typeof venue!=="object") return null;
-    const placeId=String(venue.placeId||venue.place_id||venue.id||"").trim();
+    const placeId=normalizePlaceId(venue);
     if(!placeId) return null;
     const lat=Number(venue.lat);
     const lng=Number(venue.lng);
@@ -333,17 +370,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       addedAt:new Date().toISOString()
     };
   }
-  function updateVenueCardSaveButton(venueId=openVenueId){
+  function updateVenueCardSaveButton(venueRef=openVenueId){
     const card=detailCard;
     if(!card?.saveButton) return;
-    const id=String(venueId||"").trim();
-    const active=!!id&&isSaved(id);
-    card.saveButton.classList.toggle("is-active",active);
-    card.saveButton.setAttribute("aria-pressed",active?"true":"false");
-    const label=card.saveButton.querySelector(".venue-card__save-label");
-    if(label) label.textContent="Wishlist";
-    const checkIcon=card.saveButton.querySelector(".venue-card__save-check");
-    if(checkIcon) checkIcon.classList.toggle("hidden",!active);
+    const placeId=normalizePlaceId(venueRef)||normalizePlaceId(card.currentVenue)||normalizePlaceId(openVenueId);
+    renderWishlistButton(card.saveButton,placeId);
   }
   function updateSavesFab(){
     if(!savesFabButton||!savesFabBadge) return;
@@ -369,12 +400,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return setSaves(list);
   }
   function removeSave(placeId){
-    const id=String(placeId||"").trim();
+    const id=normalizePlaceId(placeId);
     if(!id) return false;
     return setSaves(savesList.filter((saved)=>saved.placeId!==id));
   }
   function toggleSave(place){
-    const placeId=String(place?.placeId||place?.place_id||place?.id||"").trim();
+    const placeId=normalizePlaceId(place);
     if(!placeId) return false;
     if(isSaved(placeId)) return removeSave(placeId);
     return addSave(place);
@@ -390,13 +421,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
   }
   function isFavourite(placeId){
-    const id=String(placeId||"").trim();
+    const id=normalizePlaceId(placeId);
     if(!id) return false;
     return favouritesList.some((entry)=>entry.placeId===id);
   }
   function toFavouriteVenue(venue){
     if(!venue||typeof venue!=="object") return null;
-    const placeId=String(venue.placeId||venue.place_id||venue.id||"").trim();
+    const placeId=normalizePlaceId(venue);
     if(!placeId) return null;
     const lat=Number(venue.lat);
     const lng=Number(venue.lng);
@@ -427,7 +458,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return setFavourites(list);
   }
   function removeFavourite(placeId){
-    const id=String(placeId||"").trim();
+    const id=normalizePlaceId(placeId);
     if(!id) return false;
     return setFavourites(favouritesList.filter((fav)=>fav.placeId!==id));
   }
@@ -3653,7 +3684,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         </div>
         <div class="venue-card__actions">
           <!-- Wishlist toggle button stays visually distinct from favourites (heart) and ratings (stars). -->
-          <button class="action action-button venue-card__save-toggle" type="button" aria-label="Toggle wishlist" aria-pressed="false"><span class="venue-card__save-icon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M6 3.75A2.25 2.25 0 0 1 8.25 1.5h7.5A2.25 2.25 0 0 1 18 3.75v18.45a.3.3 0 0 1-.47.25L12 18.4l-5.53 4.05a.3.3 0 0 1-.47-.25V3.75Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span><span class="venue-card__save-label">Wishlist</span><span class="venue-card__save-check hidden" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></span></button>
+          <button class="action action-button venue-card__save-toggle" type="button" aria-label="Toggle wishlist" aria-pressed="false"></button>
           <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
           <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
@@ -3693,9 +3724,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       saveBtn.addEventListener("click",(event)=>{
         event.stopPropagation();
         const venue=detailCard?.currentVenue;
-        if(!venue) return;
+        const placeId=normalizePlaceId(venue);
+        if(!venue||!placeId) return;
         if(toggleSave(venue)){
-          showAppToast(isSaved(venue.id)?"Added to Wishlist":"Removed from Wishlist");
+          updateVenueCardSaveButton(placeId);
+          showAppToast(isSaved(placeId)?"Added to Wishlist":"Removed from Wishlist");
         }
       });
     }
@@ -3965,7 +3998,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.container.dataset.venueId=v.id;
     card.nameEl.textContent=v.name||"Outdoor venue";
     updateVenueCardFavouriteButton(v.id);
-    updateVenueCardSaveButton(v.id);
+    updateVenueCardSaveButton(v);
     card.metaEl.textContent=[kind,distance].filter(Boolean).join(" · ")||"";
     if(address){
       card.addressEl.textContent=address;
