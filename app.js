@@ -11,6 +11,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
   const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
+  const FAVOURITES_STORAGE_KEY = "sunny:favourites:v1";
   const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 3;
   const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 5;
   const VIEWPORT_CACHE_GRID_DEG = 0.002;
@@ -82,6 +83,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   let venueCountToast = null;
   let venueCountTimer = null;
+  let appToastEl = null;
+  let appToastTimer = null;
+  let favouritesList = [];
+  let favouritesFabButton = null;
+  let favouritesFabBadge = null;
+  let favouritesSheet = null;
+  let favouritesSheetBody = null;
+  let favouritesBackdrop = null;
+  let bottomRightActions = null;
 
   const CRAWL_DEFAULT_HANG_MINUTES = 45;
   const CRAWL_TIME_STEP_MINUTES = 15;
@@ -166,6 +176,150 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!(DEBUG_PERF || ["localhost","127.0.0.1",""].includes(window.location.hostname))) return;
     const payload=Object.keys(data).length ? ` ${JSON.stringify(data)}` : "";
     console.log(`[Perf] ${message}${payload}`);
+  }
+  function showAppToast(message){
+    if(!message) return;
+    if(!appToastEl){
+      appToastEl=document.createElement("div");
+      appToastEl.className="app-toast";
+      document.body.appendChild(appToastEl);
+    }
+    appToastEl.textContent=message;
+    appToastEl.classList.add("show");
+    if(appToastTimer) clearTimeout(appToastTimer);
+    appToastTimer=setTimeout(()=>{
+      if(appToastEl) appToastEl.classList.remove("show");
+    },2200);
+  }
+  function parseSavedAt(value){
+    if(typeof value==="number"&&Number.isFinite(value)) return value;
+    const dateMs=Date.parse(String(value||""));
+    if(Number.isFinite(dateMs)) return dateMs;
+    return Date.now();
+  }
+  function normalizeFavouriteEntry(entry){
+    if(!entry||typeof entry!=="object") return null;
+    const placeId=String(entry.placeId||entry.place_id||entry.id||"").trim();
+    const name=String(entry.name||"").trim();
+    const lat=Number(entry.lat);
+    const lng=Number(entry.lng);
+    if(!placeId||!name||!Number.isFinite(lat)||!Number.isFinite(lng)) return null;
+    return {
+      placeId,
+      name,
+      address: String(entry.address||entry.suburb||entry.vicinity||"").trim(),
+      lat,
+      lng,
+      savedAt: new Date(parseSavedAt(entry.savedAt)).toISOString()
+    };
+  }
+  function dedupeFavourites(list){
+    const favs=Array.isArray(list)?list:[];
+    const byPlaceId=new Map();
+    favs.forEach((entry)=>{
+      const normalized=normalizeFavouriteEntry(entry);
+      if(!normalized) return;
+      const existing=byPlaceId.get(normalized.placeId);
+      if(!existing||parseSavedAt(normalized.savedAt)>=parseSavedAt(existing.savedAt)){
+        byPlaceId.set(normalized.placeId,normalized);
+      }
+    });
+    return Array.from(byPlaceId.values());
+  }
+  function loadFavourites(){
+    try{
+      const raw=localStorage.getItem(FAVOURITES_STORAGE_KEY);
+      if(!raw) return [];
+      const parsed=JSON.parse(raw);
+      const deduped=dedupeFavourites(parsed);
+      if(Array.isArray(parsed)&&parsed.length!==deduped.length){
+        try{ localStorage.setItem(FAVOURITES_STORAGE_KEY,JSON.stringify(deduped)); } catch {}
+      }
+      return deduped;
+    } catch {
+      return [];
+    }
+  }
+  function saveFavourites(list){
+    const normalized=dedupeFavourites(list);
+    try{
+      localStorage.setItem(FAVOURITES_STORAGE_KEY,JSON.stringify(normalized));
+      return true;
+    } catch {
+      showAppToast("Favourites unavailable on this device right now");
+      return false;
+    }
+  }
+  function isFavourite(placeId){
+    const id=String(placeId||"").trim();
+    if(!id) return false;
+    return favouritesList.some((entry)=>entry.placeId===id);
+  }
+  function toFavouriteVenue(venue){
+    if(!venue||typeof venue!=="object") return null;
+    const placeId=String(venue.placeId||venue.place_id||venue.id||"").trim();
+    if(!placeId) return null;
+    const lat=Number(venue.lat);
+    const lng=Number(venue.lng);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)) return null;
+    return {
+      placeId,
+      name: String(venue.name||"Unnamed venue").trim()||"Unnamed venue",
+      address: String(venue.address||venue.suburb||venue.vicinity||venue.tags?.vicinity||venue.tags?.formatted_address||"").trim(),
+      lat,
+      lng,
+      savedAt: new Date().toISOString()
+    };
+  }
+  function setFavourites(nextList,{persist=true}={}){
+    const next=dedupeFavourites(nextList);
+    favouritesList=next;
+    if(persist&&!saveFavourites(next)) return false;
+    updateFavouritesFab();
+    updateVenueCardFavouriteButton();
+    renderFavouritesSheet();
+    return true;
+  }
+  function addFavourite(venue){
+    const entry=toFavouriteVenue(venue);
+    if(!entry) return false;
+    const list=favouritesList.filter((fav)=>fav.placeId!==entry.placeId);
+    list.push(entry);
+    return setFavourites(list);
+  }
+  function removeFavourite(placeId){
+    const id=String(placeId||"").trim();
+    if(!id) return false;
+    return setFavourites(favouritesList.filter((fav)=>fav.placeId!==id));
+  }
+  function updateVenueCardFavouriteButton(venueId=openVenueId){
+    const card=detailCard;
+    if(!card?.favouriteButton) return;
+    const id=String(venueId||"").trim();
+    const active=!!id&&isFavourite(id);
+    card.favouriteButton.classList.toggle("is-active",active);
+    card.favouriteButton.setAttribute("aria-pressed",active?"true":"false");
+    card.favouriteButton.textContent=active?"♥":"♡";
+  }
+  function updateFavouritesFab(){
+    if(!favouritesFabButton||!favouritesFabBadge) return;
+    const count=favouritesList.length;
+    favouritesFabButton.classList.toggle("has-favourites",count>0);
+    favouritesFabButton.querySelector(".fav-fab__icon").textContent=count>0?"♥":"♡";
+    favouritesFabBadge.textContent=String(count);
+    favouritesFabBadge.classList.toggle("hidden",count===0);
+  }
+  function ensureBottomRightActions(){
+    if(bottomRightActions) return bottomRightActions;
+    let container=document.getElementById("bottom-right-actions");
+    if(!container){
+      container=document.createElement("div");
+      container.id="bottom-right-actions";
+      container.className="bottom-right-actions";
+      document.body.appendChild(container);
+    }
+    bottomRightActions=container;
+    return container;
   }
   function getFilterHash(){
     const includeCafes=getIncludeCafes();
@@ -3327,7 +3481,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             <div class="venue-card__meta"></div>
             <div class="venue-card__address"></div>
           </div>
-          <button class="venue-card__close" type="button" aria-label="Close details">×</button>
+          <div class="venue-card__header-actions">
+            <button class="venue-card__favourite" type="button" aria-label="Toggle favourite" aria-pressed="false">♡</button>
+            <button class="venue-card__close" type="button" aria-label="Close details">×</button>
+          </div>
         </div>
         <div class="venue-card__photo-strip hidden" aria-label="Venue photos"></div>
         <div class="venue-card__section-title">Current weather</div>
@@ -3364,7 +3521,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     stripLegacyRating(container);
     document.body.appendChild(container);
     const closeBtn=container.querySelector(".venue-card__close");
+    const favouriteBtn=container.querySelector(".venue-card__favourite");
     closeBtn.addEventListener("click",()=>hideVenueCard());
+    if(favouriteBtn){
+      favouriteBtn.addEventListener("click",(event)=>{
+        event.stopPropagation();
+        const venue=detailCard?.currentVenue;
+        if(!venue) return;
+        if(isFavourite(venue.id)){
+          if(removeFavourite(venue.id)) showAppToast("Removed from favourites");
+        } else {
+          if(addFavourite(venue)) showAppToast("Saved to favourites");
+        }
+      });
+    }
     const fabToggle=container.querySelector(".venue-card__fab-toggle");
     const fabMenu=container.querySelector(".venue-card__fab-menu");
     const addImagesButton=container.querySelector('[data-action="add-images"]');
@@ -3441,6 +3611,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       sunChip:container.querySelector(".chip-sun"),
       weatherLabel:container.querySelector(".venue-card__section-title"),
       noteEl:container.querySelector(".venue-card__note"),
+      favouriteButton:favouriteBtn,
       photoStripEl:container.querySelector(".venue-card__photo-strip"),
       ratingDisplay:container.querySelector(".rating-display"),
       rateButton:rateButtons[0]||null,
@@ -3628,6 +3799,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     card.container.dataset.venueId=v.id;
     card.nameEl.textContent=v.name||"Outdoor venue";
+    updateVenueCardFavouriteButton(v.id);
     card.metaEl.textContent=[kind,distance].filter(Boolean).join(" · ")||"";
     if(address){
       card.addressEl.textContent=address;
@@ -4955,13 +5127,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function ensureCrawlFab(){
     if(document.getElementById("crawl-fab")) return;
+    const container=ensureBottomRightActions();
     const button=document.createElement("button");
     button.id="crawl-fab";
     button.className="crawl-fab";
     button.type="button";
     button.textContent="Plan a pub crawl";
     button.addEventListener("click",openCrawlBuilder);
-    document.body.appendChild(button);
+    container.appendChild(button);
   }
 
   function showCrawlFab(){
@@ -4972,6 +5145,134 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function hideCrawlFab(){
     const button=document.getElementById("crawl-fab");
     if(button) button.classList.add("hidden");
+  }
+
+  function ensureFavouritesFab(){
+    if(favouritesFabButton) return favouritesFabButton;
+    const container=ensureBottomRightActions();
+    const button=document.createElement("button");
+    button.id="favourites-fab";
+    button.className="fav-fab";
+    button.type="button";
+    button.setAttribute("aria-label","Favourites");
+    button.innerHTML='<span class="fav-fab__icon" aria-hidden="true">♡</span><span class="fav-fab__badge hidden">0</span>';
+    button.addEventListener("click",()=>toggleFavouritesSheet());
+    container.appendChild(button);
+    favouritesFabButton=button;
+    favouritesFabBadge=button.querySelector(".fav-fab__badge");
+    updateFavouritesFab();
+    return button;
+  }
+
+  function ensureFavouritesSheet(){
+    if(favouritesSheet&&favouritesBackdrop) return { sheet:favouritesSheet, backdrop:favouritesBackdrop };
+    const backdrop=document.createElement("div");
+    backdrop.className="backdrop";
+    backdrop.setAttribute("aria-hidden","true");
+    const sheet=document.createElement("div");
+    sheet.className="sheet favourites-sheet";
+    sheet.setAttribute("role","dialog");
+    sheet.setAttribute("aria-modal","true");
+    sheet.setAttribute("aria-label","Favourites");
+    sheet.innerHTML=`
+      <div class="sheet-head">
+        <h3>Favourites</h3>
+        <button class="icon-btn" type="button" aria-label="Close favourites">×</button>
+      </div>
+      <div class="sheet-body favourites-sheet__body"></div>
+    `;
+    document.body.appendChild(backdrop);
+    document.body.appendChild(sheet);
+    backdrop.addEventListener("click",closeFavouritesSheet);
+    sheet.querySelector(".icon-btn")?.addEventListener("click",closeFavouritesSheet);
+    favouritesBackdrop=backdrop;
+    favouritesSheet=sheet;
+    favouritesSheetBody=sheet.querySelector(".favourites-sheet__body");
+    renderFavouritesSheet();
+    return { sheet, backdrop };
+  }
+
+  function openFavouritesSheet(){
+    ensureFavouritesSheet();
+    renderFavouritesSheet();
+    favouritesBackdrop?.classList.add("show");
+    favouritesSheet?.classList.add("show");
+  }
+
+  function closeFavouritesSheet(){
+    favouritesBackdrop?.classList.remove("show");
+    favouritesSheet?.classList.remove("show");
+  }
+
+  function toggleFavouritesSheet(){
+    ensureFavouritesSheet();
+    const isOpen=favouritesSheet?.classList.contains("show");
+    if(isOpen) closeFavouritesSheet();
+    else openFavouritesSheet();
+  }
+
+  async function openVenueFromFavourite(entry){
+    if(!entry||!map) return;
+    closeFavouritesSheet();
+    map.panTo({ lat: entry.lat, lng: entry.lng });
+    if((map.getZoom?.()||0)<16) map.setZoom(16);
+    const venue=allVenues?.[entry.placeId];
+    if(venue){
+      openVenueId=venue.id;
+      showVenueCard(venue);
+      return;
+    }
+    openVenueId=entry.placeId;
+    const marker=markersById.get(entry.placeId);
+    if(marker&&google?.maps?.event){
+      google.maps.event.trigger(marker,"click");
+      return;
+    }
+    const placeId=String(entry.placeId||"").trim();
+    if(placeId){
+      try{
+        const loaded=await getVenueDetailsByPlaceIdWithRetry(placeId);
+        if(loaded){
+          mergeVenues([loaded]);
+          showVenueCard(loaded);
+          return;
+        }
+      } catch {}
+    }
+    showAppToast("Venue details unavailable");
+  }
+
+  function renderFavouritesSheet(){
+    if(!favouritesSheetBody) return;
+    const sorted=favouritesList
+      .slice()
+      .sort((a,b)=>parseSavedAt(b.savedAt)-parseSavedAt(a.savedAt));
+    if(!sorted.length){
+      favouritesSheetBody.innerHTML='<div class="favourites-empty">No favourites yet — tap the heart on a venue to save it.</div>';
+      return;
+    }
+    favouritesSheetBody.innerHTML="";
+    sorted.forEach((entry)=>{
+      const row=document.createElement("div");
+      row.className="favourites-row";
+      row.innerHTML=`
+        <div class="favourites-row__content">
+          <div class="favourites-row__name"></div>
+          <div class="favourites-row__meta"></div>
+        </div>
+        <div class="favourites-row__actions">
+          <button type="button" class="favourites-row__btn" data-action="view">View</button>
+          <button type="button" class="favourites-row__btn favourites-row__btn--remove" data-action="remove" aria-label="Remove favourite">♥</button>
+        </div>
+      `;
+      row.querySelector(".favourites-row__name").textContent=entry.name;
+      row.querySelector(".favourites-row__meta").textContent=entry.address||"Address unavailable";
+      row.querySelector('[data-action="view"]').addEventListener("click",()=>openVenueFromFavourite(entry));
+      row.querySelector('[data-action="remove"]').addEventListener("click",()=>{
+        if(removeFavourite(entry.placeId)) showAppToast("Removed from favourites");
+      });
+      favouritesSheetBody.appendChild(row);
+    });
   }
 
   function addLocateControl(){
@@ -5093,10 +5394,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         return acc;
       },{});
     }
+    favouritesList=loadFavourites();
+    setFavourites(favouritesList,{ persist:false });
     setupMap();
     renderMarkers();
     debouncedLoadVisible();
     ensureCrawlFab();
+    ensureFavouritesFab();
     const pathMatch=window.location.pathname.match(/^\/c\/([^/]+)$/);
     if(pathMatch){
       window.alert("Resolving shared crawl… This short-link format needs the short-link service, which is not configured in this build.");
