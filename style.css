@@ -209,6 +209,24 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .rating-card__submit { border:1px solid #111; background:#111; color:#fff; border-radius:12px; padding:.65rem; font-weight:800; cursor:pointer; }
 .rating-card__submit:disabled { opacity:.5; cursor:default; }
 
+
+/* Shared crawl invite */
+.shared-crawl-invite { position: fixed; inset: 0; z-index: 1460; display: flex; align-items: center; justify-content: center; padding: 16px; }
+.shared-crawl-invite__backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.45); }
+.shared-crawl-invite__card { position: relative; width: min(520px, 100%); background: #fff; border-radius: 18px; box-shadow: 0 14px 34px rgba(0,0,0,.28); padding: 1rem; display: grid; gap: .65rem; z-index: 1; }
+.shared-crawl-invite__title { margin: 0; font-size: 1.2rem; line-height: 1.3; }
+.shared-crawl-invite__body { margin: 0; color: #374151; }
+.shared-crawl-invite__meta { margin: 0; color: #6b7280; font-size: .9rem; }
+.shared-crawl-invite__actions { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .25rem; }
+.shared-crawl-invite__btn { border-radius: 12px; border: 1px solid #d1d5db; padding: .75rem .9rem; font-weight: 800; font-size: 1rem; cursor: pointer; }
+.shared-crawl-invite__btn--primary { background: #111; color: #fff; border-color: #111; }
+.shared-crawl-invite__btn--secondary { background: #fff; color: #111; }
+@media (max-width: 480px) {
+  .shared-crawl-invite { padding: 12px; align-items: flex-end; }
+  .shared-crawl-invite__card { border-radius: 16px 16px 12px 12px; padding: .95rem; }
+  .shared-crawl-invite__actions { grid-template-columns: 1fr; }
+}
+
 /* Pub crawl */
 .crawl-fab { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 1250; border: none; border-radius: 999px; padding: .75rem 1.1rem; background: #ff6a00; color: #fff; font-weight: 800; box-shadow: 0 8px 24px rgba(0,0,0,.2); cursor: pointer; }
 .crawl-fab.hidden { display: none; }
