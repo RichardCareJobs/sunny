@@ -64,7 +64,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
-  const MOVE_DEBOUNCE_MS = 220;
+  const MOVE_DEBOUNCE_MS = 120;
   const MARKER_BATCH_SIZE = 50;
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   let moveTimer = null;
@@ -1750,18 +1750,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const textBaseRequest={ location: centerLocation, radius };
     const includeCafes=getIncludeCafes();
     const responses=[];
-    for(const type of PRIMARY_PUB_TYPES){
-      throwIfAborted(signal);
-      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId, signal });
-      if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
-      responses.push({ results, outdoor: false, label: type, pass: "primary" });
-    }
-    for(const type of SECONDARY_PUB_TYPES){
-      throwIfAborted(signal);
-      const results=await fetchPlacesByType({ request: distanceRequest, type, searchId, signal });
-      if(DEBUG_PLACES) console.log(`[Places] secondary ${type} results: ${results.length}`);
-      responses.push({ results, outdoor: false, label: type, pass: "secondary-pub" });
-    }
+
+    // Run all independent search passes in parallel for faster loading
+    throwIfAborted(signal);
+
+    const primaryPromises=PRIMARY_PUB_TYPES.map(type=>
+      fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
+        if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
+        return { results, outdoor: false, label: type, pass: "primary" };
+      })
+    );
+
+    const secondaryPromises=SECONDARY_PUB_TYPES.map(type=>
+      fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
+        if(DEBUG_PLACES) console.log(`[Places] secondary ${type} results: ${results.length}`);
+        return { results, outdoor: false, label: type, pass: "secondary-pub" };
+      })
+    );
+
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
@@ -1769,12 +1775,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(includeCafes){
       outdoorPasses.push({ type: "cafe", keyword: "alfresco", label: "cafe+alfresco" });
     }
-    for(const pass of outdoorPasses){
-      throwIfAborted(signal);
-      const results=await fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId, signal });
-      if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
-      responses.push({ results, outdoor: true, label: pass.label });
-    }
+    const outdoorPromises=outdoorPasses.map(pass=>
+      fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId, signal }).then(results=>{
+        if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
+        return { results, outdoor: true, label: pass.label };
+      })
+    );
+
     const clubQueries=["bowling club","bowls club","bowlo","sports club"];
     const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
     const clubSanityCheck=(place)=>{
@@ -1787,19 +1794,29 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       clubExclusions.push({ name: place?.name||"Unknown", reason });
     };
     const clubLaneCounts=[];
-    for(const query of clubQueries){
-      throwIfAborted(signal);
-      const results=await fetchPlacesByText({ request: textBaseRequest, query, searchId, signal });
-      const saneResults=results.filter(place=>{
-        const keep=clubSanityCheck(place);
-        if(!keep) logClubExclusion(place,"excluded: club sanity");
-        return keep;
-      });
-      if(DEBUG_PLACES){
-        clubLaneCounts.push({ query, total: results.length, sane: saneResults.length });
-      }
-      responses.push({ results: saneResults, outdoor: true, label: `club+${query}`, clubLane: true });
-    }
+    const clubPromises=clubQueries.map(query=>
+      fetchPlacesByText({ request: textBaseRequest, query, searchId, signal }).then(results=>{
+        const saneResults=results.filter(place=>{
+          const keep=clubSanityCheck(place);
+          if(!keep) logClubExclusion(place,"excluded: club sanity");
+          return keep;
+        });
+        if(DEBUG_PLACES){
+          clubLaneCounts.push({ query, total: results.length, sane: saneResults.length });
+        }
+        return { results: saneResults, outdoor: true, label: `club+${query}`, clubLane: true };
+      })
+    );
+
+    // Await all parallel searches at once
+    const allResults=await Promise.all([
+      ...primaryPromises,
+      ...secondaryPromises,
+      ...outdoorPromises,
+      ...clubPromises
+    ]);
+    throwIfAborted(signal);
+    responses.push(...allResults);
 
     const primaryCount=responses
       .filter(entry=>entry.pass==="primary")
@@ -1807,23 +1824,34 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(primaryCount<MIN_PRIMARY_RESULTS){
       radius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
       const expansionRequest={ ...textBaseRequest, radius };
+      throwIfAborted(signal);
+      const fallbackPromises=[];
       for(const type of SECONDARY_FOOD_TYPES){
-        throwIfAborted(signal);
-        const results=await fetchPlacesByType({ request: distanceRequest, type, searchId, signal });
-        if(DEBUG_PLACES) console.log(`[Places] fallback ${type} results: ${results.length}`);
-        responses.push({ results, outdoor: false, label: `fallback-${type}` });
+        fallbackPromises.push(
+          fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
+            if(DEBUG_PLACES) console.log(`[Places] fallback ${type} results: ${results.length}`);
+            return { results, outdoor: false, label: `fallback-${type}` };
+          })
+        );
       }
       if(includeCafes){
-        throwIfAborted(signal);
-        const cafeResults=await fetchPlacesByType({ request: distanceRequest, type: "cafe", searchId, signal });
-        responses.push({ results: cafeResults, outdoor: false, label: "fallback-cafe" });
+        fallbackPromises.push(
+          fetchPlacesByType({ request: distanceRequest, type: "cafe", searchId, signal }).then(results=>
+            ({ results, outdoor: false, label: "fallback-cafe" })
+          )
+        );
       }
       const fallbackQueries=["pub", "bar"];
       for(const query of fallbackQueries){
-        throwIfAborted(signal);
-        const results=await fetchPlacesByText({ request: expansionRequest, query, searchId, signal });
-        responses.push({ results, outdoor: false, label: `fallback-text-${query}` });
+        fallbackPromises.push(
+          fetchPlacesByText({ request: expansionRequest, query, searchId, signal }).then(results=>
+            ({ results, outdoor: false, label: `fallback-text-${query}` })
+          )
+        );
       }
+      const fallbackResults=await Promise.all(fallbackPromises);
+      throwIfAborted(signal);
+      responses.push(...fallbackResults);
     }
     if(DEBUG_PLACES){
       clubLaneCounts.forEach(entry=>{
@@ -3555,6 +3583,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!b){
       hideVenueStatus();
       return;
+    }
+    // Immediately render already-known venues that fall within the new bounds,
+    // so the user sees markers instantly while fresh data loads.
+    if(!immediate && Object.keys(allVenues).length){
+      renderMarkers({ cacheStatus: "existing" });
     }
     const cacheKey=getViewportCacheKey();
     const cachedEntry=cacheKey ? getViewportCacheEntry(cacheKey) : null;
