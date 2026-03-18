@@ -1889,11 +1889,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       "fast_food_restaurant",
       "convenience_store","gas_station","supermarket","grocery_or_supermarket",
       "pharmacy","drugstore","department_store","shopping_mall",
-      "meal_delivery","meal_takeaway"
+      "meal_delivery","meal_takeaway",
+      "bakery","liquor_store","store","car_wash","laundry",
+      "lodging","car_rental","travel_agency","insurance_agency",
+      "real_estate_agency","moving_company"
     ];
     const nameExclusions=[
       "zambrero","mcdonald","kfc","subway","domino","pizza hut","hungry jack","guzman","gyg","taco bell",
-      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo"
+      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo",
+      "red rooster","oporto","nando","chicken treat","el jannah",
+      "boost juice","chatime","gong cha","bubble tea",
+      "grill'd","betty's burgers","five guys","carl's jr","wendy's","burger king","in-n-out",
+      "sushi hub","sushi sushi","roll'd","mad mex","salsa's",
+      "donut king","krispy kreme","baskin","cold rock","gelato messina",
+      "starbucks","gloria jean","jamaica blue",
+      "bakers delight","brumby","pie face","ferguson plarre",
+      "kebab","charcoal chicken","fish & chip","fish and chip","fish n chip",
+      "pizza capers","crust pizza","la porchetta","eagle boys",
+      "oliver's real food","sumo salad","soul origin"
     ];
     const excludedSamples=[];
     const logExclusion=(place,reason)=>{
@@ -2119,11 +2132,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       "fast_food_restaurant",
       "convenience_store","gas_station","supermarket","grocery_or_supermarket",
       "pharmacy","drugstore","department_store","shopping_mall",
-      "meal_delivery","meal_takeaway"
+      "meal_delivery","meal_takeaway",
+      "bakery","liquor_store","store","car_wash","laundry",
+      "lodging","car_rental","travel_agency","insurance_agency",
+      "real_estate_agency","moving_company"
     ];
     const nameExclusions=[
       "zambrero","mcdonald","kfc","subway","domino","pizza hut","hungry jack","guzman","gyg","taco bell",
-      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo"
+      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo",
+      "red rooster","oporto","nando","chicken treat","el jannah",
+      "boost juice","chatime","gong cha","bubble tea",
+      "grill'd","betty's burgers","five guys","carl's jr","wendy's","burger king","in-n-out",
+      "sushi hub","sushi sushi","roll'd","mad mex","salsa's",
+      "donut king","krispy kreme","baskin","cold rock","gelato messina",
+      "starbucks","gloria jean","jamaica blue",
+      "bakers delight","brumby","pie face","ferguson plarre",
+      "kebab","charcoal chicken","fish & chip","fish and chip","fish n chip",
+      "pizza capers","crust pizza","la porchetta","eagle boys",
+      "oliver's real food","sumo salad","soul origin"
     ];
     const allowFiltered=merged.filter(place=>{
       const types=place?.types||[];
