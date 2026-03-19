@@ -4829,55 +4829,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       window.alert("Plan a crawl first");
       return;
     }
-    let shareUrl=null;
-    try{
-      const skinnyPayload=buildSkinnySharedCrawlPayload();
-      if(!skinnyPayload?.venues?.length){
-        window.alert("Plan a crawl first");
-        return;
-      }
-      const token=encodeCrawlToken(skinnyPayload);
-      if(token){
-        const url=new URL(window.location.href);
-        url.searchParams.delete("crawl");
-        url.searchParams.set("c",token);
-        url.hash="";
-        shareUrl=url.toString();
-      }
-    } catch(err){
-      console.warn("Unable to build compact crawl share URL",err);
+    if(window.SunnyLiveCrawl?.startLiveSession){
+      window.SunnyLiveCrawl.startLiveSession(crawlState, map);
+    } else {
+      console.error("[Crawl] Live crawl module not loaded");
+      window.alert("Live sharing is not available right now. Please try again.");
     }
-    if(!shareUrl){
-      const legacyEncoded=serializeCrawl();
-      if(!legacyEncoded) return;
-      const fallbackUrl=new URL(window.location.href);
-      fallbackUrl.searchParams.set("crawl",legacyEncoded);
-      shareUrl=fallbackUrl.toString();
-    }
-    if(navigator.share){
-      navigator.share({ title:"Sunny pub crawl", text:"Join my pub crawl", url:shareUrl })
-        .then(()=>{
-          trackEvent("crawl_shared",{
-            venue_count: crawlState.venues?.length || 0,
-            share_method: "native_share"
-          });
-        })
-        .catch(()=>{});
-      return;
-    }
-    navigator.clipboard?.writeText(shareUrl).then(()=>{
-      alert("Crawl link copied to clipboard!");
-      trackEvent("crawl_shared",{
-        venue_count: crawlState.venues?.length || 0,
-        share_method: "copy_link"
-      });
-    }).catch(()=>{
-      prompt("Copy this crawl link:",shareUrl);
-      trackEvent("crawl_shared",{
-        venue_count: crawlState.venues?.length || 0,
-        share_method: "share_button"
-      });
-    });
   }
 
   function ensureCrawlBuilder(){
@@ -5863,6 +5820,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const pathMatch=window.location.pathname.match(/^\/c\/([^/]+)$/);
     if(pathMatch){
       window.alert("Resolving shared crawl… This short-link format needs the short-link service, which is not configured in this build.");
+    }
+    // Live crawl session join via /crawl/:code
+    if(window.SunnyLiveCrawl){
+      const liveCrawlCode=window.SunnyLiveCrawl.detectCrawlCode();
+      if(liveCrawlCode){
+        window.SunnyLiveCrawl.joinSession(liveCrawlCode, map);
+        return;
+      }
     }
     if(pendingSharedCrawl?.token){
       await loadSharedCrawlFromUrlToken(pendingSharedCrawl.token);
