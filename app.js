@@ -2176,32 +2176,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
     });
   }
-  async function fetchDogFriendly(venue){
-    if(!venue||!venue.id) return;
-    if(typeof venue.allowsDogs==="boolean") return;
-    try{
-      const { Place }=await google.maps.importLibrary("places");
-      const place=new Place({ id: venue.id });
-      await place.fetchFields({ fields: ["allowsDogs"] });
-      const allows=place.allowsDogs===true;
-      venue.allowsDogs=allows;
-      if(allVenues[venue.id]) allVenues[venue.id].allowsDogs=allows;
-      if(openVenueId===venue.id) updateDogChip(allows);
-    } catch(e){
-      if(typeof console!=="undefined") console.warn("fetchDogFriendly failed:",e);
-    }
-  }
-  function updateDogChip(allowsDogs){
-    const card=detailCard;
-    if(!card||!card.dogChip) return;
-    if(allowsDogs===true){
-      card.dogChip.classList.remove("hidden");
-      card.dogChip.style.display="inline-flex";
-    } else {
-      card.dogChip.classList.add("hidden");
-      card.dogChip.style.display="none";
-    }
-  }
   function hasOutdoorHints(tags={}){
     const t=x=>(x||"").toLowerCase();
     const name=t(tags.name);
@@ -3699,7 +3673,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__badges">
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
           <span class="chip chip-open"></span>
-          <span class="chip chip-dog hidden" style="display:none"><span class="chip-emoji">🐕</span><span class="chip-label">Dogs welcome</span></span>
         </div>
         <div class="venue-card__hours hidden"></div>
         <div class="venue-card__hours-next hidden"></div>
@@ -3830,7 +3803,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       metaEl:container.querySelector(".venue-card__meta"),
       addressEl:container.querySelector(".venue-card__address"),
       openChip:container.querySelector(".chip-open"),
-      dogChip:container.querySelector(".chip-dog"),
       hoursEl:container.querySelector(".venue-card__hours"),
       hoursNextEl:container.querySelector(".venue-card__hours-next"),
       sunChip:container.querySelector(".chip-sun"),
@@ -4013,7 +3985,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     openVenueId=v.id;
     card.currentVenue=v;
     fetchVenueDetails(v);
-    fetchDogFriendly(v);
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
     const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
@@ -4060,8 +4031,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.openChip.style.display="inline-flex";
       applyToneClass(card.openChip,open.tone);
     }
-
-    updateDogChip(v.allowsDogs);
 
     if(card.hoursEl){
       const hoursText=v.hoursText||"";
