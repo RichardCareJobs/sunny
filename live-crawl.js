@@ -32,7 +32,12 @@
       console.error("[LiveCrawl] Supabase client not loaded");
       return null;
     }
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    try {
+      supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (err) {
+      console.error("[LiveCrawl] Failed to create Supabase client", err);
+      return null;
+    }
     return supabase;
   }
 
