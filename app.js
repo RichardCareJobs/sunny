@@ -4564,13 +4564,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     controls.querySelector('[data-action="clear"]')?.classList.toggle("hidden",!hasActiveCrawl);
     controls.querySelector('[data-action="add"]')?.classList.toggle("hidden",!hasActiveCrawl||!isCrawlMode);
     controls.querySelector('[data-action="share"]')?.classList.toggle("hidden",!hasActiveCrawl);
-    if(hasActiveCrawl) hideCrawlFab();
-    else showCrawlFab();
+    if(hasActiveCrawl){
+      hideCrawlFab();
+      // Hide the favourites and saves FABs so they don't overlap the crawl controls
+      if(favouritesFabButton) favouritesFabButton.classList.add("hidden");
+      if(savesFabButton) savesFabButton.classList.add("hidden");
+    } else {
+      showCrawlFab();
+      if(favouritesFabButton) favouritesFabButton.classList.remove("hidden");
+      if(savesFabButton) savesFabButton.classList.remove("hidden");
+    }
   }
 
   function hideCrawlControls(){
     if(!crawlControls) return;
     crawlControls.classList.add("hidden");
+    // Restore the favourites and saves FABs when crawl controls are hidden
+    if(favouritesFabButton) favouritesFabButton.classList.remove("hidden");
+    if(savesFabButton) savesFabButton.classList.remove("hidden");
   }
 
   async function refreshCrawlVenues(){
