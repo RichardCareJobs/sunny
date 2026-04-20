@@ -31,19 +31,19 @@
 
 <!-- Open Graph / Facebook -->
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://visit.sunnypubs.app/">
+<meta property="og:url" content="https://dev.sunnypubs.app/">
 <meta property="og:title" content="Sunny — Find great outdoor pubs">
 <meta property="og:description" content="Find pubs/bars nearby, spot the best outdoor vibes, and build a pub crawl in a couple of taps.">
-<meta property="og:image" content="https://visit.sunnypubs.app/og-image-1200x630.png">
+<meta property="og:image" content="https://dev.sunnypubs.app/og-image-1200x630.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 
 <!-- Twitter / X (optional but nice) -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:url" content="https://visit.sunnypubs.app/">
+<meta name="twitter:url" content="https://dev.sunnypubs.app/">
 <meta name="twitter:title" content="Sunny — Find great outdoor pubs">
 <meta name="twitter:description" content="Find pubs/bars nearby, spot the best outdoor vibes, and build a pub crawl in a couple of taps.">
-<meta name="twitter:image" content="https://visit.sunnypubs.app/og-image-1200x630.png">
+<meta name="twitter:image" content="https://dev.sunnypubs.app/og-image-1200x630.png">
 
 
   <style>
@@ -105,6 +105,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   <!-- Service Worker (optional; you already added network-first for app.js/version.json) -->
   <script>if (location.protocol.startsWith('http') && 'serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');</script>
 
+  <script>window.SUNNY_ENV = 'dev';</script>
   <!-- Force the custom pin to use /icons/marker.png -->
   <script>window.SUNNY_ICON_URL = '/icons/marker.png';</script>
 

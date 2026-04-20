@@ -1,7 +1,7 @@
 name: Stamp version
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
 jobs:
   stamp:
     runs-on: ubuntu-latest

@@ -12,7 +12,7 @@
   const STALE_CHECK_INTERVAL_MS = 15000;
   const CODE_LENGTH = 4;
   const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I/O/0/1 for clarity
-  const SHARE_BASE_URL = "https://visit.sunnypubs.app/crawl/";
+  const SHARE_BASE_URL = "https://dev.sunnypubs.app/crawl/";
 
   let supabase = null;
   let currentSession = null;
