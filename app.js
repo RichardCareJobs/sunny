@@ -13,8 +13,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
   const FAVOURITES_STORAGE_KEY = "sunny:favourites:v1";
   const SUNNY_SAVES_STORAGE_KEY = "sunny_saves_v1";
-  const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 3;
-  const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 5;
+  const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 30;
+  const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 120;
   const VIEWPORT_CACHE_GRID_DEG = 0.002;
 
   const PRIMARY_PUB_TYPES = ["bar", "pub"];
