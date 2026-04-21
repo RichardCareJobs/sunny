@@ -1782,7 +1782,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       })
     );
 
-    const clubQueries=["bowling club","bowls club","bowlo","sports club"];
+    const clubQueries=["bowling club","sports club"];
     const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
     const clubSanityCheck=(place)=>{
       const name=(place?.name||"").toLowerCase();
@@ -2069,7 +2069,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: pass.type, keyword: pass.keyword, requestId });
       responses.push({ results, outdoor: true, label: pass.label });
     }
-    const clubQueries=["bowling club","bowls club","bowlo","sports club"];
+    const clubQueries=["bowling club","sports club"];
     const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
     const clubSanityCheck=(place)=>{
       const name=(place?.name||"").toLowerCase();
