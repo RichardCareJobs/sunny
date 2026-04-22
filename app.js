@@ -16,6 +16,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 30;
   const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 120;
   const VIEWPORT_CACHE_GRID_DEG = 0.002;
+  const VENUE_DETAILS_CACHE_TTL_MS = 48 * 60 * 60 * 1000;
+  const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_EIu1IEynBaGhk38hljJ6IA_pIcp4zNz";
+
+  let venueDetailsSupabase = null;
+  function getVenueDetailsSupabase() {
+    if (venueDetailsSupabase) return venueDetailsSupabase;
+    if (!window.supabase?.createClient) return null;
+    try { venueDetailsSupabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch(e) { return null; }
+    return venueDetailsSupabase;
+  }
 
   const PRIMARY_PUB_TYPES = ["bar", "pub"];
   const SECONDARY_PUB_TYPES = ["night_club"];
@@ -2197,12 +2208,96 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     return filtered;
   }
-  function fetchVenueDetails(venue){
+  function serializePeriodsForCache(periods){
+    if(!Array.isArray(periods)) return [];
+    return periods.map(p=>({
+      open: p.open ? { day:p.open.day, time:p.open.time } : null,
+      close: p.close ? { day:p.close.day, time:p.close.time } : null
+    })).filter(p=>p.open);
+  }
+  function serializePhotosForCache(photos){
+    return (photos||[]).map(p=>{
+      const src=p.source||p;
+      return { id:p.id||null, attribution:p.attribution||[], caption:p.caption||"", name:src?.name||null, photo_reference:src?.photo_reference||null };
+    }).filter(p=>p.name||p.photo_reference);
+  }
+  function deserializePhotosFromCache(stored){
+    return (stored||[]).map(p=>({
+      id: p.id,
+      attribution: p.attribution||[],
+      caption: p.caption||"",
+      source: { name:p.name||null, photo_reference:p.photo_reference||null, html_attributions:p.attribution||[] }
+    }));
+  }
+  async function getCachedVenueDetails(placeId){
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return null;
+    try{
+      const { data, error }=await sb.from("venue_details").select("*").eq("place_id",placeId).single();
+      if(error||!data) return null;
+      if(Date.now()-new Date(data.fetched_at).getTime()>VENUE_DETAILS_CACHE_TTL_MS) return null;
+      return data;
+    } catch(e){ return null; }
+  }
+  async function saveVenueDetailsToSupabase(placeId, details){
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return;
+    try{
+      await sb.from("venue_details").upsert({
+        place_id: placeId,
+        weekday_hours: details.weekday_hours,
+        periods: details.periods,
+        utc_offset_minutes: details.utc_offset_minutes,
+        photos: details.photos,
+        fetched_at: new Date().toISOString()
+      },{ onConflict:"place_id" });
+    } catch(e){ /* non-fatal */ }
+  }
+  function applyVenueDetailsFromCache(venue, cached){
+    const existing=allVenues[venue.id];
+    if(existing) existing.detailsFetching=false;
+    venue.detailsFetching=false;
+    const utcOffsetMinutes=cached.utc_offset_minutes;
+    const weekdayHours=cached.weekday_hours||[];
+    const fakeOpeningHours={ periods:cached.periods||[], open_now:venue.openNow };
+    const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours:fakeOpeningHours, utcOffsetMinutes });
+    const hoursText=getTodayHoursText(weekdayHours,utcOffsetMinutes)||"";
+    const photos=deserializePhotosFromCache(cached.photos);
+    let detailPhoto=null;
+    if(photos.length){
+      const pick=selectPlacePhoto({ place_id:venue.id },photos.map(p=>p.source));
+      if(pick.selectedIndex>=0){
+        const next={ photos, selectedIndex:pick.selectedIndex, strategy:pick.strategy, photosCount:photos.length };
+        venuePhotoCache[venue.id]=next;
+        saveLocal(VENUE_PHOTO_CACHE_KEY,venuePhotoCache);
+        const url=getLargeUrl(photos[pick.selectedIndex],1200);
+        if(url) detailPhoto={ url, selectedIndex:pick.selectedIndex, photosCount:photos.length, photos, mode:"detail", strategy:pick.strategy };
+      }
+    }
+    const updated={
+      ...venue,
+      hoursStatus,
+      nextChangeText,
+      hoursText,
+      weekdayHours,
+      utcOffsetMinutes,
+      photo: detailPhoto||venue.photo,
+      photos: detailPhoto?.photos||venue.photos||[]
+    };
+    if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated, detailsFetched:true };
+    venue.detailsFetched=true;
+    if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
+  }
+  async function fetchVenueDetails(venue){
     if(!placesService||!venue||!venue.id) return;
     const existing=allVenues[venue.id];
     if(existing?.detailsFetched||existing?.detailsFetching||venue.detailsFetched||venue.detailsFetching) return;
     if(existing) existing.detailsFetching=true;
     venue.detailsFetching=true;
+    try{
+      const cached=await getCachedVenueDetails(venue.id);
+      if(cached){ applyVenueDetailsFromCache(venue,cached); return; }
+    } catch(e){ /* fall through to Google */ }
     placesService.getDetails({
       placeId: venue.id,
       fields: ["place_id","name","opening_hours","utc_offset_minutes","outdoor_seating","photos"]
@@ -2213,7 +2308,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const openingHours=place.opening_hours||null;
         const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
         const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
-        const hoursText=getTodayHoursText(openingHours?.weekday_text,utcOffsetMinutes)||"";
+        const weekdayHours=openingHours?.weekday_text||[];
+        const hoursText=getTodayHoursText(weekdayHours,utcOffsetMinutes)||"";
         const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
         const updated={
           ...venue,
@@ -2221,12 +2317,21 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           hoursStatus,
           nextChangeText,
           hoursText,
-          photo: detailPhoto || venue.photo,
-          photos: detailPhoto?.photos || venue.photos || []
+          weekdayHours,
+          utcOffsetMinutes,
+          photo: detailPhoto||venue.photo,
+          photos: detailPhoto?.photos||venue.photos||[]
         };
         if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated, detailsFetched:true };
         venue.detailsFetched=true;
         if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
+        const normalized=normalizePlacePhotos(place,place.photos||[]);
+        saveVenueDetailsToSupabase(venue.id,{
+          weekday_hours: weekdayHours,
+          periods: serializePeriodsForCache(openingHours?.periods||[]),
+          utc_offset_minutes: utcOffsetMinutes,
+          photos: serializePhotosForCache(normalized)
+        });
       }
     });
   }
@@ -4123,7 +4228,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     updateDogChip(v.allowsDogs);
 
     if(card.hoursEl){
-      const hoursText=v.hoursText||"";
+      const hoursText=(v.weekdayHours?.length ? getTodayHoursText(v.weekdayHours,v.utcOffsetMinutes) : null)||v.hoursText||"";
       if(hoursText){
         card.hoursEl.textContent=hoursText;
         card.hoursEl.classList.remove("hidden");
