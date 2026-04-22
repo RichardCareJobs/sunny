@@ -44,3 +44,25 @@ create policy "Anyone can remove participants" on crawl_participants for delete 
 
 -- Auto-expire sessions after 8 hours of inactivity (using pg_cron if available)
 -- Otherwise, stale sessions are filtered client-side
+
+-- ── Venue Details Cache ───────────────────────────────────────────────────────
+-- Caches Google Places API detail responses (hours, photos) for 48 hours.
+-- Shared across all users, reducing Places API costs significantly.
+
+create table if not exists venue_details (
+  place_id text primary key,
+  name text,
+  weekday_hours jsonb,        -- full 7-element weekday_text array (Mon–Sun)
+  periods jsonb,              -- open/close periods for real-time open status
+  utc_offset_minutes integer,
+  photos jsonb,               -- serialized photo references (name / photo_reference)
+  fetched_at timestamptz default now()
+);
+
+create index if not exists idx_venue_details_fetched_at on venue_details (fetched_at);
+
+alter table venue_details enable row level security;
+
+create policy "Anyone can read venue details" on venue_details for select using (true);
+create policy "Anyone can insert venue details" on venue_details for insert with check (true);
+create policy "Anyone can update venue details" on venue_details for update using (true);
