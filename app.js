@@ -2241,9 +2241,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   async function saveVenueDetailsToSupabase(placeId, details){
     const sb=getVenueDetailsSupabase();
+    console.log("[VenueCache] saveVenueDetailsToSupabase called",placeId,"sb=",!!sb);
     if(!sb) return;
     try{
-      await sb.from("venue_details").upsert({
+      const result=await sb.from("venue_details").upsert({
         place_id: placeId,
         weekday_hours: details.weekday_hours,
         periods: details.periods,
@@ -2251,7 +2252,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         photos: details.photos,
         fetched_at: new Date().toISOString()
       },{ onConflict:"place_id" });
-    } catch(e){ /* non-fatal */ }
+      console.log("[VenueCache] upsert result",result);
+    } catch(e){ console.error("[VenueCache] upsert threw",e); }
   }
   function applyVenueDetailsFromCache(venue, cached){
     const existing=allVenues[venue.id];
@@ -2292,18 +2294,21 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!placesService||!venue||!venue.id) return;
     const existing=allVenues[venue.id];
     if(existing?.detailsFetched||existing?.detailsFetching||venue.detailsFetched||venue.detailsFetching) return;
+    console.log("[VenueCache] fetchVenueDetails start",venue.id);
     if(existing) existing.detailsFetching=true;
     venue.detailsFetching=true;
     try{
       const cached=await getCachedVenueDetails(venue.id);
+      console.log("[VenueCache] getCachedVenueDetails result",cached?"HIT":"MISS");
       if(cached){ applyVenueDetailsFromCache(venue,cached); return; }
-    } catch(e){ /* fall through to Google */ }
+    } catch(e){ console.warn("[VenueCache] getCachedVenueDetails threw",e); }
     placesService.getDetails({
       placeId: venue.id,
       fields: ["place_id","name","opening_hours","utc_offset_minutes","outdoor_seating","photos"]
     },(place,status)=>{
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
+      console.log("[VenueCache] getDetails callback status",status);
       if(status===google.maps.places.PlacesServiceStatus.OK&&place){
         const openingHours=place.opening_hours||null;
         const utcOffsetMinutes=typeof place.utc_offset_minutes==="number" ? place.utc_offset_minutes : null;
