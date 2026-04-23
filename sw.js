@@ -1,6 +1,6 @@
 // Sunny Service Worker — cache only same-origin static assets
 // Bump this name when you want to flush old caches
-const CACHE_NAME = 'sunny-v4';
+const CACHE_NAME = 'sunny-v5';
 const CORE_ASSETS = [
   '/index.html',
   '/app.js',
@@ -47,13 +47,16 @@ self.addEventListener('fetch', (event) => {
     url.pathname.endsWith('.webmanifest');
 
   if (isSameOrigin && isGet && isStaticAsset) {
+    // Use a query-param-free key so versioned URLs (e.g. app.js?v=x) don't
+    // accumulate as separate cache entries on every deploy.
+    const cacheKey = new Request(url.origin + url.pathname);
     event.respondWith(
-      caches.match(event.request).then((cached) => {
+      caches.match(cacheKey).then((cached) => {
         if (cached) return cached;
         return fetch(event.request).then((resp) => {
           if (resp.ok) {
             const copy = resp.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, copy));
           }
           return resp;
         });

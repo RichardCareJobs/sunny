@@ -141,6 +141,7 @@ function logEvent(type, meta = {}) {
   const state = loadState();
   const entry = { ts: new Date().toISOString(), type, meta };
   state.events.unshift(entry);
+  if (state.events.length > 100) state.events.length = 100;
   saveState(state);
   pushDataLayer(type, meta);
   return entry;
