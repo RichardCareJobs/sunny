@@ -2304,7 +2304,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } catch(e){ console.warn("[VenueCache] getCachedVenueDetails threw",e); }
     placesService.getDetails({
       placeId: venue.id,
-      fields: ["place_id","name","opening_hours","utc_offset_minutes","outdoor_seating","photos"]
+      fields: ["place_id","name","opening_hours","utc_offset_minutes","photos"]
     },(place,status)=>{
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
@@ -3381,7 +3381,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(!placesService) return reject(new Error("PLACES_SERVICE_UNAVAILABLE"));
       placesService.getDetails({
         placeId,
-        fields:["place_id","name","geometry","formatted_address","vicinity","types","opening_hours","business_status","outdoor_seating","photos"]
+        fields:["place_id","name","geometry","formatted_address","vicinity","types","opening_hours","business_status","photos"]
       },(place,status)=>{
         try{
           if(status!==google.maps.places.PlacesServiceStatus.OK||!place){
