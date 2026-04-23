@@ -42,7 +42,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const NEW_PLACES_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
     "businessStatus","regularOpeningHours","photos",
-    "shortFormattedAddress","formattedAddress"
+    "shortFormattedAddress","formattedAddress",
+    "servesBeer","servesWine","servesCocktails"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
     "coffee_shop","fast_food_restaurant","meal_takeaway","meal_delivery",
@@ -1447,6 +1448,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       hasOutdoor: hasOutdoorHints(tags),
       photo: photoData,
       photos: photoData?.photos||[],
+      servesBeer: place.servesBeer,
+      servesWine: place.servesWine,
+      servesCocktails: place.servesCocktails,
       source: "google"
     };
   }
@@ -1965,7 +1969,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       return true;
     });
-    const nameFiltered=primaryTypeFiltered.filter(place=>{
+    const alcoholFiltered=primaryTypeFiltered.filter(place=>{
+      if(place?.clubLane) return true;
+      const types=getPlaceTypes(place);
+      const isPubOrBar=types.includes("bar")||types.includes("pub")||types.includes("night_club");
+      if(isPubOrBar) return true;
+      if(isConfirmedDryByPlacesApi(place)){
+        logExclusion(place,"excluded: confirmed no alcohol (servesBeer/Wine/Cocktails all false)");
+        return false;
+      }
+      return true;
+    });
+    const nameFiltered=alcoholFiltered.filter(place=>{
       const name=(place?.displayName||place?.name||"").toLowerCase();
       const hit=nameExclusions.find(term=>name.includes(term));
       if(hit){
@@ -2195,7 +2210,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const primary=place?.primaryType||"";
       return !primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary);
     });
-    const nameFiltered=primaryTypeFiltered.filter(place=>{
+    const alcoholFiltered=primaryTypeFiltered.filter(place=>{
+      if(place?.clubLane) return true;
+      const types=getPlaceTypes(place);
+      const isPubOrBar=types.includes("bar")||types.includes("pub")||types.includes("night_club");
+      if(isPubOrBar) return true;
+      return !isConfirmedDryByPlacesApi(place);
+    });
+    const nameFiltered=alcoholFiltered.filter(place=>{
       const name=(place?.displayName||place?.name||"").toLowerCase();
       const hit=nameExclusions.find(term=>name.includes(term));
       return !hit;
@@ -2423,6 +2445,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(t(tags["seating:outdoor"])==="no") return true;
     if(/indoor only|inside only|no outdoor/i.test(tags.description||"")) return true;
     return false;
+  }
+  function isConfirmedDryByPlacesApi(place){
+    const { servesBeer, servesWine, servesCocktails }=place||{};
+    const hasData=[servesBeer,servesWine,servesCocktails].some(v=>typeof v==="boolean");
+    if(!hasData) return false;
+    return servesBeer===false && servesWine===false && servesCocktails===false;
   }
   function isDryVenue(tags={}){
     const amenity=(tags.amenity||"").toLowerCase();
