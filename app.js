@@ -46,13 +46,26 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     "servesBeer","servesWine","servesCocktails"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
-    "coffee_shop","fast_food_restaurant","meal_takeaway","meal_delivery",
-    "pizza_restaurant","sandwich_shop","hamburger_restaurant","ramen_restaurant",
-    "sushi_restaurant","thai_restaurant","chinese_restaurant","indian_restaurant",
-    "italian_restaurant","japanese_restaurant","korean_restaurant","vietnamese_restaurant",
-    "seafood_restaurant","steak_house","vegetarian_restaurant","vegan_restaurant",
-    "breakfast_restaurant","brunch_restaurant","ice_cream_shop","dessert_shop",
-    "bakery","grocery_store","supermarket","convenience_store","gas_station",
+    // Coffee / non-alcohol
+    "coffee_shop",
+    // Fast food / takeaway
+    "fast_food_restaurant","meal_takeaway","meal_delivery","sandwich_shop",
+    "hamburger_restaurant","pizza_restaurant","diner",
+    // Cuisine-specific restaurants (kept unless Google confirms they serve alcohol)
+    "greek_restaurant","mediterranean_restaurant","middle_eastern_restaurant",
+    "turkish_restaurant","lebanese_restaurant","american_restaurant",
+    "mexican_restaurant","latin_american_restaurant","french_restaurant",
+    "spanish_restaurant","italian_restaurant","chinese_restaurant",
+    "japanese_restaurant","sushi_restaurant","ramen_restaurant",
+    "korean_restaurant","thai_restaurant","vietnamese_restaurant",
+    "indian_restaurant","seafood_restaurant","steak_house",
+    "barbecue_restaurant","buffet_restaurant","african_restaurant",
+    "noodle_restaurant","asian_restaurant",
+    // Dietary / dessert
+    "vegetarian_restaurant","vegan_restaurant","breakfast_restaurant",
+    "brunch_restaurant","ice_cream_shop","dessert_shop","bakery",
+    // Retail / services
+    "grocery_store","supermarket","convenience_store","gas_station",
     "pharmacy","drug_store","department_store","shopping_mall","clothing_store",
     "car_wash","laundry","lodging","hotel","motel","hostel",
     "car_rental","travel_agency","insurance_agency","real_estate_agency"
@@ -1963,11 +1976,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
       const primary=place?.primaryType||"";
-      if(primary&&EXCLUDED_PRIMARY_TYPES.has(primary)&&!place?.clubLane){
-        logExclusion(place,`excluded: primaryType ${primary}`);
-        return false;
-      }
-      return true;
+      if(!primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary)) return true;
+      const servesAlcohol=place.servesBeer===true||place.servesWine===true||place.servesCocktails===true;
+      if(servesAlcohol) return true;
+      logExclusion(place,`excluded: primaryType ${primary} (no alcohol confirmed)`);
+      return false;
     });
     const alcoholFiltered=primaryTypeFiltered.filter(place=>{
       if(place?.clubLane) return true;
@@ -2208,7 +2221,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
       const primary=place?.primaryType||"";
-      return !primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary);
+      if(!primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary)) return true;
+      return place.servesBeer===true||place.servesWine===true||place.servesCocktails===true;
     });
     const alcoholFiltered=primaryTypeFiltered.filter(place=>{
       if(place?.clubLane) return true;
