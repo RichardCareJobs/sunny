@@ -2245,6 +2245,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     try{
       await sb.from("venue_details").upsert({
         place_id: placeId,
+        name: details.name,
         weekday_hours: details.weekday_hours,
         periods: details.periods,
         utc_offset_minutes: details.utc_offset_minutes,
@@ -2327,6 +2328,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
         const normalized=normalizePlacePhotos(place,place.photos||[]);
         saveVenueDetailsToSupabase(venue.id,{
+          name: place.name||venue.name||null,
           weekday_hours: weekdayHours,
           periods: serializePeriodsForCache(openingHours?.periods||[]),
           utc_offset_minutes: utcOffsetMinutes,
