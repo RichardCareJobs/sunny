@@ -44,6 +44,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     "businessStatus","regularOpeningHours","photos",
     "shortFormattedAddress","formattedAddress"
   ];
+  const EXCLUDED_PRIMARY_TYPES = new Set([
+    "coffee_shop","fast_food_restaurant","meal_takeaway","meal_delivery",
+    "pizza_restaurant","sandwich_shop","hamburger_restaurant","ramen_restaurant",
+    "sushi_restaurant","thai_restaurant","chinese_restaurant","indian_restaurant",
+    "italian_restaurant","japanese_restaurant","korean_restaurant","vietnamese_restaurant",
+    "seafood_restaurant","steak_house","vegetarian_restaurant","vegan_restaurant",
+    "breakfast_restaurant","brunch_restaurant","ice_cream_shop","dessert_shop",
+    "bakery","grocery_store","supermarket","convenience_store","gas_station",
+    "pharmacy","drug_store","department_store","shopping_mall","clothing_store",
+    "car_wash","laundry","lodging","hotel","motel","hostel",
+    "car_rental","travel_agency","insurance_agency","real_estate_agency"
+  ]);
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
@@ -1665,7 +1677,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return classifyPlace(place).isPubBar;
   }
   function isCafePlace(place){
-    return (place?.types||[]).includes("cafe");
+    const types=place?.types||[];
+    const primary=place?.primaryType||"";
+    return types.includes("cafe")||primary==="cafe"||primary==="coffee_shop";
   }
   function enforcePubFirstComposition(places,{ includeCafes=false }={}){
     if(!Array.isArray(places)||places.length===0||includeCafes) return places;
@@ -1686,7 +1700,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       let places;
       if(keyword){
         const result=await Place.searchByText({
-          textQuery:`${keyword} ${type}`,
+          textQuery: keyword,
+          includedType: type,
           fields: NEW_PLACES_SEARCH_FIELDS,
           locationBias:{ center, radius },
           maxResultCount: 20,
@@ -1942,7 +1957,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       return keep;
     });
-    const nameFiltered=excludeFiltered.filter(place=>{
+    const primaryTypeFiltered=excludeFiltered.filter(place=>{
+      const primary=place?.primaryType||"";
+      if(primary&&EXCLUDED_PRIMARY_TYPES.has(primary)&&!place?.clubLane){
+        logExclusion(place,`excluded: primaryType ${primary}`);
+        return false;
+      }
+      return true;
+    });
+    const nameFiltered=primaryTypeFiltered.filter(place=>{
       const name=(place?.displayName||place?.name||"").toLowerCase();
       const hit=nameExclusions.find(term=>name.includes(term));
       if(hit){
@@ -1997,7 +2020,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       let places;
       if(keyword){
         const result=await Place.searchByText({
-          textQuery:`${keyword} ${type}`,
+          textQuery: keyword,
+          includedType: type,
           fields: NEW_PLACES_SEARCH_FIELDS,
           locationBias:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
           maxResultCount: 20,
@@ -2167,7 +2191,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const types=place?.types||[];
       return !types.some(type=>excludeTypes.includes(type));
     });
-    const nameFiltered=excludeFiltered.filter(place=>{
+    const primaryTypeFiltered=excludeFiltered.filter(place=>{
+      const primary=place?.primaryType||"";
+      return !primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary);
+    });
+    const nameFiltered=primaryTypeFiltered.filter(place=>{
       const name=(place?.displayName||place?.name||"").toLowerCase();
       const hit=nameExclusions.find(term=>name.includes(term));
       return !hit;
