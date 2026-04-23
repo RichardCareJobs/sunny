@@ -1979,8 +1979,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
       const primary=place?.primaryType||"";
       if(!primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary)) return true;
-      if(!isConfirmedDryByPlacesApi(place)) return true;
-      logExclusion(place,`excluded: primaryType ${primary} (confirmed no alcohol)`);
+      const servesAlcohol=place.servesBeer===true||place.servesWine===true||place.servesCocktails===true;
+      if(servesAlcohol) return true;
+      logExclusion(place,`excluded: primaryType ${primary} (no alcohol confirmed)`);
       return false;
     });
     const alcoholFiltered=primaryTypeFiltered.filter(place=>{
@@ -2221,7 +2222,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
       const primary=place?.primaryType||"";
       if(!primary||place?.clubLane||!EXCLUDED_PRIMARY_TYPES.has(primary)) return true;
-      return !isConfirmedDryByPlacesApi(place);
+      return place.servesBeer===true||place.servesWine===true||place.servesCocktails===true;
     });
     const alcoholFiltered=primaryTypeFiltered.filter(place=>{
       if(place?.clubLane) return true;
