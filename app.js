@@ -1815,7 +1815,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
-      { type: "pub", keyword: "beer garden", label: "pub+beer garden" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
     if(includeCafes){
@@ -2118,7 +2117,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
-      { type: "pub", keyword: "beer garden", label: "pub+beer garden" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
     if(includeCafes){
