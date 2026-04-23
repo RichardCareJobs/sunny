@@ -106,7 +106,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
-  const MOVE_DEBOUNCE_MS = 120;
+  const MOVE_DEBOUNCE_MS = 300;
   const MARKER_BATCH_SIZE = 50;
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   let moveTimer = null;
@@ -178,6 +178,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let activeSearchId = 0;
   let activeRequestId = 0;
   let activeRequestController = null;
+  let lastFetchedCenter = null; // { lat, lng } of the last successful API fetch
+  let lastFetchedRadiusM = 0;   // effective radius used for that fetch
   let includeNoOutdoorVenues = loadIncludeNoOutdoorPreference();
   let initialLocationView = loadInitialLocationView();
 
@@ -3463,7 +3465,36 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
         throw new Error("PLACE_DETAILS_INVALID");
       }
-      return normalized;
+      // Process opening hours and photos here so callers don't need a second fetchFields call.
+      // fetchVenueDetails checks detailsFetched and will skip if already set.
+      const openingHours=place.regularOpeningHours||null;
+      const utcOffsetMinutes=typeof place.utcOffsetMinutes==="number" ? place.utcOffsetMinutes : null;
+      const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
+      const weekdayHours=openingHours?.weekdayDescriptions||[];
+      const hoursText=getTodayHoursText(weekdayHours,utcOffsetMinutes)||"";
+      let openNow=normalized.openNow;
+      if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
+      const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
+      const enriched={
+        ...normalized,
+        openNow,
+        hoursStatus,
+        nextChangeText,
+        hoursText,
+        weekdayHours,
+        utcOffsetMinutes,
+        photo: detailPhoto||normalized.photo,
+        photos: detailPhoto?.photos||normalized.photos||[],
+        detailsFetched: true
+      };
+      saveVenueDetailsToSupabase(placeId,{
+        name: place.displayName||normalized.name||null,
+        weekday_hours: weekdayHours,
+        periods: serializePeriodsForCache(openingHours?.periods||[]),
+        utc_offset_minutes: utcOffsetMinutes,
+        photos: serializePhotosForCache(normalizePlacePhotos(place,place.photos||[]))
+      });
+      return enriched;
     } catch(err){
       const msg=err?.message||String(err);
       throw msg.startsWith("PLACE_DETAILS_")?err:new Error(`PLACE_DETAILS_FAILED:${msg}`);
@@ -3853,6 +3884,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       perfLog("cache stale",{ requestId, ageMs: cacheAge });
     } else if(!cacheStale) {
+      // Before showing loading and firing API calls, check whether the new viewport
+      // is fully contained within the area covered by the last successful fetch.
+      // searchNearby always uses PLACES_QUERY_RADIUS_MAX_M, so if the new viewport's
+      // far edge is still inside that circle there's nothing new to fetch.
+      if(lastFetchedCenter && lastFetchedRadiusM > 0){
+        const newCenter=b.getCenter();
+        const viewRadius=calculateRadiusFromBounds(b);
+        const distM=haversine(newCenter.lat(),newCenter.lng(),lastFetchedCenter.lat,lastFetchedCenter.lng)*1000;
+        if(distM + viewRadius <= lastFetchedRadiusM){
+          if(Object.keys(allVenues).length){
+            renderMarkers({ cacheStatus: "existing" });
+            hideVenueStatus();
+          }
+          perfLog("covered by last fetch",{ requestId, distM: Math.round(distM), viewRadius: Math.round(viewRadius) });
+          return;
+        }
+      }
       showVenueStatus("loading","Loading venues…");
     }
     try{
@@ -3864,6 +3912,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const normalized=places.map(normalizePlace).filter(Boolean);
       const filtered=filterGloballyExcludedVenues(normalized,"fetch");
       if(cacheKey) setViewportCacheEntry(cacheKey,filtered);
+      const fc=b.getCenter();
+      lastFetchedCenter={ lat: fc.lat(), lng: fc.lng() };
+      lastFetchedRadiusM=PLACES_QUERY_RADIUS_MAX_M;
       if(filtered.length){
         mergeVenues(filtered);
         renderMarkers({ perfStart, cacheStatus: cacheStale ? "stale-refresh" : "miss" });
