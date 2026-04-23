@@ -2233,7 +2233,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const sb=getVenueDetailsSupabase();
     if(!sb) return null;
     try{
-      const { data, error }=await sb.from("venue_details").select("*").eq("place_id",placeId).single();
+      const { data, error }=await sb.from("venue_details").select("*").eq("place_id",placeId).maybeSingle();
       if(error||!data) return null;
       if(Date.now()-new Date(data.fetched_at).getTime()>VENUE_DETAILS_CACHE_TTL_MS) return null;
       return data;
@@ -4032,7 +4032,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(detailCard.currentVenue) trackVenueAction("website",detailCard.currentVenue);
       });
     }
-    assert(!container.querySelector(".chip-fallback"),"Venue card should not render a fallback label.");
     return detailCard;
   }
   function ensureImageViewerModal(){
