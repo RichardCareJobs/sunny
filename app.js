@@ -3463,7 +3463,36 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
         throw new Error("PLACE_DETAILS_INVALID");
       }
-      return normalized;
+      // Process opening hours and photos here so callers don't need a second fetchFields call.
+      // fetchVenueDetails checks detailsFetched and will skip if already set.
+      const openingHours=place.regularOpeningHours||null;
+      const utcOffsetMinutes=typeof place.utcOffsetMinutes==="number" ? place.utcOffsetMinutes : null;
+      const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
+      const weekdayHours=openingHours?.weekdayDescriptions||[];
+      const hoursText=getTodayHoursText(weekdayHours,utcOffsetMinutes)||"";
+      let openNow=normalized.openNow;
+      if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
+      const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
+      const enriched={
+        ...normalized,
+        openNow,
+        hoursStatus,
+        nextChangeText,
+        hoursText,
+        weekdayHours,
+        utcOffsetMinutes,
+        photo: detailPhoto||normalized.photo,
+        photos: detailPhoto?.photos||normalized.photos||[],
+        detailsFetched: true
+      };
+      saveVenueDetailsToSupabase(placeId,{
+        name: place.displayName||normalized.name||null,
+        weekday_hours: weekdayHours,
+        periods: serializePeriodsForCache(openingHours?.periods||[]),
+        utc_offset_minutes: utcOffsetMinutes,
+        photos: serializePhotosForCache(normalizePlacePhotos(place,place.photos||[]))
+      });
+      return enriched;
     } catch(err){
       const msg=err?.message||String(err);
       throw msg.startsWith("PLACE_DETAILS_")?err:new Error(`PLACE_DETAILS_FAILED:${msg}`);
