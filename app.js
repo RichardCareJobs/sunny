@@ -43,7 +43,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     "id","displayName","location","types","primaryType",
     "businessStatus","regularOpeningHours","photos",
     "shortFormattedAddress","formattedAddress",
-    "servesBeer","servesWine","servesCocktails"
+    "servesBeer","servesWine","servesCocktails","outdoorSeating"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
     // Coffee / non-alcohol
@@ -1441,7 +1441,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       types: types.join(","),
       vicinity: shortAddress,
       formatted_address: fullAddress,
-      outdoor_seating: ""
+      outdoor_seating: place.outdoorSeating===true ? "yes" : ""
     };
     if(isClosed(tags)) return null;
     if(lacksOutdoor(tags)) return null;
@@ -1457,7 +1457,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       address: shortAddress||fullAddress,
       tags,
       primaryCategory,
-      outdoorLikely: !!place.outdoorLikely,
+      outdoorLikely: !!place.outdoorLikely || place.outdoorSeating===true,
       openNow,
       hoursText: "",
       hasOutdoor: hasOutdoorHints(tags),
@@ -1815,6 +1815,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
+      { type: "pub", keyword: "beer garden", label: "pub+beer garden" },
+      { type: "bar", keyword: "outdoor seating", label: "bar+outdoor seating" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
     if(includeCafes){
@@ -1930,7 +1932,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
     if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}`);
-    const allowTypes=["bar","pub","restaurant","night_club",...(includeCafes?["cafe"]:[])];
+    const allowTypes=["bar","pub","restaurant","night_club","wine_bar","sports_bar","cocktail_bar","brewery",...(includeCafes?["cafe"]:[])];
     const excludeTypes=[
       "fast_food_restaurant",
       "convenience_store","gas_station","supermarket","grocery_or_supermarket",
@@ -2008,7 +2010,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       return true;
     });
-    const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place));
+    const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place) || isPubBarPlace(place));
     const outdoorFiltered=cafeFiltered.filter(place=>{
       const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
@@ -2123,6 +2125,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
+      { type: "pub", keyword: "beer garden", label: "pub+beer garden" },
+      { type: "bar", keyword: "outdoor seating", label: "bar+outdoor seating" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
     if(includeCafes){
@@ -2192,7 +2196,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         }
       });
     });
-    const allowTypes=["bar","pub","restaurant","night_club",...(includeCafes?["cafe"]:[])];
+    const allowTypes=["bar","pub","restaurant","night_club","wine_bar","sports_bar","cocktail_bar","brewery",...(includeCafes?["cafe"]:[])];
     const excludeTypes=[
       "fast_food_restaurant",
       "convenience_store","gas_station","supermarket","grocery_or_supermarket",
@@ -2244,7 +2248,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const hit=nameExclusions.find(term=>name.includes(term));
       return !hit;
     });
-    const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place));
+    const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place) || isPubBarPlace(place));
     const crawlEligible=cafeFiltered.map(place=>{
       const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
