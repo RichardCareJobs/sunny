@@ -43,7 +43,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     "id","displayName","location","types","primaryType",
     "businessStatus","regularOpeningHours","photos",
     "shortFormattedAddress","formattedAddress",
-    "servesBeer","servesWine","servesCocktails","outdoorSeating"
+    "servesBeer","servesWine","servesCocktails"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
     // Coffee / non-alcohol
