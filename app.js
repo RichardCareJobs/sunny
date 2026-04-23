@@ -1731,7 +1731,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const result=await Place.searchNearby({
           fields: NEW_PLACES_SEARCH_FIELDS,
           locationRestriction:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
-          includedTypes: Array.isArray(type) ? type : [type],
+          includedTypes:[type],
           rankPreference:"DISTANCE",
           maxResultCount: 20,
           language:"en-AU"
@@ -1739,7 +1739,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         places=result.places||[];
       }
       if(signal?.aborted||searchId!==activeSearchId) return [];
-      logPlacesRequest(`searchNearby:${Array.isArray(type)?type.join("+"):type}${keyword?`+${keyword}`:""}`,{ type, keyword },places);
+      logPlacesRequest(`searchNearby:${type}${keyword?`+${keyword}`:""}`,{ type, keyword },places);
       return places;
     } catch(e){
       if(DEV_PLACES_LOGGING) console.warn(`[Places] fetchPlacesByType failed (${type}):`,e);
@@ -1799,12 +1799,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     // Run all independent search passes in parallel for faster loading
     throwIfAborted(signal);
 
-    const primaryPromises=[
-      fetchPlacesByType({ request: distanceRequest, type: PRIMARY_PUB_TYPES, searchId, signal }).then(results=>{
-        if(DEBUG_PLACES) console.log(`[Places] primary results: ${results.length}`);
-        return { results, outdoor: false, label: "primary", pass: "primary" };
+    const primaryPromises=PRIMARY_PUB_TYPES.map(type=>
+      fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
+        if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
+        return { results, outdoor: false, label: type, pass: "primary" };
       })
-    ];
+    );
 
     const secondaryPromises=SECONDARY_PUB_TYPES.map(type=>
       fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
@@ -2062,7 +2062,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const result=await Place.searchNearby({
           fields: NEW_PLACES_SEARCH_FIELDS,
           locationRestriction:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
-          includedTypes: Array.isArray(type) ? type : [type],
+          includedTypes:[type],
           rankPreference:"DISTANCE",
           maxResultCount: 20,
           language:"en-AU"
@@ -2108,9 +2108,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const textBaseRequest={ location: centerLocation, radius };
     const includeCafes=getIncludeCafes();
     const responses=[];
-    if(requestId!==crawlBuildRequestId) return [];
-    const primaryResults=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: PRIMARY_PUB_TYPES, requestId });
-    responses.push({ results: primaryResults, outdoor: false, label: "primary", pass: "primary" });
+    for(const type of PRIMARY_PUB_TYPES){
+      if(requestId!==crawlBuildRequestId) return [];
+      const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
+      responses.push({ results, outdoor: false, label: type, pass: "primary" });
+    }
     for(const type of SECONDARY_PUB_TYPES){
       if(requestId!==crawlBuildRequestId) return [];
       const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
@@ -2373,7 +2375,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     try{
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
-      await place.fetchFields({ fields:["id","displayName","regularOpeningHours","utcOffsetMinutes","photos","allowsDogs"] });
+      await place.fetchFields({ fields:["id","displayName","regularOpeningHours","utcOffsetMinutes","photos"] });
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
       const openingHours=place.regularOpeningHours||null;
@@ -2384,7 +2386,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
       let openNow=venue.openNow;
       if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
-      const allowsDogs=place.allowsDogs===true;
       const updated={
         ...venue,
         openNow,
@@ -2393,14 +2394,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         hoursText,
         weekdayHours,
         utcOffsetMinutes,
-        allowsDogs,
         photo: detailPhoto||venue.photo,
         photos: detailPhoto?.photos||venue.photos||[]
       };
       if(allVenues[venue.id]) allVenues[venue.id]={...allVenues[venue.id],...updated, detailsFetched:true };
       venue.detailsFetched=true;
       if(openVenueId===venue.id&&allVenues[venue.id]) showVenueCard(allVenues[venue.id]);
-      if(openVenueId===venue.id) updateDogChip(allowsDogs);
       const normalized=normalizePlacePhotos(place,place.photos||[]);
       saveVenueDetailsToSupabase(venue.id,{
         name: place.displayName||venue.name||null,
@@ -2418,7 +2417,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   async function fetchDogFriendly(venue){
     if(!venue||!venue.id) return;
     if(typeof venue.allowsDogs==="boolean") return;
-    if(venue.detailsFetching) return; // fetchVenueDetails is in flight and includes allowsDogs
     try{
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
@@ -5300,14 +5298,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const detailPromises=filtered.map(async s=>{
           try{
             const place=s.placePrediction.toPlace();
-            await place.fetchFields({ fields:["location","viewport","formattedAddress","displayName"] });
+            await place.fetchFields({ fields:["location","viewport","formattedAddress","displayName","addressComponents"] });
             if(!place.location) return null;
             return {
               label: place.formattedAddress||place.displayName||s.placePrediction.text?.text||"",
               lat: place.location.lat(),
               lng: place.location.lng(),
               bounds: place.viewport||null,
-              placeId: s.placePrediction.placeId
+              placeId: s.placePrediction.placeId,
+              addressComponents: place.addressComponents||[]
             };
           } catch{ return null; }
         });
