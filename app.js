@@ -41,8 +41,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const INCLUDE_CAFES_DEFAULT = false;
   const NEW_PLACES_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
-    "businessStatus","regularOpeningHours","photos",
-    "shortFormattedAddress","formattedAddress",
+    "businessStatus","shortFormattedAddress","formattedAddress",
     "servesBeer","servesWine","servesCocktails"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
@@ -3469,7 +3468,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: placeId });
       await place.fetchFields({
-        fields:[...NEW_PLACES_SEARCH_FIELDS,"utcOffsetMinutes","regularOpeningHours"]
+        fields:[...NEW_PLACES_SEARCH_FIELDS,"utcOffsetMinutes","regularOpeningHours","photos"]
       });
       const normalized=normalizePlace(place);
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
