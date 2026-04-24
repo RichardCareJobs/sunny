@@ -41,7 +41,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const INCLUDE_CAFES_DEFAULT = false;
   const NEW_PLACES_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
-    "businessStatus","shortFormattedAddress","formattedAddress",
+    "businessStatus","regularOpeningHours","shortFormattedAddress","formattedAddress",
     "servesBeer","servesWine","servesCocktails"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
@@ -1445,8 +1445,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(isClosed(tags)) return null;
     if(lacksOutdoor(tags)) return null;
     if(isDryVenue(tags)) return null;
+    const openingHours=place.regularOpeningHours||null;
     let openNow;
-    if(typeof place.isOpen==="function"){ try{ openNow=place.isOpen(); }catch{} }
+    if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
+    if(typeof openNow!=="boolean"&&typeof place.isOpen==="function"){ try{ openNow=place.isOpen(); }catch{} }
     if(typeof openNow!=="boolean") openNow=place.opening_hours?.open_now;
     return {
       id,
@@ -1458,6 +1460,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       primaryCategory,
       outdoorLikely: !!place.outdoorLikely || place.outdoorSeating===true,
       openNow,
+      openingHours,
       hoursText: "",
       hasOutdoor: hasOutdoorHints(tags),
       photo: photoData,
@@ -2384,10 +2387,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     try{
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
-      await place.fetchFields({ fields:["id","displayName","regularOpeningHours","utcOffsetMinutes","photos"] });
+      await place.fetchFields({ fields:["id","displayName","utcOffsetMinutes","photos"] });
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
-      const openingHours=place.regularOpeningHours||null;
+      const openingHours=venue.openingHours||existing?.openingHours||null;
       const utcOffsetMinutes=typeof place.utcOffsetMinutes==="number" ? place.utcOffsetMinutes : null;
       const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
       const weekdayHours=openingHours?.weekdayDescriptions||[];
