@@ -1,5 +1,17 @@
 (() => {
   const SESSION_KEY = "sunny_session_id";
+  const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_EIu1IEynBaGhk38hljJ6IA_pIcp4zNz";
+
+  let _supabase = null;
+  let _sessionPromise = null;
+
+  function getSupabase() {
+    if (_supabase) return _supabase;
+    if (!window.supabase?.createClient) return null;
+    try { _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch { return null; }
+    return _supabase;
+  }
 
   function getEnv() {
     if (typeof window.SUNNY_ENV === "string" && window.SUNNY_ENV) {
@@ -14,8 +26,11 @@
 
   function generateSessionId() {
     if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-    const rand = () => Math.random().toString(36).slice(2, 10);
-    return `${Date.now().toString(36)}-${rand()}-${rand()}`;
+    // Fallback: RFC 4122 v4 UUID
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16);
+    });
   }
 
   function initSessionId() {
@@ -30,6 +45,58 @@
     }
   }
 
+  function getUtmParams() {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return {
+        utm_source: p.get("utm_source") || null,
+        utm_medium: p.get("utm_medium") || null,
+        utm_campaign: p.get("utm_campaign") || null,
+      };
+    } catch { return {}; }
+  }
+
+  function ensureSupabaseSession(sessionId) {
+    // Return cached promise if session creation is in-flight or complete
+    if (_sessionPromise) return _sessionPromise;
+
+    const sb = getSupabase();
+    // Supabase not loaded yet — return uncached so next call retries
+    if (!sb) return Promise.resolve();
+
+    const utm = getUtmParams();
+    const consent = window.SunnyConsent?.hasAnalyticsConsent?.();
+
+    _sessionPromise = sb.from("sessions").insert({
+      id: sessionId,
+      user_agent: navigator.userAgent || null,
+      referrer: document.referrer || null,
+      utm_source: utm.utm_source,
+      utm_medium: utm.utm_medium,
+      utm_campaign: utm.utm_campaign,
+      cookie_consent: typeof consent === "boolean" ? consent : null,
+    }).then(() => {}).catch(() => {});
+
+    return _sessionPromise;
+  }
+
+  function trackSupabaseEvent(eventName, params) {
+    try {
+      const sb = getSupabase();
+      if (!sb) return;
+      const sessionId = initSessionId();
+      const { place_id, ...metadata } = params;
+      ensureSupabaseSession(sessionId).then(() => {
+        sb.from("events").insert({
+          session_id: sessionId,
+          event_type: eventName,
+          place_id: place_id || null,
+          metadata: Object.keys(metadata).length ? metadata : null,
+        }).catch(() => {});
+      });
+    } catch { /* no-op */ }
+  }
+
   function hasAnalyticsConsent() {
     if (window.SunnyConsent?.hasAnalyticsConsent) {
       return window.SunnyConsent.hasAnalyticsConsent();
@@ -40,6 +107,11 @@
   function track(eventName, params = {}) {
     try {
       if (!eventName) return;
+
+      // Server-side tracking — runs regardless of cookie consent
+      trackSupabaseEvent(eventName, params);
+
+      // GTM tracking — only with consent
       if (!hasAnalyticsConsent()) return;
       window.dataLayer = window.dataLayer || [];
       const payload = {
@@ -51,9 +123,7 @@
       if (env) payload.env = env;
       if (window.SUNNY_PROVIDER) payload.provider = window.SUNNY_PROVIDER;
       window.dataLayer.push({ ...payload, ...params });
-    } catch {
-      // no-op
-    }
+    } catch { /* no-op */ }
   }
 
   window.SunnyAnalytics = { initSessionId, track };
