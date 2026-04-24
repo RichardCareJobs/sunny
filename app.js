@@ -42,7 +42,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const NEW_PLACES_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
     "businessStatus","regularOpeningHours","shortFormattedAddress","formattedAddress",
-    "outdoorSeating","servesBeer","servesWine","servesCocktails","photos"
+    "servesBeer","servesWine","servesCocktails","photos"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
     // Coffee / non-alcohol
@@ -2014,7 +2014,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place) || isPubBarPlace(place));
     const outdoorFiltered=cafeFiltered.filter(place=>{
-      const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place)||place.outdoorSeating===true;
+      const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
       place.outdoorLikely=outdoorLikely;
       if(OUTDOOR_ONLY && !outdoorLikely){
         logExclusion(place,"excluded: no outdoor signal");
