@@ -42,7 +42,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const NEW_PLACES_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
     "businessStatus","regularOpeningHours","shortFormattedAddress","formattedAddress",
-    "servesBeer","servesWine","servesCocktails"
+    "outdoorSeating","servesBeer","servesWine","servesCocktails","photos"
   ];
   const EXCLUDED_PRIMARY_TYPES = new Set([
     // Coffee / non-alcohol
@@ -2014,7 +2014,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     const cafeFiltered=nameFiltered.filter(place=>includeCafes || !isCafePlace(place) || isPubBarPlace(place));
     const outdoorFiltered=cafeFiltered.filter(place=>{
-      const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place);
+      const outdoorLikely=!!place.outdoorLikely||getOutdoorLikely(place)||place.outdoorSeating===true;
       place.outdoorLikely=outdoorLikely;
       if(OUTDOOR_ONLY && !outdoorLikely){
         logExclusion(place,"excluded: no outdoor signal");
@@ -3471,7 +3471,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: placeId });
       await place.fetchFields({
-        fields:[...NEW_PLACES_SEARCH_FIELDS,"utcOffsetMinutes","regularOpeningHours","photos"]
+        fields:[...NEW_PLACES_SEARCH_FIELDS,"utcOffsetMinutes"]
       });
       const normalized=normalizePlace(place);
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
@@ -4362,24 +4362,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     updateDogChip(v.allowsDogs);
 
     if(card.hoursEl){
-      const hoursText=(v.weekdayHours?.length ? getTodayHoursText(v.weekdayHours,v.utcOffsetMinutes) : null)||v.hoursText||"";
-      if(hoursText){
-        card.hoursEl.textContent=hoursText;
-        card.hoursEl.classList.remove("hidden");
-      } else {
-        card.hoursEl.textContent="";
-        card.hoursEl.classList.add("hidden");
-      }
+      card.hoursEl.textContent="";
+      card.hoursEl.classList.add("hidden");
     }
     if(card.hoursNextEl){
-      const nextChangeText=v.nextChangeText||"";
-      if(nextChangeText){
-        card.hoursNextEl.textContent=nextChangeText;
-        card.hoursNextEl.classList.remove("hidden");
-      } else {
-        card.hoursNextEl.textContent="";
-        card.hoursNextEl.classList.add("hidden");
-      }
+      card.hoursNextEl.textContent="";
+      card.hoursNextEl.classList.add("hidden");
     }
 
     const outdoorHint=hasOutdoorHints(tags);
