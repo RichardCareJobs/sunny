@@ -66,3 +66,55 @@ alter table venue_details enable row level security;
 create policy "Anyone can read venue details" on venue_details for select using (true);
 create policy "Anyone can insert venue details" on venue_details for insert with check (true);
 create policy "Anyone can update venue details" on venue_details for update using (true);
+
+-- ── Analytics: Sessions ───────────────────────────────────────────────────────
+-- One row per user visit. Session ID is generated client-side (UUID) and passed
+-- with every subsequent event. Tracked server-side without relying on cookies.
+
+create table if not exists sessions (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  user_agent text,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  cookie_consent boolean
+);
+
+-- ── Analytics: Events ─────────────────────────────────────────────────────────
+-- One row per user action. Linked to a session and optionally to a venue.
+--
+-- Supported event_type values:
+--   venue_view         { place_id, position_in_results }
+--   search             { query, results_count }
+--   filter_applied     { filter_name, filter_value }
+--   route_generated    { stop_count, suburbs }
+--   directions_tap     { place_id }
+--   group_session_created { participant_count }
+--   crowdsource_submitted { place_id, attribute }
+--   external_link_tap  { place_id, link_type }
+
+create table if not exists events (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid references sessions(id) on delete cascade,
+  place_id text references venue_details(place_id) on delete set null,
+  event_type text not null,
+  metadata jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_events_session_id on events(session_id);
+create index if not exists idx_events_place_id on events(place_id);
+create index if not exists idx_events_event_type on events(event_type);
+create index if not exists idx_events_created_at on events(created_at);
+
+-- RLS: insert-only for anon, full access for service role (Looker Studio / admin)
+alter table sessions enable row level security;
+alter table events enable row level security;
+
+create policy "Allow anon insert" on sessions for insert to anon with check (true);
+create policy "Allow anon insert" on events for insert to anon with check (true);
+
+create policy "Service role full access" on sessions for all to service_role using (true);
+create policy "Service role full access" on events for all to service_role using (true);
