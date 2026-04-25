@@ -94,7 +94,7 @@
           place_id: place_id || null,
           metadata: Object.keys(metadata).length ? metadata : null,
           created_at: new Date().toISOString(),
-        }).catch(err => { console.warn("[Sunny Analytics] event insert failed:", err?.message || err); });
+        }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] event insert failed:", err?.message || err); });
       });
     } catch { /* no-op */ }
   }
