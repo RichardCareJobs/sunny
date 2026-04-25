@@ -65,5 +65,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(fetch(event.request));
+  // All other requests (cross-origin API calls, etc.) pass through to the
+  // network without SW interception — not calling event.respondWith() here
+  // lets the browser handle them natively and prevents duplicate requests.
 });
