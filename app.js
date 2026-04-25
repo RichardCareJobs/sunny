@@ -1553,8 +1553,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(photo.name){
       const apiKey=getGoogleMapsApiKey();
       if(apiKey){
-        const encodedName=encodeURIComponent(photo.name);
-        return `https://places.googleapis.com/v1/${encodedName}/media?maxWidthPx=${width}&key=${encodeURIComponent(apiKey)}`;
+        return `https://places.googleapis.com/v1/${photo.name}/media?maxWidthPx=${width}&key=${apiKey}`;
       }
     }
     return "";
