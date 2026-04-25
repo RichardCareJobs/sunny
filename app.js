@@ -177,8 +177,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let activeSearchId = 0;
   let activeRequestId = 0;
   let activeRequestController = null;
-  let lastFetchedCenter = null; // { lat, lng } of the last successful API fetch
-  let lastFetchedRadiusM = 0;   // effective radius used for that fetch
+  const fetchedCircles = []; // [{ lat, lng, radiusM, ts, filterHash }] recent fetch circles for coverage skipping
+  const MAX_FETCH_CIRCLES = 20;
   let includeNoOutdoorVenues = loadIncludeNoOutdoorPreference();
   let initialLocationView = loadInitialLocationView();
 
@@ -3897,19 +3897,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       perfLog("cache stale",{ requestId, ageMs: cacheAge });
     } else if(!cacheStale) {
       // Before showing loading and firing API calls, check whether the new viewport
-      // is fully contained within the area covered by the last successful fetch.
+      // is fully contained within any previously fetched circle that is still fresh.
       // searchNearby always uses PLACES_QUERY_RADIUS_MAX_M, so if the new viewport's
-      // far edge is still inside that circle there's nothing new to fetch.
-      if(lastFetchedCenter && lastFetchedRadiusM > 0){
+      // far edge is still inside one of those circles there's nothing new to fetch.
+      {
         const newCenter=b.getCenter();
         const viewRadius=calculateRadiusFromBounds(b);
-        const distM=haversine(newCenter.lat(),newCenter.lng(),lastFetchedCenter.lat,lastFetchedCenter.lng)*1000;
-        if(distM + viewRadius <= lastFetchedRadiusM){
-          if(Object.keys(allVenues).length){
-            renderMarkers({ cacheStatus: "existing" });
-            hideVenueStatus();
-          }
-          perfLog("covered by last fetch",{ requestId, distM: Math.round(distM), viewRadius: Math.round(viewRadius) });
+        const now=Date.now();
+        const currentFilterHash=getFilterHash();
+        const coveredByPrior=fetchedCircles.some(fc=>{
+          if(now-fc.ts>VIEWPORT_CACHE_TTL_MS) return false;
+          if(fc.filterHash!==currentFilterHash) return false;
+          const distM=haversine(newCenter.lat(),newCenter.lng(),fc.lat,fc.lng)*1000;
+          return distM+viewRadius<=fc.radiusM;
+        });
+        if(coveredByPrior && Object.keys(allVenues).length){
+          renderMarkers({ cacheStatus: "existing" });
+          hideVenueStatus();
+          perfLog("covered by prior fetch",{ requestId });
           return;
         }
       }
@@ -3925,8 +3930,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const filtered=filterGloballyExcludedVenues(normalized,"fetch");
       if(cacheKey) setViewportCacheEntry(cacheKey,filtered);
       const fc=b.getCenter();
-      lastFetchedCenter={ lat: fc.lat(), lng: fc.lng() };
-      lastFetchedRadiusM=PLACES_QUERY_RADIUS_MAX_M;
+      fetchedCircles.push({ lat: fc.lat(), lng: fc.lng(), radiusM: PLACES_QUERY_RADIUS_MAX_M, ts: Date.now(), filterHash: getFilterHash() });
+      if(fetchedCircles.length>MAX_FETCH_CIRCLES) fetchedCircles.shift();
       if(filtered.length){
         mergeVenues(filtered);
         renderMarkers({ perfStart, cacheStatus: cacheStale ? "stale-refresh" : "miss" });
