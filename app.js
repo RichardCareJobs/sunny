@@ -1312,13 +1312,37 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const weekdayIndex=(dayIndex+6)%7;
     return weekdayText[weekdayIndex]||"";
   }
+  function isVenueOpenNow(periods){
+    if(!Array.isArray(periods)||periods.length===0) return undefined;
+    const now=new Date();
+    const nowMinutes=now.getDay()*1440+now.getHours()*60+now.getMinutes();
+    const WEEK_MINUTES=10080;
+    for(const period of periods){
+      const open=period.open;
+      if(!open||open.day==null) continue;
+      const openTime=periodPointToMinutes(open);
+      if(openTime==null) continue;
+      const start=open.day*1440+openTime;
+      let end=start+1440;
+      if(period.close&&period.close.day!=null){
+        const closeTime=periodPointToMinutes(period.close);
+        if(closeTime!=null){
+          end=period.close.day*1440+closeTime;
+          if(end<=start) end+=WEEK_MINUTES;
+        }
+      }
+      for(const shift of [-WEEK_MINUTES,0,WEEK_MINUTES]){
+        const s=start+shift;
+        const e=end+shift;
+        if(nowMinutes>=s&&nowMinutes<=e) return true;
+      }
+    }
+    return false;
+  }
   function computeHoursStatus({ openingHours, utcOffsetMinutes }){
     if(!openingHours) return { status:"Hours unavailable", nextChangeText:"" };
     let isOpen;
-    if(typeof openingHours.isOpen==="function"){
-      try{ isOpen=openingHours.isOpen(); } catch{}
-    }
-    if(typeof isOpen!=="boolean" && typeof openingHours.open_now==="boolean") isOpen=openingHours.open_now;
+    if(typeof openingHours.open_now==="boolean") isOpen=openingHours.open_now;
     const rawPeriods=Array.isArray(openingHours.periods)?openingHours.periods
       :Array.isArray(openingHours.regularOpeningHours?.periods)?openingHours.regularOpeningHours.periods:[];
     const periods=rawPeriods;
@@ -1446,9 +1470,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(lacksOutdoor(tags)) return null;
     if(isDryVenue(tags)) return null;
     const openingHours=place.regularOpeningHours||null;
-    let openNow;
-    if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
-    if(typeof openNow!=="boolean"&&typeof place.isOpen==="function"){ try{ openNow=place.isOpen(); }catch{} }
+    let openNow=isVenueOpenNow(openingHours?.periods||openingHours?.regularOpeningHours?.periods||[]);
     if(typeof openNow!=="boolean") openNow=place.opening_hours?.open_now;
     return {
       id,
@@ -2360,8 +2382,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const weekdayHours=openingHours?.weekdayDescriptions||[];
       const hoursText=getTodayHoursText(weekdayHours,utcOffsetMinutes)||"";
       const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
-      let openNow=venue.openNow;
-      if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
+      let openNow=isVenueOpenNow(openingHours?.periods||[]);
+      if(typeof openNow!=="boolean") openNow=venue.openNow;
       const updated={
         ...venue,
         openNow,
@@ -3448,8 +3470,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
       const weekdayHours=openingHours?.weekdayDescriptions||[];
       const hoursText=getTodayHoursText(weekdayHours,utcOffsetMinutes)||"";
-      let openNow=normalized.openNow;
-      if(openingHours&&typeof openingHours.isOpen==="function"){ try{ openNow=openingHours.isOpen(); }catch{} }
+      let openNow=isVenueOpenNow(openingHours?.periods||[]);
+      if(typeof openNow!=="boolean") openNow=normalized.openNow;
       const detailPhoto=resolvePlacePhotoData(place,{ width: 1200, mode: "detail" });
       const enriched={
         ...normalized,
