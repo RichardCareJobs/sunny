@@ -35,7 +35,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const PLACES_QUERY_RADIUS_MIN_M = 2000;
   const PLACES_QUERY_RADIUS_MAX_M = 12000;
   const RADIUS_EXPANSION_STEP_M = 2000;
-  const MIN_PRIMARY_RESULTS = 18;
+  const MIN_PRIMARY_RESULTS = 3;
   const MIN_TOTAL_RESULTS = 24;
   const PUB_BAR_MIN_SHARE = 0.7;
   const INCLUDE_CAFES_DEFAULT = false;
@@ -1817,8 +1817,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
-      { type: "pub", keyword: "beer garden", label: "pub+beer garden" },
-      { type: "bar", keyword: "outdoor seating", label: "bar+outdoor seating" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
     if(includeCafes){
@@ -1831,7 +1829,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       })
     );
 
-    const clubQueries=["bowling club","sports club"];
+    const clubQueries=["sports club"];
     const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
     const clubSanityCheck=(place)=>{
       const name=(place?.displayName||place?.name||"").toLowerCase();
@@ -1871,34 +1869,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       .filter(entry=>entry.pass==="primary")
       .reduce((sum,entry)=>sum+entry.results.length,0);
     if(primaryCount<MIN_PRIMARY_RESULTS){
-      radius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
-      const expansionRequest={ ...textBaseRequest, radius };
+      const expansionRadius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
+      const expansionRequest={ ...textBaseRequest, radius: expansionRadius };
       throwIfAborted(signal);
-      const fallbackPromises=[];
-      for(const type of SECONDARY_FOOD_TYPES){
-        fallbackPromises.push(
-          fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
-            if(DEBUG_PLACES) console.log(`[Places] fallback ${type} results: ${results.length}`);
-            return { results, outdoor: false, label: `fallback-${type}` };
-          })
-        );
-      }
-      if(includeCafes){
-        fallbackPromises.push(
-          fetchPlacesByType({ request: distanceRequest, type: "cafe", searchId, signal }).then(results=>
-            ({ results, outdoor: false, label: "fallback-cafe" })
-          )
-        );
-      }
-      const fallbackQueries=["pub", "bar"];
-      for(const query of fallbackQueries){
-        fallbackPromises.push(
-          fetchPlacesByText({ request: expansionRequest, query, searchId, signal }).then(results=>
-            ({ results, outdoor: false, label: `fallback-text-${query}` })
-          )
-        );
-      }
-      const fallbackResults=await Promise.all(fallbackPromises);
+      const fallbackResults=await Promise.all([
+        fetchPlacesByText({ request: expansionRequest, query: "pub", searchId, signal }).then(results=>{
+          if(DEBUG_PLACES) console.log(`[Places] fallback pub results: ${results.length}`);
+          return { results, outdoor: false, label: "fallback-text-pub" };
+        })
+      ]);
       throwIfAborted(signal);
       responses.push(...fallbackResults);
     }
@@ -2127,8 +2106,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
-      { type: "pub", keyword: "beer garden", label: "pub+beer garden" },
-      { type: "bar", keyword: "outdoor seating", label: "bar+outdoor seating" },
       { type: "restaurant", keyword: "outdoor seating", label: "restaurant+outdoor seating" }
     ];
     if(includeCafes){
@@ -2139,7 +2116,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: pass.type, keyword: pass.keyword, requestId });
       responses.push({ results, outdoor: true, label: pass.label });
     }
-    const clubQueries=["bowling club","sports club"];
+    const clubQueries=["sports club"];
     const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
     const clubSanityCheck=(place)=>{
       const name=(place?.displayName||place?.name||"").toLowerCase();
@@ -2155,23 +2132,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       .filter(entry=>entry.pass==="primary")
       .reduce((sum,entry)=>sum+entry.results.length,0);
     if(primaryCount<MIN_PRIMARY_RESULTS){
-      const expansionRequest={ ...textBaseRequest, radius: Math.min(PLACES_QUERY_RADIUS_MAX_M, radius+RADIUS_EXPANSION_STEP_M) };
-      for(const type of SECONDARY_FOOD_TYPES){
-        if(requestId!==crawlBuildRequestId) return [];
-        const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type, requestId });
-        responses.push({ results, outdoor: false, label: `fallback-${type}` });
-      }
-      if(includeCafes){
-        if(requestId!==crawlBuildRequestId) return [];
-        const cafeResults=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: "cafe", requestId });
-        responses.push({ results: cafeResults, outdoor: false, label: "fallback-cafe" });
-      }
-      const fallbackQueries=["pub", "bar"];
-      for(const query of fallbackQueries){
-        if(requestId!==crawlBuildRequestId) return [];
-        const results=await fetchPlacesByTextForCrawl({ request: expansionRequest, query, requestId });
-        responses.push({ results, outdoor: false, label: `fallback-text-${query}` });
-      }
+      if(requestId!==crawlBuildRequestId) return [];
+      const expansionRadius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
+      const expansionRequest={ ...textBaseRequest, radius: expansionRadius };
+      const fallbackResults=await fetchPlacesByTextForCrawl({ request: expansionRequest, query: "pub", requestId });
+      responses.push({ results: fallbackResults, outdoor: false, label: "fallback-text-pub" });
     }
     const merged=[];
     const seen=new Set();
