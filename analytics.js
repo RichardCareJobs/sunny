@@ -9,7 +9,7 @@
   function getSupabase() {
     if (_supabase) return _supabase;
     if (!window.supabase?.createClient) return null;
-    try { _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch { return null; }
+    try { _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY); } catch(e) { console.warn("[Sunny Analytics] Supabase init failed:", e?.message || e); return null; }
     return _supabase;
   }
 
@@ -76,7 +76,7 @@
       utm_medium: utm.utm_medium,
       utm_campaign: utm.utm_campaign,
       cookie_consent: typeof consent === "boolean" ? consent : null,
-    }).then(() => {}).catch(() => {});
+    }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
 
     return _sessionPromise;
   }
@@ -94,7 +94,7 @@
           place_id: place_id || null,
           metadata: Object.keys(metadata).length ? metadata : null,
           created_at: new Date().toISOString(),
-        }).catch(() => {});
+        }).catch(err => { console.warn("[Sunny Analytics] event insert failed:", err?.message || err); });
       });
     } catch { /* no-op */ }
   }
