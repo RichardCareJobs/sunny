@@ -69,6 +69,7 @@
 
     _sessionPromise = sb.from("sessions").insert({
       id: sessionId,
+      created_at: new Date().toISOString(),
       user_agent: navigator.userAgent || null,
       referrer: document.referrer || null,
       utm_source: utm.utm_source,
@@ -92,6 +93,7 @@
           event_type: eventName,
           place_id: place_id || null,
           metadata: Object.keys(metadata).length ? metadata : null,
+          created_at: new Date().toISOString(),
         }).catch(() => {});
       });
     } catch { /* no-op */ }
