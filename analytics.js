@@ -67,7 +67,7 @@
     const utm = getUtmParams();
     const consent = window.SunnyConsent?.hasAnalyticsConsent?.();
 
-    _sessionPromise = sb.from("sessions").insert({
+    _sessionPromise = sb.from("sessions").upsert({
       id: sessionId,
       created_at: new Date().toISOString(),
       user_agent: navigator.userAgent || null,
@@ -76,7 +76,7 @@
       utm_medium: utm.utm_medium,
       utm_campaign: utm.utm_campaign,
       cookie_consent: typeof consent === "boolean" ? consent : null,
-    }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
+    }, { onConflict: "id", ignoreDuplicates: true }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
 
     return _sessionPromise;
   }

@@ -28,6 +28,24 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return venueDetailsSupabase;
   }
 
+  function logPlacesApiCall({ callType, billingTier, placeId, resultCount }) {
+    try {
+      const sb = getVenueDetailsSupabase();
+      if (!sb) return;
+      const sessionId = sessionStorage.getItem("sunny_session_id");
+      if (!sessionId) return;
+      const sessionCode = window.SunnyLiveCrawl?.getSessionCode?.() ?? null;
+      sb.from("places_api_calls").insert({
+        session_id: sessionId,
+        call_type: callType,
+        billing_tier: billingTier,
+        place_id: placeId ?? null,
+        result_count: resultCount ?? null,
+        session_code: sessionCode,
+      }).then(() => {}).catch(() => {});
+    } catch { /* no-op */ }
+  }
+
   const PRIMARY_PUB_TYPES = ["bar", "pub"];
   const SECONDARY_PUB_TYPES = ["night_club"];
   const SECONDARY_FOOD_TYPES = ["restaurant"];
@@ -1750,6 +1768,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
+        logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
           fields: NEW_PLACES_SEARCH_FIELDS,
@@ -1760,6 +1779,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"advanced", resultCount:places.length });
       }
       if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchNearby:${type}${keyword?`+${keyword}`:""}`,{ type, keyword },places);
@@ -1783,6 +1803,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         maxResultCount: 20,
         language:"en-AU"
       });
+      logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
       if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchByText:${query}`,{ query },places);
       return places;
@@ -2065,6 +2086,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
+        logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
           fields: NEW_PLACES_SEARCH_FIELDS,
@@ -2075,6 +2097,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"advanced", resultCount:places.length });
       }
       if(requestId!==crawlBuildRequestId) return [];
       return places;
@@ -2097,6 +2120,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         maxResultCount: 20,
         language:"en-AU"
       });
+      logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
       if(requestId!==crawlBuildRequestId) return [];
       return places;
     } catch(e){
@@ -2374,6 +2398,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
       await place.fetchFields({ fields:["id","displayName","utcOffsetMinutes","photos"] });
+      logPlacesApiCall({ callType:"place_details", billingTier:"atmosphere", placeId:venue.id });
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
       const openingHours=venue.openingHours||existing?.openingHours||null;
@@ -2419,6 +2444,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
       await place.fetchFields({ fields: ["allowsDogs"] });
+      logPlacesApiCall({ callType:"place_details", billingTier:"advanced", placeId:venue.id });
       const allows=place.allowsDogs===true;
       venue.allowsDogs=allows;
       if(allVenues[venue.id]) allVenues[venue.id].allowsDogs=allows;
@@ -3459,6 +3485,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       await place.fetchFields({
         fields:[...NEW_PLACES_SEARCH_FIELDS,"utcOffsetMinutes"]
       });
+      logPlacesApiCall({ callType:"place_details", billingTier:"advanced", placeId:placeId });
       const normalized=normalizePlace(place);
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
         throw new Error("PLACE_DETAILS_INVALID");
@@ -5290,6 +5317,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           try{
             const place=s.placePrediction.toPlace();
             await place.fetchFields({ fields:["location","viewport","formattedAddress","displayName","addressComponents"] });
+            logPlacesApiCall({ callType:"place_details", billingTier:"basic", placeId:s.placePrediction.placeId });
             if(!place.location) return null;
             return {
               label: place.formattedAddress||place.displayName||s.placePrediction.text?.text||"",
@@ -5477,6 +5505,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             const { Place }=await google.maps.importLibrary("places");
             const place=new Place({ id: override.placeId });
             await place.fetchFields({ fields:["location","viewport","formattedAddress","displayName"] });
+            logPlacesApiCall({ callType:"place_details", billingTier:"basic", placeId:override.placeId });
             if(place.location){
               details={
                 lat: place.location.lat(),
