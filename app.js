@@ -195,6 +195,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let activeSearchId = 0;
   let activeRequestId = 0;
   let activeRequestController = null;
+  let isTileLoading = false;
   const fetchedCircles = []; // [{ lat, lng, radiusM, ts, filterHash }] recent fetch circles for coverage skipping
   const MAX_FETCH_CIRCLES = 20;
   let includeNoOutdoorVenues = loadIncludeNoOutdoorPreference();
@@ -3856,6 +3857,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   async function loadVisibleTiles({ immediate=false }={}){
     if(!map) return;
+    if(isTileLoading) return;
+    isTileLoading=true;
+    try{
     const requestId=++activeRequestId;
     activeSearchId=requestId;
     if(activeRequestController) activeRequestController.abort();
@@ -3912,8 +3916,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } else if(!cacheStale) {
       // Before showing loading and firing API calls, check whether the new viewport
       // is fully contained within any previously fetched circle that is still fresh.
-      // searchNearby always uses PLACES_QUERY_RADIUS_MAX_M, so if the new viewport's
-      // far edge is still inside one of those circles there's nothing new to fetch.
+      // searchNearby always uses PLACES_QUERY_RADIUS_MAX_M, so if the new viewport’s
+      // far edge is still inside one of those circles there’s nothing new to fetch.
       {
         const newCenter=b.getCenter();
         const viewRadius=calculateRadiusFromBounds(b);
@@ -3971,6 +3975,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         reason: fetchReason
       });
       console.error("Places error:",e);
+    }
+    } finally{
+      isTileLoading=false;
     }
   }
 
@@ -6125,7 +6132,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     setSaves(savesList,{ persist:false });
     setupMap();
     renderMarkers();
-    debouncedLoadVisible();
     ensureCrawlFab();
     ensureSavesFab();
     ensureFavouritesFab();
