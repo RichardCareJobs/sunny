@@ -127,7 +127,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MARKER_BATCH_SIZE = 50;
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   let moveTimer = null;
-  let hasInitialMapLoad = false;
   let pendingMarkerRenderToken = 0;
 
   let openVenueId = null;
@@ -3836,11 +3835,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       anchor: markerAnchorPoint
     };
     map.addListener("idle",()=>{
-      if(!hasInitialMapLoad){
-        hasInitialMapLoad=true;
-        loadVisibleTiles({ immediate: true });
-        return;
-      }
+      // Always debounce: this coalesces rapid successive idles (e.g. panTo +
+      // setZoom from a geolocation pan) and gives the browser a 300 ms window
+      // for geolocation to settle before the first fetch fires, preventing a
+      // wasted DEFAULT_VIEW load when the map is about to move to the user's
+      // actual location.
       debouncedLoadVisible();
     });
     map.addListener("click",()=>{
