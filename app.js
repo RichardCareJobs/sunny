@@ -1750,13 +1750,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(others.length<=maxOthers) return places;
     return [...pubs,...others.slice(0,Math.max(0,maxOthers))];
   }
-  async function fetchPlacesByType({ request, type, keyword, searchId, signal }){
+  async function fetchPlacesByType({ request, types, type, keyword, searchId, signal }){
     if(signal?.aborted) return [];
     if(searchId!==activeSearchId) return [];
     try{
       const { Place }=await google.maps.importLibrary("places");
       const center=request.location;
       const radius=request.radius||PLACES_QUERY_RADIUS_MAX_M;
+      const includedTypes=types||[type];
       let places;
       if(keyword){
         const result=await Place.searchByText({
@@ -1773,7 +1774,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const result=await Place.searchNearby({
           fields: NEW_PLACES_SEARCH_FIELDS,
           locationRestriction:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
-          includedTypes:[type],
+          includedTypes,
           rankPreference:"DISTANCE",
           maxResultCount: 20,
           language:"en-AU"
@@ -1782,10 +1783,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         logPlacesApiCall({ callType:"nearby_search", billingTier:"advanced", resultCount:places.length });
       }
       if(signal?.aborted||searchId!==activeSearchId) return [];
-      logPlacesRequest(`searchNearby:${type}${keyword?`+${keyword}`:""}`,{ type, keyword },places);
+      logPlacesRequest(`searchNearby:${includedTypes.join(",")}${keyword?`+${keyword}`:""}`,{ types:includedTypes, keyword },places);
       return places;
     } catch(e){
-      if(DEV_PLACES_LOGGING) console.warn(`[Places] fetchPlacesByType failed (${type}):`,e);
+      if(DEV_PLACES_LOGGING) console.warn(`[Places] fetchPlacesByType failed (${includedTypes.join(",")}):`,e);
       return [];
     }
   }
@@ -1843,19 +1844,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     // Run all independent search passes in parallel for faster loading
     throwIfAborted(signal);
 
-    const primaryPromises=PRIMARY_PUB_TYPES.map(type=>
-      fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
-        if(DEBUG_PLACES) console.log(`[Places] ${type} results: ${results.length}`);
-        return { results, outdoor: false, label: type, pass: "primary" };
-      })
-    );
-
-    const secondaryPromises=SECONDARY_PUB_TYPES.map(type=>
-      fetchPlacesByType({ request: distanceRequest, type, searchId, signal }).then(results=>{
-        if(DEBUG_PLACES) console.log(`[Places] secondary ${type} results: ${results.length}`);
-        return { results, outdoor: false, label: type, pass: "secondary-pub" };
-      })
-    );
+    const allNearbyTypes=[...PRIMARY_PUB_TYPES,...SECONDARY_PUB_TYPES];
+    const nearbyCall=fetchPlacesByType({ request: distanceRequest, types: allNearbyTypes, searchId, signal });
 
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
@@ -1898,14 +1888,25 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     );
 
     // Await all parallel searches at once
-    const allResults=await Promise.all([
-      ...primaryPromises,
-      ...secondaryPromises,
+    const [nearbyPlaces,...keywordResults]=await Promise.all([
+      nearbyCall,
       ...outdoorPromises,
       ...clubPromises
     ]);
     throwIfAborted(signal);
-    responses.push(...allResults);
+
+    // Split the single nearby response into primary and secondary passes
+    const primaryPlaces=nearbyPlaces.filter(p=>(p.types||[]).some(t=>PRIMARY_PUB_TYPES.includes(t)));
+    const secondaryPlaces=nearbyPlaces.filter(p=>!primaryPlaces.includes(p));
+    if(DEBUG_PLACES){
+      console.log(`[Places] nearby primary (${PRIMARY_PUB_TYPES.join(",")}) results: ${primaryPlaces.length}`);
+      console.log(`[Places] nearby secondary (${SECONDARY_PUB_TYPES.join(",")}) results: ${secondaryPlaces.length}`);
+    }
+    responses.push(
+      { results: primaryPlaces, outdoor: false, label: allNearbyTypes.join(","), pass: "primary" },
+      { results: secondaryPlaces, outdoor: false, label: "secondary-pub", pass: "secondary-pub" }
+    );
+    responses.push(...keywordResults);
 
     const primaryCount=responses
       .filter(entry=>entry.pass==="primary")
