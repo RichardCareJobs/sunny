@@ -3852,7 +3852,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function debouncedLoadVisible(){
     if(moveTimer) clearTimeout(moveTimer);
-    moveTimer=setTimeout(()=>loadVisibleTiles({ immediate: false }),MOVE_DEBOUNCE_MS);
+    moveTimer=setTimeout(()=>loadVisibleTiles({ immediate: false }).catch(()=>{}),MOVE_DEBOUNCE_MS);
   }
 
   async function loadVisibleTiles({ immediate=false }={}){
