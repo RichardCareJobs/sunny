@@ -128,6 +128,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   let moveTimer = null;
   let hasInitialMapLoad = false;
+  let locationResolved = false;
+  let pendingSearch = false;
   let pendingMarkerRenderToken = 0;
 
   let openVenueId = null;
@@ -1129,6 +1131,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(/rating coming soon/i.test(el.textContent||"")) el.remove();
     });
   }
+  function resolveLocation(){
+    if(locationResolved) return;
+    locationResolved=true;
+    if(pendingSearch){
+      pendingSearch=false;
+      hasInitialMapLoad=true;
+      loadVisibleTiles({ immediate: true });
+    }
+  }
   function centerOnUserIfAvailable(targetZoom=15,{force=false}={}){
     if(!map||!userLocation) return;
     if(hasCenteredOnUser&&!force) return;
@@ -1143,17 +1154,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(typeof zoom==="number") map.setZoom(zoom);
   }
   function acceptAccurateLocation(p,{shouldCenter=false,forceCenter=false,onComplete=null}={}){
-    if(!p||!p.coords){ if(onComplete) onComplete(); return false; }
+    if(!p||!p.coords){ resolveLocation(); if(onComplete) onComplete(); return false; }
     const {latitude,longitude,accuracy}=p.coords;
     if(typeof accuracy==="number"&&accuracy>DESIRED_LOCATION_ACCURACY_METERS){
       if(locationWatchId===null&&navigator.geolocation.watchPosition){
         locationWatchId=navigator.geolocation.watchPosition(
           (next)=>acceptAccurateLocation(next,{shouldCenter,onComplete}),
-          ()=>{ clearLocationWatch(); if(onComplete) onComplete(); },
+          ()=>{ clearLocationWatch(); resolveLocation(); if(onComplete) onComplete(); },
           {enableHighAccuracy:true,timeout:20000,maximumAge:0}
         );
         locationWatchTimer=setTimeout(()=>{
           clearLocationWatch();
+          resolveLocation();
           if(onComplete) onComplete();
         },MAX_LOCATION_WAIT_MS);
       } else {
@@ -1164,15 +1176,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     clearLocationWatch();
     userLocation={lat:latitude,lng:longitude};
+    resolveLocation();
     if(shouldCenter) centerOnUserIfAvailable(15,{force:forceCenter});
     if(onComplete) onComplete();
     return true;
   }
   function requestUserLocationOnce(){
     if(userLocation!==null) return;
-    if(!navigator.geolocation){ userLocation=false; return; }
+    if(!navigator.geolocation){ userLocation=false; resolveLocation(); return; }
     const opts={enableHighAccuracy:true,timeout:8000,maximumAge:0};
-    const handleFailure=()=>{ clearLocationWatch(); if(userLocation===null) userLocation=false; };
+    const handleFailure=()=>{ clearLocationWatch(); if(userLocation===null) userLocation=false; resolveLocation(); };
     const handleSuccess=(p)=>{
       if(!acceptAccurateLocation(p,{shouldCenter:true})) return;
     };
@@ -3833,6 +3846,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       anchor: markerAnchorPoint
     };
     map.addListener("idle",()=>{
+      if(!locationResolved){
+        pendingSearch=true;
+        return;
+      }
       if(!hasInitialMapLoad){
         hasInitialMapLoad=true;
         loadVisibleTiles({ immediate: true });
