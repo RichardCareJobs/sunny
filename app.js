@@ -3894,7 +3894,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }
-      trackEvent("venues_fetch_completed",{
+      void trackEvent("venues_fetch_completed",{
         fetch_time_ms: Math.round(performance.now()-perfStart),
         results_count: cachedFiltered.length,
         cache_hit: true,
@@ -3957,7 +3957,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }
-      trackEvent("venues_fetch_completed",{
+      void trackEvent("venues_fetch_completed",{
         fetch_time_ms: Math.round(performance.now()-perfStart),
         results_count: filtered.length,
         reason: fetchReason
@@ -3969,7 +3969,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       }
       if(requestId!==activeRequestId) return;
       showVenueStatus("error","Couldn’t load venues. Please try again.");
-      trackEvent("venues_fetch_completed",{
+      void trackEvent("venues_fetch_completed",{
         fetch_time_ms: Math.round(performance.now()-perfStart),
         results_count: 0,
         reason: fetchReason
