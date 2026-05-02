@@ -57,28 +57,30 @@
   }
 
   function ensureSupabaseSession(sessionId) {
-    // Return cached promise if session creation is in-flight or complete
-    if (_sessionPromise) return _sessionPromise;
+    try {
+      // Return cached promise if session creation is in-flight or complete
+      if (_sessionPromise) return _sessionPromise;
 
-    const sb = getSupabase();
-    // Supabase not loaded yet — return uncached so next call retries
-    if (!sb) return Promise.resolve();
+      const sb = getSupabase();
+      // Supabase not loaded yet — return uncached so next call retries
+      if (!sb) return Promise.resolve();
 
-    const utm = getUtmParams();
-    const consent = window.SunnyConsent?.hasAnalyticsConsent?.();
+      const utm = getUtmParams();
+      const consent = window.SunnyConsent?.hasAnalyticsConsent?.();
 
-    _sessionPromise = sb.from("sessions").upsert({
-      id: sessionId,
-      created_at: new Date().toISOString(),
-      user_agent: navigator.userAgent || null,
-      referrer: document.referrer || null,
-      utm_source: utm.utm_source,
-      utm_medium: utm.utm_medium,
-      utm_campaign: utm.utm_campaign,
-      cookie_consent: typeof consent === "boolean" ? consent : null,
-    }, { onConflict: "id", ignoreDuplicates: true }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
+      _sessionPromise = sb.from("sessions").upsert({
+        id: sessionId,
+        created_at: new Date().toISOString(),
+        user_agent: navigator.userAgent || null,
+        referrer: document.referrer || null,
+        utm_source: utm.utm_source,
+        utm_medium: utm.utm_medium,
+        utm_campaign: utm.utm_campaign,
+        cookie_consent: typeof consent === "boolean" ? consent : null,
+      }, { onConflict: "id", ignoreDuplicates: true }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
 
-    return _sessionPromise;
+      return _sessionPromise;
+    } catch { return Promise.resolve(); }
   }
 
   function trackSupabaseEvent(eventName, params) {
