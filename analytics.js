@@ -63,7 +63,7 @@
 
       const sb = getSupabase();
       // Supabase not loaded yet — return uncached so next call retries
-      if (!sb) return Promise.resolve();
+      if (!sb) return;
 
       const utm = getUtmParams();
       const consent = window.SunnyConsent?.hasAnalyticsConsent?.();
@@ -77,10 +77,10 @@
         utm_medium: utm.utm_medium,
         utm_campaign: utm.utm_campaign,
         cookie_consent: typeof consent === "boolean" ? consent : null,
-      }, { onConflict: "id", ignoreDuplicates: true }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
+      }, { onConflict: "id", ignoreDuplicates: true }).then(() => {}).catch(() => {});
 
       return _sessionPromise;
-    } catch { return Promise.resolve(); }
+    } catch { return; }
   }
 
   function trackSupabaseEvent(eventName, params) {
@@ -89,15 +89,19 @@
       if (!sb) return;
       const sessionId = initSessionId();
       const { place_id, ...metadata } = params;
-      ensureSupabaseSession(sessionId).then(() => {
-        sb.from("events").insert({
-          session_id: sessionId,
-          event_type: eventName,
-          place_id: place_id || null,
-          metadata: Object.keys(metadata).length ? metadata : null,
-          created_at: new Date().toISOString(),
-        }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] event insert failed:", err?.message || err); });
-      });
+      try {
+        ensureSupabaseSession(sessionId)?.then(() => {
+          try {
+            sb.from("events").insert({
+              session_id: sessionId,
+              event_type: eventName,
+              place_id: place_id || null,
+              metadata: Object.keys(metadata).length ? metadata : null,
+              created_at: new Date().toISOString(),
+            }).then(() => {}).catch(() => {});
+          } catch { /* no-op */ }
+        })?.catch(() => {});
+      } catch { /* no-op */ }
     } catch { /* no-op */ }
   }
 
