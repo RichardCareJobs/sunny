@@ -84,6 +84,7 @@
   }
 
   function trackSupabaseEvent(eventName, params) {
+    return;
     try {
       const sb = getSupabase();
       if (!sb) return;
