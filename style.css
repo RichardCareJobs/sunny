@@ -447,18 +447,31 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .share-prompt--visible { pointer-events: auto; }
 .share-prompt__backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.45); opacity: 0; transition: opacity .22s ease; }
 .share-prompt--visible .share-prompt__backdrop { opacity: 1; }
-.share-prompt__card { position: relative; width: min(480px, 100%); background: #fff; border-radius: 18px; box-shadow: 0 14px 34px rgba(0,0,0,.28); padding: 1.25rem; display: grid; gap: .6rem; z-index: 1; opacity: 0; transform: translateY(12px); transition: opacity .22s ease, transform .22s ease; }
-.share-prompt--visible .share-prompt__card { opacity: 1; transform: translateY(0); }
-.share-prompt__eyebrow { margin: 0; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #ff6a00; }
-.share-prompt__title { margin: 0; font-size: 1.2rem; font-weight: 800; line-height: 1.25; }
-.share-prompt__body { margin: 0; color: #374151; font-size: .95rem; }
-.share-prompt__actions { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .25rem; }
-.share-prompt__btn { border-radius: 12px; border: 1px solid #d1d5db; padding: .75rem .9rem; font-weight: 800; font-size: 1rem; cursor: pointer; background: #fff; color: #111; }
+.share-prompt__card { position: relative; width: min(440px, 100%); background: #fff; border-radius: 20px; box-shadow: 0 16px 44px rgba(0,0,0,.3); padding: 1.25rem; display: grid; gap: .75rem; z-index: 1; opacity: 0; transform: scale(.96) translateY(8px); transition: opacity .22s ease, transform .22s ease; outline: none; }
+.share-prompt--visible .share-prompt__card { opacity: 1; transform: scale(1) translateY(0); }
+.share-prompt__eyebrow { margin: 0; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: #ff6a00; }
+.share-prompt__title { margin: .1rem 0 0; font-size: 1.2rem; font-weight: 800; line-height: 1.25; }
+/* Link-preview card */
+.share-prompt__preview { border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; background: #f9fafb; }
+.share-prompt__preview-img { width: 100%; display: block; aspect-ratio: 1200 / 630; object-fit: cover; }
+.share-prompt__preview-fallback { width: 100%; aspect-ratio: 1200 / 630; background: linear-gradient(135deg, #ff6a00, #ffaa66); display: none; align-items: center; justify-content: center; gap: .4rem; }
+.share-prompt__preview-sun { font-size: 2.2rem; }
+.share-prompt__preview-fallback-label { font-size: 1.15rem; font-weight: 800; color: #fff; }
+.share-prompt__preview-meta { padding: .55rem .7rem .7rem; display: grid; gap: .18rem; }
+.share-prompt__preview-domain { font-size: .72rem; color: #9ca3af; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+.share-prompt__preview-name { font-size: .88rem; font-weight: 800; color: #111; }
+.share-prompt__preview-desc { font-size: .8rem; color: #4b5563; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* Actions */
+.share-prompt__actions { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; }
+.share-prompt__btn { border-radius: 12px; border: 1px solid #d1d5db; padding: .72rem .9rem; font-weight: 800; font-size: .95rem; cursor: pointer; background: #fff; color: #111; transition: background .14s, border-color .14s; }
 .share-prompt__btn--primary { background: #ff6a00; color: #fff; border-color: #ff6a00; }
 .share-prompt__btn--primary:hover { background: #e55f00; border-color: #e55f00; }
+.share-prompt__btn--secondary:hover { background: #f3f4f6; }
+.share-prompt__never { background: none; border: none; color: #9ca3af; font-size: .8rem; font-weight: 600; cursor: pointer; padding: .15rem; text-align: center; text-decoration: underline; text-decoration-color: transparent; transition: color .15s, text-decoration-color .15s; }
+.share-prompt__never:hover { color: #374151; text-decoration-color: #d1d5db; }
 @media (max-width: 480px) {
-  .share-prompt { padding: 12px; align-items: flex-end; }
-  .share-prompt__card { border-radius: 16px 16px 12px 12px; padding: 1rem; }
+  .share-prompt { padding: 10px; align-items: flex-end; }
+  .share-prompt__card { border-radius: 20px 20px 12px 12px; padding: 1rem; }
   .share-prompt__actions { grid-template-columns: 1fr; }
 }
 
