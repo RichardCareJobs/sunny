@@ -1,7 +1,8 @@
 (() => {
   const SESSION_KEY = "sunny_session_id";
   const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
-  const SUPABASE_ANON_KEY = "sb_publishable_EIu1IEynBaGhk38hljJ6IA_pIcp4zNz";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs
+";
 
   let _supabase = null;
   let _sessionPromise = null;
