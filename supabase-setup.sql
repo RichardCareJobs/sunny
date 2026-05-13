@@ -118,3 +118,37 @@ create policy "Allow anon insert" on events for insert to anon with check (true)
 
 create policy "Service role full access" on sessions for all to service_role using (true);
 create policy "Service role full access" on events for all to service_role using (true);
+
+-- ── Analytics: Places API Calls ───────────────────────────────────────────────
+-- One row per Google Places API call. Used to monitor costs by billing tier.
+-- session_id is a loose reference (no FK) so inserts succeed even if the
+-- matching session row hasn't landed yet.
+
+create table if not exists places_api_calls (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid,
+  call_type text not null,
+  billing_tier text not null,
+  place_id text,
+  result_count integer,
+  session_code text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_places_api_calls_session_id on places_api_calls(session_id);
+create index if not exists idx_places_api_calls_created_at on places_api_calls(created_at);
+create index if not exists idx_places_api_calls_call_type on places_api_calls(call_type);
+
+alter table places_api_calls enable row level security;
+
+create policy "Allow anon insert" on places_api_calls for insert to anon with check (true);
+create policy "Service role full access" on places_api_calls for all to service_role using (true);
+
+-- ── Fix: Remove events.place_id FK constraint ─────────────────────────────────
+-- The events table has a FK on place_id → venue_details(place_id). This causes
+-- silent insert failures for events where the venue hasn't been detail-fetched
+-- yet. Run this ALTER if events are not recording (check with service role):
+--
+--   ALTER TABLE events DROP CONSTRAINT IF EXISTS events_place_id_fkey;
+--
+-- After dropping, place_id becomes a free-text field (no referential check).
