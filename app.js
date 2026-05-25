@@ -57,11 +57,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MIN_TOTAL_RESULTS = 24;
   const PUB_BAR_MIN_SHARE = 0.7;
   const INCLUDE_CAFES_DEFAULT = false;
-  const NEW_PLACES_SEARCH_FIELDS = [
+  const PLACE_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
-    "businessStatus","regularOpeningHours","shortFormattedAddress","formattedAddress",
-    "servesBeer","servesWine","servesCocktails"
+    "businessStatus","shortFormattedAddress"
   ];
+  const PLACE_QUALIFICATION_FIELDS = [
+    "id","outdoorSeating","servesBeer","servesWine","servesCocktails"
+  ];
+  const PLACE_DETAIL_FIELDS = [
+    "id","displayName","location","shortFormattedAddress",
+    "regularOpeningHours","photos"
+  ];
+  // Alias kept for crawl-builder detail fetches that still need all display data
+  const NEW_PLACES_SEARCH_FIELDS = PLACE_SEARCH_FIELDS;
+  const MIN_CONFIRMED_RESULTS = 10;
+  const MAX_BACKGROUND_ENRICHMENTS_PER_LOAD = 5;
+  const MAX_BACKGROUND_ENRICHMENTS_PER_SESSION = 15;
+  const QUALIFICATION_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
   const EXCLUDED_PRIMARY_TYPES = new Set([
     // Coffee / non-alcohol
     "coffee_shop",
@@ -113,6 +125,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const CLUSTER_THRESHOLD = 60;
   let locateButton = null;
   let allVenues = {};
+  let backgroundEnrichmentSessionCount = 0;
+  const venueScoreCache = new Map();
   let venuePhotoCache = loadLocal(VENUE_PHOTO_CACHE_KEY) || {};
   if(!venuePhotoCache || typeof venuePhotoCache!=="object") venuePhotoCache={};
   let userLocation = null;
@@ -1774,16 +1788,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const result=await Place.searchByText({
           textQuery: keyword,
           includedType: type,
-          fields: NEW_PLACES_SEARCH_FIELDS,
+          fields: PLACE_SEARCH_FIELDS,
           locationBias:{ center, radius },
           maxResultCount: 20,
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
+        logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
-          fields: NEW_PLACES_SEARCH_FIELDS,
+          fields: PLACE_SEARCH_FIELDS,
           locationRestriction:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
           includedTypes,
           rankPreference:"DISTANCE",
@@ -1791,7 +1805,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"nearby_search", billingTier:"advanced", resultCount:places.length });
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"essentials", resultCount:places.length });
       }
       if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchNearby:${includedTypes.join(",")}${keyword?`+${keyword}`:""}`,{ types:includedTypes, keyword },places);
@@ -1810,12 +1824,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const radius=request.radius||PLACES_QUERY_RADIUS_MAX_M;
       const { places=[] }=await Place.searchByText({
         textQuery: query,
-        fields: NEW_PLACES_SEARCH_FIELDS,
+        fields: PLACE_SEARCH_FIELDS,
         locationBias:{ center, radius },
         maxResultCount: 20,
         language:"en-AU"
       });
-      logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
+      logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
       if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchByText:${query}`,{ query },places);
       return places;
@@ -1949,6 +1963,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const pid=place?.id||place?.place_id;
         if(place&&pid&&!seen.has(pid)){
           seen.add(pid);
+          place._discoverySource=entry.label||"";
           if(entry.outdoor) place.outdoorLikely=true;
           if(entry.clubLane){
             place.clubLane=true;
@@ -1967,6 +1982,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       });
     });
     if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}`);
+    merged.forEach(place=>{
+      const pid=place?.id||place?.place_id;
+      if(!pid) return;
+      const result=scoreVenueCandidate(place,place._discoverySource||"");
+      venueScoreCache.set(pid,{ ...result, discoverySource:place._discoverySource||"" });
+    });
     const allowTypes=["bar","pub","restaurant","night_club","wine_bar","sports_bar","cocktail_bar","brewery",...(includeCafes?["cafe"]:[])];
     const excludeTypes=[
       "fast_food_restaurant",
@@ -2092,16 +2113,16 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const result=await Place.searchByText({
           textQuery: keyword,
           includedType: type,
-          fields: NEW_PLACES_SEARCH_FIELDS,
+          fields: PLACE_SEARCH_FIELDS,
           locationBias:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
           maxResultCount: 20,
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
+        logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
-          fields: NEW_PLACES_SEARCH_FIELDS,
+          fields: PLACE_SEARCH_FIELDS,
           locationRestriction:{ center, radius: PLACES_QUERY_RADIUS_MAX_M },
           includedTypes:[type],
           rankPreference:"DISTANCE",
@@ -2109,7 +2130,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"nearby_search", billingTier:"advanced", resultCount:places.length });
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"essentials", resultCount:places.length });
       }
       if(requestId!==crawlBuildRequestId) return [];
       return places;
@@ -2127,12 +2148,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const radius=request.radius||PLACES_QUERY_RADIUS_MAX_M;
       const { places=[] }=await Place.searchByText({
         textQuery: query,
-        fields: NEW_PLACES_SEARCH_FIELDS,
+        fields: PLACE_SEARCH_FIELDS,
         locationBias:{ center, radius },
         maxResultCount: 20,
         language:"en-AU"
       });
-      logPlacesApiCall({ callType:"text_search", billingTier:"advanced", resultCount:places.length });
+      logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
       if(requestId!==crawlBuildRequestId) return [];
       return places;
     } catch(e){
@@ -2403,6 +2424,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(existing?.detailsFetched||existing?.detailsFetching||venue.detailsFetched||venue.detailsFetching) return;
     if(existing) existing.detailsFetching=true;
     venue.detailsFetching=true;
+    enrichPlaceQualification(
+      venue.id,"user_initiated","venue_card_opened",venueScoreCache.get(venue.id)||{}
+    ).catch(()=>{});
     try{
       const cached=await getCachedVenueDetails(venue.id);
       if(cached){ applyVenueDetailsFromCache(venue,cached); return; }
@@ -2410,11 +2434,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     try{
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
-      await place.fetchFields({ fields:["id","displayName","utcOffsetMinutes","photos"] });
-      logPlacesApiCall({ callType:"place_details", billingTier:"atmosphere", placeId:venue.id });
+      await place.fetchFields({ fields:[...PLACE_DETAIL_FIELDS,"utcOffsetMinutes"] });
+      logPlacesApiCall({ callType:"place_details", billingTier:"pro", placeId:venue.id });
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
-      const openingHours=venue.openingHours||existing?.openingHours||null;
+      // Prefer hours from the freshly-fetched Place object (regularOpeningHours is now
+      // in PLACE_DETAIL_FIELDS and no longer returned by search calls).
+      const openingHours=place.regularOpeningHours||venue.openingHours||existing?.openingHours||null;
       const utcOffsetMinutes=typeof place.utcOffsetMinutes==="number" ? place.utcOffsetMinutes : null;
       const { status:hoursStatus, nextChangeText }=computeHoursStatus({ openingHours, utcOffsetMinutes });
       const weekdayHours=openingHours?.weekdayDescriptions||[];
@@ -2505,6 +2531,207 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!hasData) return false;
     return servesBeer===false && servesWine===false && servesCocktails===false;
   }
+
+  // ── Venue qualification enrichment flow ──────────────────────────────────────
+
+  function scoreVenueCandidate(place, discoverySource){
+    const types=place?.types||[];
+    const primaryType=place?.primaryType||"";
+    const name=(place?.displayName||place?.name||"").toLowerCase();
+    if(place?.businessStatus&&place.businessStatus!=="OPERATIONAL"){
+      return { score:-100, bucket:"excluded", reasons:["not operational"] };
+    }
+    let score=0;
+    if(types.includes("bar")||primaryType==="bar") score+=50;
+    if(types.includes("pub")||primaryType==="pub") score+=50;
+    if(types.includes("restaurant")||primaryType==="restaurant") score+=30;
+    if(types.includes("cafe")||primaryType==="cafe") score+=15;
+    if(types.includes("night_club")||primaryType==="night_club") score+=25;
+    if(types.includes("hotel")||primaryType==="hotel") score+=15;
+    if(name.includes("beer garden")) score+=60;
+    if(name.includes("rooftop")) score+=40;
+    if(name.includes("terrace")) score+=35;
+    if(name.includes("garden")) score+=25;
+    if(name.includes("pub")) score+=40;
+    if(name.includes("bar")) score+=35;
+    if(name.includes("brewery")) score+=40;
+    const src=discoverySource||"";
+    if(src.includes("beer garden")) score+=50;
+    else if(src.includes("outdoor seating")) score+=40;
+    else if(src.includes("outdoor dining")) score+=35;
+    else if(src.includes("rooftop bar")) score+=45;
+    else if(src.includes("terrace bar")) score+=45;
+    const badTypes=["school","hospital","doctor","dentist","gym","bank","supermarket","store","shopping_mall","church","pharmacy","real_estate_agency"];
+    if(badTypes.some(t=>types.includes(t)||primaryType===t)) score-=100;
+    const badNames=["clinic","dental","dentist","school","college","office","gym","pharmacy","supermarket"];
+    if(badNames.some(t=>name.includes(t))) score-=60;
+    let bucket="low_confidence";
+    if(score>=80) bucket="obvious_fit";
+    else if(score>=45) bucket="medium_confidence";
+    else if(score>=20) bucket="weak_candidate";
+    else bucket="excluded";
+    return { score, bucket };
+  }
+
+  function qualifyVenueFromEnrichment(place){
+    const outdoorKnown=typeof place?.outdoorSeating==="boolean";
+    const alcoholFields=[place?.servesBeer,place?.servesWine,place?.servesCocktails];
+    const servesAlcohol=alcoholFields.some(v=>v===true);
+    const alcoholKnown=alcoholFields.some(v=>typeof v==="boolean");
+    if(place?.outdoorSeating===true&&servesAlcohol) return "confirmed";
+    if(outdoorKnown&&place.outdoorSeating===false) return "rejected_no_outdoor";
+    if(alcoholKnown&&!servesAlcohol) return "rejected_no_alcohol";
+    return "unknown_after_enrichment";
+  }
+
+  function logEnrichmentEvent(data){
+    try{
+      const sb=getVenueDetailsSupabase();
+      if(!sb) return;
+      const sessionId=sessionStorage.getItem("sunny_session_id");
+      if(DEV_PLACES_LOGGING) console.log("[Enrichment]",data);
+      if(!sessionId) return;
+      sb.from("events").insert({
+        session_id: sessionId,
+        place_id: data.placeId||null,
+        event_type: "enrichment",
+        metadata: {
+          display_name: data.displayName||"",
+          discovery_source: data.discoverySource||"",
+          candidate_score: data.candidateScore??null,
+          candidate_bucket: data.candidateBucket||"",
+          was_enriched: !!data.wasEnriched,
+          enrichment_reason: data.enrichmentReason||"",
+          enrichment_type: data.enrichmentType||"",
+          qualification_status: data.qualificationStatus||"",
+          api_call_type: data.apiCallType||"",
+          field_mask_used: data.fieldMaskUsed||"",
+          cache_hit: !!data.cacheHit,
+          cache_miss: !!data.cacheMiss
+        }
+      }).then(()=>{}).catch(()=>{});
+    } catch{ /* no-op */ }
+  }
+
+  async function saveVenueQualificationToSupabase(placeId, fields){
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return;
+    try{
+      await sb.from("venue_details").upsert(
+        { place_id: placeId, ...fields },
+        { onConflict:"place_id" }
+      );
+    } catch{ /* non-fatal */ }
+  }
+
+  async function enrichPlaceQualification(placeId, enrichmentType, enrichmentReason, scoreData){
+    if(!placeId) return null;
+    const { score=0, bucket="", discoverySource="" }=scoreData||{};
+    const sb=getVenueDetailsSupabase();
+    if(sb){
+      try{
+        const { data }=await sb.from("venue_details")
+          .select("qualification_status,last_enriched_at")
+          .eq("place_id",placeId)
+          .maybeSingle();
+        if(data?.last_enriched_at){
+          const age=Date.now()-new Date(data.last_enriched_at).getTime();
+          const qualStatus=data.qualification_status||"";
+          if(age<=QUALIFICATION_CACHE_TTL_MS&&(qualStatus==="confirmed"||qualStatus.startsWith("rejected_"))){
+            logEnrichmentEvent({
+              placeId,discoverySource,candidateScore:score,candidateBucket:bucket,
+              wasEnriched:false,enrichmentReason,enrichmentType,
+              qualificationStatus:qualStatus,apiCallType:"",fieldMaskUsed:"",
+              cacheHit:true,cacheMiss:false
+            });
+            if(allVenues[placeId]) allVenues[placeId].qualificationStatus=qualStatus;
+            return { qualificationStatus:qualStatus, cacheHit:true };
+          }
+        }
+      } catch{ /* fall through to API */ }
+    }
+    try{
+      const { Place }=await google.maps.importLibrary("places");
+      const place=new Place({ id: placeId });
+      await place.fetchFields({ fields: PLACE_QUALIFICATION_FIELDS });
+      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId });
+      const qualificationStatus=qualifyVenueFromEnrichment(place);
+      const outdoorSeating=typeof place.outdoorSeating==="boolean" ? place.outdoorSeating : null;
+      const servesBeer=typeof place.servesBeer==="boolean" ? place.servesBeer : null;
+      const servesWine=typeof place.servesWine==="boolean" ? place.servesWine : null;
+      const servesCocktails=typeof place.servesCocktails==="boolean" ? place.servesCocktails : null;
+      await saveVenueQualificationToSupabase(placeId,{
+        qualification_status: qualificationStatus,
+        outdoor_seating: outdoorSeating,
+        serves_beer: servesBeer,
+        serves_wine: servesWine,
+        serves_cocktails: servesCocktails,
+        last_enriched_at: new Date().toISOString(),
+        enrichment_source: "places_api",
+        candidate_score: score||null,
+        candidate_bucket: bucket||null,
+        discovery_source: discoverySource||null
+      });
+      const venue=allVenues[placeId];
+      if(venue){
+        venue.qualificationStatus=qualificationStatus;
+        if(outdoorSeating!==null) venue.outdoorSeating=outdoorSeating;
+        if(servesBeer!==null) venue.servesBeer=servesBeer;
+        if(servesWine!==null) venue.servesWine=servesWine;
+        if(servesCocktails!==null) venue.servesCocktails=servesCocktails;
+        allVenues[placeId]={ ...allVenues[placeId], ...venue };
+      }
+      logEnrichmentEvent({
+        placeId,displayName:allVenues[placeId]?.name||"",
+        discoverySource,candidateScore:score,candidateBucket:bucket,
+        wasEnriched:true,enrichmentReason,enrichmentType,
+        qualificationStatus,apiCallType:"place_details",
+        fieldMaskUsed:PLACE_QUALIFICATION_FIELDS.join(","),
+        cacheHit:false,cacheMiss:true
+      });
+      return { qualificationStatus, cacheHit:false };
+    } catch(e){
+      if(DEV_PLACES_LOGGING) console.warn("[Enrichment] enrichPlaceQualification failed:",placeId,e);
+      return null;
+    }
+  }
+
+  async function runBackgroundEnrichment(venues, requestId, { maxThisLoad=MAX_BACKGROUND_ENRICHMENTS_PER_LOAD }={}){
+    if(!venues||!venues.length) return;
+    if(backgroundEnrichmentSessionCount>=MAX_BACKGROUND_ENRICHMENTS_PER_SESSION) return;
+    let loadCount=0;
+    const confirmedCount=venues.filter(v=>allVenues[v.id]?.qualificationStatus==="confirmed").length;
+    const areaHasEnoughConfirmed=confirmedCount>=MIN_CONFIRMED_RESULTS;
+    const mediumConfidence=venues.filter(v=>(venueScoreCache.get(v.id)?.bucket)==="medium_confidence");
+    for(const venue of mediumConfidence){
+      if(requestId!==activeRequestId) return;
+      if(loadCount>=maxThisLoad) break;
+      if(backgroundEnrichmentSessionCount>=MAX_BACKGROUND_ENRICHMENTS_PER_SESSION) break;
+      const sd=venueScoreCache.get(venue.id)||{};
+      const result=await enrichPlaceQualification(venue.id,"background","medium_confidence_background",sd);
+      if(result&&!result.cacheHit){
+        loadCount++;
+        backgroundEnrichmentSessionCount++;
+      }
+    }
+    if(!areaHasEnoughConfirmed){
+      const topObviousFit=venues
+        .filter(v=>(venueScoreCache.get(v.id)?.bucket)==="obvious_fit")
+        .slice(0,5);
+      for(const venue of topObviousFit){
+        if(requestId!==activeRequestId) return;
+        if(loadCount>=maxThisLoad) break;
+        if(backgroundEnrichmentSessionCount>=MAX_BACKGROUND_ENRICHMENTS_PER_SESSION) break;
+        const sd=venueScoreCache.get(venue.id)||{};
+        const result=await enrichPlaceQualification(venue.id,"targeted","confirmed_supply_low",sd);
+        if(result&&!result.cacheHit){
+          loadCount++;
+          backgroundEnrichmentSessionCount++;
+        }
+      }
+    }
+  }
+
   function isDryVenue(tags={}){
     const amenity=(tags.amenity||"").toLowerCase();
     if(!shouldRequireAlcohol(amenity,tags)) return false;
@@ -3496,9 +3723,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: placeId });
       await place.fetchFields({
-        fields:[...NEW_PLACES_SEARCH_FIELDS,"utcOffsetMinutes"]
+        fields:[
+          "id","displayName","location","types","primaryType","businessStatus",
+          "shortFormattedAddress","formattedAddress","regularOpeningHours",
+          "photos","utcOffsetMinutes"
+        ]
       });
-      logPlacesApiCall({ callType:"place_details", billingTier:"advanced", placeId:placeId });
+      logPlacesApiCall({ callType:"place_details", billingTier:"pro", placeId:placeId });
       const normalized=normalizePlace(place);
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
         throw new Error("PLACE_DETAILS_INVALID");
@@ -3941,6 +4172,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         mergeVenues(filtered);
         renderMarkers({ perfStart, cacheStatus: cacheStale ? "stale-refresh" : "miss" });
         hideVenueStatus();
+        runBackgroundEnrichment(filtered,requestId,{ maxThisLoad: MAX_BACKGROUND_ENRICHMENTS_PER_LOAD }).catch(()=>{});
       } else {
         showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       }

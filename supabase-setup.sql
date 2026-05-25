@@ -63,7 +63,44 @@ create table if not exists venue_details (
 -- For existing installations: add the column if it doesn't exist
 alter table venue_details add column if not exists view_count integer default 0;
 
+-- Qualification and scoring columns (added in lower-cost enrichment flow)
+alter table venue_details add column if not exists types text[];
+alter table venue_details add column if not exists primary_type text;
+alter table venue_details add column if not exists business_status text;
+alter table venue_details add column if not exists short_formatted_address text;
+alter table venue_details add column if not exists candidate_score integer;
+alter table venue_details add column if not exists candidate_bucket text;
+alter table venue_details add column if not exists discovery_source text;
+alter table venue_details add column if not exists qualification_status text;
+alter table venue_details add column if not exists outdoor_seating boolean;
+alter table venue_details add column if not exists serves_beer boolean;
+alter table venue_details add column if not exists serves_wine boolean;
+alter table venue_details add column if not exists serves_cocktails boolean;
+alter table venue_details add column if not exists last_searched_at timestamptz;
+alter table venue_details add column if not exists last_enriched_at timestamptz;
+alter table venue_details add column if not exists enrichment_source text;
+alter table venue_details add column if not exists schema_version integer default 1;
+
+create index if not exists idx_venue_details_qualification_status on venue_details (qualification_status);
+create index if not exists idx_venue_details_last_enriched_at on venue_details (last_enriched_at);
+
 create index if not exists idx_venue_details_fetched_at on venue_details (fetched_at);
+
+-- places_api_calls: log of all Google Places API requests (created separately if needed)
+create table if not exists places_api_calls (
+  id uuid primary key default gen_random_uuid(),
+  session_id uuid,
+  call_type text,
+  billing_tier text,
+  place_id text,
+  result_count integer,
+  session_code text,
+  created_at timestamptz default now()
+);
+
+alter table places_api_calls enable row level security;
+create policy "Allow anon insert" on places_api_calls for insert to anon with check (true);
+create policy "Service role full access" on places_api_calls for all to service_role using (true);
 
 -- Atomically increment view_count without a read-modify-write race
 create or replace function increment_venue_view_count(p_place_id text)
