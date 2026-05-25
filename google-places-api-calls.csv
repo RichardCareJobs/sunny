@@ -1,0 +1,10 @@
+API Call,Method,SDK / Endpoint,Fields Requested,Billing Tier,Purpose
+Nearby Search,Place.searchNearby(),JS SDK,"id, displayName, location, types, primaryType, businessStatus, regularOpeningHours, shortFormattedAddress, formattedAddress, servesBeer, servesWine, servesCocktails",Advanced,"Finds bars, pubs, clubs, restaurants within a radius (2–12 km)"
+Text Search,Place.searchByText(),JS SDK,"id, displayName, location, types, primaryType, businessStatus, regularOpeningHours, shortFormattedAddress, formattedAddress, servesBeer, servesWine, servesCocktails",Advanced,"Searches keywords like ""beer garden"", ""alfresco"", ""sports club"""
+Place Details — Photos,place.fetchFields(),JS SDK,"id, displayName, utcOffsetMinutes, photos",Atmosphere,Fetches venue photos and timezone
+Place Details — Dog Friendly,place.fetchFields(),JS SDK,allowsDogs,Advanced,Checks if a venue allows dogs
+Place Details — Full,place.fetchFields(),JS SDK,"All search fields + utcOffsetMinutes",Advanced,Enriches place data when opening a details page
+Autocomplete Suggestions,AutocompleteSuggestion.fetchAutocompleteSuggestions(),JS SDK,— (suggestions only),Basic,Location search autocomplete
+Autocomplete — Place Fetch,place.fetchFields(),JS SDK,"location, viewport, formattedAddress, displayName, addressComponents",Basic,Resolves selected autocomplete suggestion to coordinates
+Photo Media (new v1),REST GET,places.googleapis.com/v1/{photo.name}/media,maxWidthPx,—,Fetches venue photo images via v1 REST endpoint
+Photo Media (legacy fallback),REST GET,maps.googleapis.com/maps/api/place/photo,"maxwidth, photo_reference",—,Fallback for legacy photo references
