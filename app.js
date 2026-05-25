@@ -2343,6 +2343,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { data, error }=await sb.from("venue_details").select("*").eq("place_id",placeId).maybeSingle();
       if(error||!data) return null;
       if(Date.now()-new Date(data.fetched_at).getTime()>VENUE_DETAILS_CACHE_TTL_MS) return null;
+      sb.rpc("increment_venue_view_count",{p_place_id:placeId}).catch(()=>{});
       return data;
     } catch(e){ return null; }
   }

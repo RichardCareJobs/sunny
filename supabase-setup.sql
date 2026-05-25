@@ -56,10 +56,20 @@ create table if not exists venue_details (
   periods jsonb,              -- open/close periods for real-time open status
   utc_offset_minutes integer,
   photos jsonb,               -- serialized photo references (name / photo_reference)
-  fetched_at timestamptz default now()
+  fetched_at timestamptz default now(),
+  view_count integer default 0  -- times served from cache (cache hits after initial fetch)
 );
 
+-- For existing installations: add the column if it doesn't exist
+alter table venue_details add column if not exists view_count integer default 0;
+
 create index if not exists idx_venue_details_fetched_at on venue_details (fetched_at);
+
+-- Atomically increment view_count without a read-modify-write race
+create or replace function increment_venue_view_count(p_place_id text)
+returns void language sql security definer as $$
+  update venue_details set view_count = view_count + 1 where place_id = p_place_id;
+$$;
 
 alter table venue_details enable row level security;
 
