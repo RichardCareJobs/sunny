@@ -57,13 +57,21 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MIN_TOTAL_RESULTS = 24;
   const PUB_BAR_MIN_SHARE = 0.7;
   const INCLUDE_CAFES_DEFAULT = false;
+  // Verified against Places API (New) docs (2024).
+  // displayName / businessStatus / primaryType are Pro tier for both Nearby Search and
+  // Place Details; all other fields below are Essentials or Pro. No Atmosphere fields.
+  // Broad search calls billing: Nearby Search Pro / Text Search Pro.
   const PLACE_SEARCH_FIELDS = [
     "id","displayName","location","types","primaryType",
     "businessStatus","shortFormattedAddress"
   ];
+  // Enterprise + Atmosphere tier for Place Details. Only requested via enrichPlaceQualification.
   const PLACE_QUALIFICATION_FIELDS = [
     "id","outdoorSeating","servesBeer","servesWine","servesCocktails"
   ];
+  // regularOpeningHours is Enterprise tier for Place Details; photos references are Essentials
+  // IDs Only. This combination bills at Place Details Enterprise.
+  // Fetched separately from PLACE_QUALIFICATION_FIELDS — never bundled into the same call.
   const PLACE_DETAIL_FIELDS = [
     "id","displayName","location","shortFormattedAddress",
     "regularOpeningHours","photos"
@@ -1794,7 +1802,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
+        logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
           fields: PLACE_SEARCH_FIELDS,
@@ -1805,7 +1813,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"nearby_search", billingTier:"essentials", resultCount:places.length });
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"pro", resultCount:places.length });
       }
       if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchNearby:${includedTypes.join(",")}${keyword?`+${keyword}`:""}`,{ types:includedTypes, keyword },places);
@@ -1829,7 +1837,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         maxResultCount: 20,
         language:"en-AU"
       });
-      logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
+      logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
       if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchByText:${query}`,{ query },places);
       return places;
@@ -2119,7 +2127,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
+        logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
           fields: PLACE_SEARCH_FIELDS,
@@ -2130,7 +2138,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"nearby_search", billingTier:"essentials", resultCount:places.length });
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"pro", resultCount:places.length });
       }
       if(requestId!==crawlBuildRequestId) return [];
       return places;
@@ -2153,7 +2161,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         maxResultCount: 20,
         language:"en-AU"
       });
-      logPlacesApiCall({ callType:"text_search", billingTier:"essentials", resultCount:places.length });
+      logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
       if(requestId!==crawlBuildRequestId) return [];
       return places;
     } catch(e){
@@ -2424,9 +2432,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(existing?.detailsFetched||existing?.detailsFetching||venue.detailsFetched||venue.detailsFetching) return;
     if(existing) existing.detailsFetching=true;
     venue.detailsFetching=true;
-    enrichPlaceQualification(
-      venue.id,"user_initiated","venue_card_opened",venueScoreCache.get(venue.id)||{}
-    ).catch(()=>{});
     try{
       const cached=await getCachedVenueDetails(venue.id);
       if(cached){ applyVenueDetailsFromCache(venue,cached); return; }
@@ -2435,7 +2440,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
       await place.fetchFields({ fields:[...PLACE_DETAIL_FIELDS,"utcOffsetMinutes"] });
-      logPlacesApiCall({ callType:"place_details", billingTier:"pro", placeId:venue.id });
+      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId:venue.id });
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
       // Prefer hours from the freshly-fetched Place object (regularOpeningHours is now
@@ -2584,6 +2589,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return "unknown_after_enrichment";
   }
 
+  // Writes to the `events` table (enrichment quality audit — scores, buckets, outcomes,
+  // cache hits). Billing audit (which API tier was billed) goes to `places_api_calls`
+  // via logPlacesApiCall, which is called separately in enrichPlaceQualification.
   function logEnrichmentEvent(data){
     try{
       const sb=getVenueDetailsSupabase();
@@ -2654,12 +2662,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: placeId });
       await place.fetchFields({ fields: PLACE_QUALIFICATION_FIELDS });
-      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId });
+      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise_plus_atmosphere", placeId });
       const qualificationStatus=qualifyVenueFromEnrichment(place);
       const outdoorSeating=typeof place.outdoorSeating==="boolean" ? place.outdoorSeating : null;
       const servesBeer=typeof place.servesBeer==="boolean" ? place.servesBeer : null;
       const servesWine=typeof place.servesWine==="boolean" ? place.servesWine : null;
       const servesCocktails=typeof place.servesCocktails==="boolean" ? place.servesCocktails : null;
+      // qualification_status comes only from qualifyVenueFromEnrichment() — never from
+      // scoreVenueCandidate(). candidate_bucket (from scoring) is stored separately and
+      // does not gate future enrichment; venues scored "excluded" are never passed to
+      // this function by runBackgroundEnrichment, but remain eligible if the user taps
+      // them or if they resurface in a future search with a changed discoverySource.
       await saveVenueQualificationToSupabase(placeId,{
         qualification_status: qualificationStatus,
         outdoor_seating: outdoorSeating,
@@ -2700,6 +2713,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!venues||!venues.length) return;
     if(backgroundEnrichmentSessionCount>=MAX_BACKGROUND_ENRICHMENTS_PER_SESSION) return;
     let loadCount=0;
+    // confirmedSupplyInAreaIsLow: real computed value — counts venues in the current
+    // visible area that have qualificationStatus === "confirmed" in allVenues.
     const confirmedCount=venues.filter(v=>allVenues[v.id]?.qualificationStatus==="confirmed").length;
     const areaHasEnoughConfirmed=confirmedCount>=MIN_CONFIRMED_RESULTS;
     const mediumConfidence=venues.filter(v=>(venueScoreCache.get(v.id)?.bucket)==="medium_confidence");
@@ -2714,6 +2729,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         backgroundEnrichmentSessionCount++;
       }
     }
+    // obvious_fit enrichment triggers implemented here:
+    //   confirmedSupplyInAreaIsLow → !areaHasEnoughConfirmed (computed above)
+    //   venueIsInTopResults → .slice(0,5) on distance-ordered results (Google ranks by distance)
+    //   userTappedVenue → handled in showVenueCard via enrichPlaceQualification directly
+    //
+    // NOT YET IMPLEMENTED (future work):
+    //   venueHasHighImpressionCount — requires a per-venue impression counter tracked
+    //     across renders; view_count in venue_details counts Supabase cache hits only.
+    //     Until implemented, high-impression obvious_fit venues only get enriched via
+    //     the confirmedSupplyInAreaIsLow or userTappedVenue paths.
+    //   manualRefreshJob — no admin job runner exists yet; flag always treated as false.
     if(!areaHasEnoughConfirmed){
       const topObviousFit=venues
         .filter(v=>(venueScoreCache.get(v.id)?.bucket)==="obvious_fit")
@@ -3729,7 +3755,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           "photos","utcOffsetMinutes"
         ]
       });
-      logPlacesApiCall({ callType:"place_details", billingTier:"pro", placeId:placeId });
+      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId:placeId });
       const normalized=normalizePlace(place);
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
         throw new Error("PLACE_DETAILS_INVALID");
@@ -4552,6 +4578,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     trackVenueCardOpened(card,v);
     openVenueId=v.id;
     card.currentVenue=v;
+    // User explicitly opened this venue — trigger qualification enrichment unconditionally
+    // (enrichPlaceQualification is cache-first so repeated taps are cheap).
+    // This must run here, not in fetchVenueDetails, because fetchVenueDetails has an
+    // early-return guard for already-rendered venues.
+    enrichPlaceQualification(
+      v.id,"user_initiated","venue_card_opened",venueScoreCache.get(v.id)||{}
+    ).catch(()=>{});
     fetchVenueDetails(v);
     fetchDogFriendly(v);
     if(card.setFabOpen) card.setFabOpen(false);
@@ -4589,7 +4622,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     if(hasValidCoords) populateCombinedWeatherChip(card.sunChip,v.lat,v.lng,sun);
 
-    if(!open.status){
+    // "Unknown" means hours data isn't available yet (regularOpeningHours no longer
+    // returned by search — it arrives via fetchVenueDetails). Hide rather than show
+    // "Unknown" so the card looks clean while hours load in.
+    if(!open.status||open.status==="Unknown"){
       card.openChip.textContent="";
       card.openChip.classList.add("hidden");
       card.openChip.style.display="none";
