@@ -57,11 +57,12 @@ BEGIN
       ) v
     ),
 
-    -- Count of new venues added to venue_details in each period
+    -- Count of new venues added to venue_details in each period, plus total
     'new_venues', jsonb_build_object(
       'last_24h', (SELECT COUNT(*)::int FROM venue_details WHERE fetched_at >= v_24h),
       'last_7d',  (SELECT COUNT(*)::int FROM venue_details WHERE fetched_at >= v_7d),
-      'last_28d', (SELECT COUNT(*)::int FROM venue_details WHERE fetched_at >= v_28d)
+      'last_28d', (SELECT COUNT(*)::int FROM venue_details WHERE fetched_at >= v_28d),
+      'total',    (SELECT COUNT(*)::int FROM venue_details)
     ),
 
     -- Global action breakdown across all venues in the last 24 hours
