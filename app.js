@@ -16,7 +16,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const VIEWPORT_CACHE_SESSION_KEY = "sunny-viewport-cache-v1";
   const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 30;
   const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 120;
-  const VIEWPORT_CACHE_GRID_DEG = 0.01;
+  const VIEWPORT_CACHE_GRID_DEG = 0.05;
   const VENUE_DETAILS_CACHE_TTL_MS = 28 * 24 * 60 * 60 * 1000;
   const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs";
@@ -149,6 +149,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MOVE_DEBOUNCE_MS = 800;
   const MARKER_BATCH_SIZE = 50;
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
+  const ALLVENUES_MAX_SIZE = 500;
+  const ALLVENUES_EVICT_AGE_MS = 1000 * 60 * 30;
   let moveTimer = null;
   let hasInitialMapLoad = false;
   let locationResolved = false;
@@ -582,10 +584,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function getViewportCacheKey(){
     if(!map) return "";
     const center=map.getCenter();
-    const zoom=map.getZoom();
     const lat=roundToGrid(center.lat(),VIEWPORT_CACHE_GRID_DEG);
     const lng=roundToGrid(center.lng(),VIEWPORT_CACHE_GRID_DEG);
-    return `${lat.toFixed(3)}:${lng.toFixed(3)}:z${zoom}:${getFilterHash()}`;
+    return `${lat.toFixed(3)}:${lng.toFixed(3)}:${getFilterHash()}`;
   }
   function getCrawlVenueCacheKey(center,radiusMeters){
     if(!center||typeof center.lat!=="number"||typeof center.lng!=="number") return "";
@@ -1891,7 +1892,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   async function fetchPlacesForBounds(bounds,searchId,signal){
     const center=bounds.getCenter();
-    let radius=calculateRadiusFromBounds(bounds);
+    const radius=PLACES_QUERY_RADIUS_MAX_M;
     const centerLocation={lat:center.lat(),lng:center.lng()};
     const distanceRequest={ location: centerLocation };
     const textBaseRequest={ location: centerLocation, radius };
@@ -2816,6 +2817,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(t(tags["contact:status"])==="closed") return true;
     return false;
   }
+  function pruneAllVenues(){
+    const keys=Object.keys(allVenues);
+    if(keys.length<=ALLVENUES_MAX_SIZE) return;
+    const now=Date.now();
+    const evictable=keys
+      .filter(id=>!markerLastSeenAt.has(id)||(now-markerLastSeenAt.get(id))>ALLVENUES_EVICT_AGE_MS)
+      .sort((a,b)=>(markerLastSeenAt.get(a)||0)-(markerLastSeenAt.get(b)||0));
+    const toRemove=evictable.slice(0,keys.length-ALLVENUES_MAX_SIZE);
+    for(const id of toRemove){
+      delete allVenues[id];
+      markerLastSeenAt.delete(id);
+    }
+  }
+
   function mergeVenues(list){
     let added=0;
     const now=Date.now();
@@ -2830,6 +2845,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         allVenues[v.id]={...allVenues[v.id],...v};
       }
     }
+    pruneAllVenues();
     if(added) saveLocal(VENUE_CACHE_KEY,allVenues);
   }
 
