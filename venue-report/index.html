@@ -232,6 +232,12 @@
 
     .dash-table th.num-th { text-align: right; }
 
+    .dash-table th.sortable { cursor: pointer; user-select: none; }
+    .dash-table th.sortable:hover { color: var(--text); }
+    .dash-table th.sort-active { color: var(--text); }
+    .dash-table th.sort-active::after { content: ' ↓'; }
+    .dash-table th.sort-active.sort-asc::after { content: ' ↑'; }
+
     .dash-table td {
       padding: 9px 8px 9px 4px;
       border-bottom: 1px solid var(--border);
@@ -693,9 +699,9 @@
             <tr>
               <th>#</th>
               <th>Venue</th>
-              <th class="num-th">Opens</th>
-              <th class="num-th">Dirs</th>
-              <th class="num-th">Uber</th>
+              <th class="num-th sortable" data-sort="card_opens">Opens</th>
+              <th class="num-th sortable" data-sort="directions">Dirs</th>
+              <th class="num-th sortable" data-sort="uber">Uber</th>
             </tr>
           </thead>
           <tbody id="top-venues-tbody"></tbody>
@@ -719,9 +725,9 @@
             <tr>
               <th>#</th>
               <th>Venue</th>
-              <th class="num-th">Opens</th>
-              <th class="num-th">Dirs</th>
-              <th class="num-th">Uber</th>
+              <th class="num-th sortable" data-sort="card_opens">Opens</th>
+              <th class="num-th sortable" data-sort="directions">Dirs</th>
+              <th class="num-th sortable" data-sort="uber">Uber</th>
             </tr>
           </thead>
           <tbody id="all-time-venues-tbody"></tbody>
@@ -1450,13 +1456,16 @@ async function loadHomepageStats() {
   }
 }
 
-function renderTopVenuesTable(venues) {
-  $('top-venues-loading').style.display = 'none';
-  if (!venues.length) {
-    $('top-venues-empty').style.display = 'block';
-    return;
-  }
-  $('top-venues-tbody').innerHTML = venues.map((v, i) => `
+const tvSort = { key: 'card_opens', dir: 'desc' };
+const atSort = { key: 'card_opens', dir: 'desc' };
+let   tvData = [];
+let   atData = [];
+
+function drawVenueRows(tbodyId, venues, sortKey, sortDir) {
+  const sorted = [...venues].sort((a, b) =>
+    sortDir === 'desc' ? b[sortKey] - a[sortKey] : a[sortKey] - b[sortKey]
+  );
+  $(tbodyId).innerHTML = sorted.map((v, i) => `
     <tr class="tv-row"
         data-place-id="${esc(v.place_id)}"
         data-name="${esc(v.name)}"
@@ -1472,48 +1481,61 @@ function renderTopVenuesTable(venues) {
     </tr>
   `).join('');
 
-  $('top-venues-tbody').querySelectorAll('.tv-row').forEach(row => {
+  $(tbodyId).querySelectorAll('.tv-row').forEach(row => {
     row.addEventListener('click', () => loadReport({
       place_id:               row.dataset.placeId,
       name:                   row.dataset.name,
       short_formatted_address: row.dataset.addr || row.dataset.placeId,
     }));
   });
+}
 
+function updateSortHeaders(wrapId, sortKey, sortDir) {
+  document.querySelectorAll(`#${wrapId} th[data-sort]`).forEach(th => {
+    th.classList.remove('sort-active', 'sort-asc');
+    if (th.dataset.sort === sortKey) {
+      th.classList.add('sort-active');
+      if (sortDir === 'asc') th.classList.add('sort-asc');
+    }
+  });
+}
+
+function renderTopVenuesTable(venues) {
+  $('top-venues-loading').style.display = 'none';
+  if (!venues.length) { $('top-venues-empty').style.display = 'block'; return; }
+  tvData = venues;
+  drawVenueRows('top-venues-tbody', tvData, tvSort.key, tvSort.dir);
+  updateSortHeaders('top-venues-table-wrap', tvSort.key, tvSort.dir);
   $('top-venues-table-wrap').style.display = 'block';
+
+  document.querySelectorAll('#top-venues-table-wrap th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      tvSort.dir = tvSort.key === key && tvSort.dir === 'desc' ? 'asc' : 'desc';
+      tvSort.key = key;
+      drawVenueRows('top-venues-tbody', tvData, tvSort.key, tvSort.dir);
+      updateSortHeaders('top-venues-table-wrap', tvSort.key, tvSort.dir);
+    });
+  });
 }
 
 function renderTopVenuesAllTimeTable(venues) {
   $('all-time-venues-loading').style.display = 'none';
-  if (!venues.length) {
-    $('all-time-venues-empty').style.display = 'block';
-    return;
-  }
-  $('all-time-venues-tbody').innerHTML = venues.map((v, i) => `
-    <tr class="tv-row"
-        data-place-id="${esc(v.place_id)}"
-        data-name="${esc(v.name)}"
-        data-addr="${esc(v.address || '')}">
-      <td class="tv-rank">${i + 1}</td>
-      <td>
-        <span class="tv-name">${esc(v.name)}</span>
-        ${v.address ? `<span class="tv-location">${esc(v.address)}</span>` : ''}
-      </td>
-      <td class="num-td">${v.card_opens.toLocaleString()}</td>
-      <td class="num-td">${v.directions.toLocaleString()}</td>
-      <td class="num-td">${v.uber.toLocaleString()}</td>
-    </tr>
-  `).join('');
-
-  $('all-time-venues-tbody').querySelectorAll('.tv-row').forEach(row => {
-    row.addEventListener('click', () => loadReport({
-      place_id:               row.dataset.placeId,
-      name:                   row.dataset.name,
-      short_formatted_address: row.dataset.addr || row.dataset.placeId,
-    }));
-  });
-
+  if (!venues.length) { $('all-time-venues-empty').style.display = 'block'; return; }
+  atData = venues;
+  drawVenueRows('all-time-venues-tbody', atData, atSort.key, atSort.dir);
+  updateSortHeaders('all-time-venues-table-wrap', atSort.key, atSort.dir);
   $('all-time-venues-table-wrap').style.display = 'block';
+
+  document.querySelectorAll('#all-time-venues-table-wrap th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      atSort.dir = atSort.key === key && atSort.dir === 'desc' ? 'asc' : 'desc';
+      atSort.key = key;
+      drawVenueRows('all-time-venues-tbody', atData, atSort.key, atSort.dir);
+      updateSortHeaders('all-time-venues-table-wrap', atSort.key, atSort.dir);
+    });
+  });
 }
 
 function renderNewVenuesCard(data) {
