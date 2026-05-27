@@ -538,6 +538,7 @@
       <ul class="ac-list" id="ac-list" role="listbox" aria-label="Venue suggestions"></ul>
     </div>
     <p class="search-hint">Type 2+ characters to search the Sunny venue database</p>
+    <p id="conn-status" style="font-size:12px;margin-top:8px;color:var(--muted)"></p>
   </div>
 </div>
 
@@ -755,6 +756,47 @@ function doAuth() {
 function goToSearch() {
   showScreen('screen-search');
   setTimeout(() => $('venue-input').focus(), 60);
+  checkConnection();
+}
+
+// ─── Cached venue list for client-side fallback filtering ────────────────────
+let venueCache = null;
+
+async function checkConnection() {
+  const status = $('conn-status');
+  if (!status) return;
+  status.textContent = 'Checking database connection…';
+  status.style.color = 'var(--muted)';
+
+  try {
+    const { data, error } = await sb
+      .from('venue_details')
+      .select('place_id, name, short_formatted_address', { count: 'exact' })
+      .limit(500);
+
+    if (error) {
+      console.error('[venue-report] connection check error:', error);
+      status.textContent = `DB error: ${error.message}`;
+      status.style.color = 'var(--red)';
+      return;
+    }
+
+    const count = data?.length ?? 0;
+    console.log(`[venue-report] connection ok, fetched ${count} venues`);
+    venueCache = data || [];
+
+    if (count === 0) {
+      status.textContent = 'Connected but no venues found — check Supabase RLS policies for venue_details';
+      status.style.color = 'var(--red)';
+    } else {
+      status.textContent = `Ready — ${count} venue${count === 1 ? '' : 's'} available`;
+      status.style.color = 'var(--green)';
+    }
+  } catch (err) {
+    console.error('[venue-report] connection check threw:', err);
+    status.textContent = `Connection failed: ${err.message}`;
+    status.style.color = 'var(--red)';
+  }
 }
 
 /* ─── Venue search autocomplete ─── */
@@ -794,39 +836,46 @@ document.addEventListener('click', e => {
 });
 
 async function searchVenues(q) {
-  // Try with address column first; fall back to name-only if the column doesn't exist yet
-  let data, error;
+  const qLower = q.toLowerCase();
 
-  ({ data, error } = await sb
+  // If the connection check already loaded venues, filter client-side (instant, no extra request)
+  if (venueCache !== null) {
+    const results = venueCache
+      .filter(v => v.name?.toLowerCase().includes(qLower))
+      .slice(0, 12);
+    console.log(`[venue-report] client-side filter "${q}": ${results.length} results from ${venueCache.length} cached`);
+    renderResults(results, q);
+    return;
+  }
+
+  // Cache not ready yet — fall back to server-side ILIKE
+  console.log(`[venue-report] ILIKE search for "${q}"`);
+  const { data, error } = await sb
     .from('venue_details')
     .select('place_id, name, short_formatted_address')
     .ilike('name', `%${q}%`)
-    .limit(12));
+    .limit(12);
+
+  console.log('[venue-report] ILIKE result:', { data, error });
 
   if (error) {
-    console.warn('[venue-report] search with address failed, retrying without:', error.message);
-    ({ data, error } = await sb
-      .from('venue_details')
-      .select('place_id, name')
-      .ilike('name', `%${q}%`)
-      .limit(12));
-  }
-
-  if (error) {
-    console.error('[venue-report] search error:', error);
     acList.innerHTML = `<li class="ac-item"><span class="ac-name" style="color:var(--red)">Search error: ${esc(error.message)}</span></li>`;
     acList.classList.add('open');
     return;
   }
 
-  if (!data?.length) {
-    acList.innerHTML = `<li class="ac-item"><span class="ac-name" style="color:var(--muted)">No venues found</span></li>`;
+  renderResults(data || [], q);
+}
+
+function renderResults(results, q) {
+  if (!results.length) {
+    acList.innerHTML = `<li class="ac-item"><span class="ac-name" style="color:var(--muted)">No venues found for "${esc(q)}"</span></li>`;
     acList.classList.add('open');
     return;
   }
 
   acList.innerHTML = '';
-  data.forEach(v => {
+  results.forEach(v => {
     const li = document.createElement('li');
     li.className = 'ac-item';
     li.setAttribute('role', 'option');
