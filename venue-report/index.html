@@ -989,7 +989,7 @@ async function checkConnection() {
   try {
     const { data, error } = await sb
       .from('venue_details')
-      .select('place_id, name, short_formatted_address', { count: 'exact' })
+      .select('place_id, name', { count: 'exact' })
       .limit(500);
 
     if (error) {
@@ -1070,7 +1070,7 @@ async function searchVenues(q) {
   console.log(`[venue-report] ILIKE search for "${q}"`);
   const { data, error } = await sb
     .from('venue_details')
-    .select('place_id, name, short_formatted_address')
+    .select('place_id, name')
     .ilike('name', `%${q}%`)
     .limit(12);
 
@@ -1530,7 +1530,7 @@ async function init() {
 
     const { data: venue, error } = await sb
       .from('venue_details')
-      .select('place_id, name, short_formatted_address, view_count')
+      .select('place_id, name, view_count')
       .eq('place_id', vParam)
       .single();
 

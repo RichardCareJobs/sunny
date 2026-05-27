@@ -32,7 +32,6 @@ BEGIN
           jsonb_build_object(
             'place_id',   v.place_id,
             'name',       v.name,
-            'address',    v.short_formatted_address,
             'card_opens', v.card_opens,
             'directions', v.directions,
             'uber',       v.uber
@@ -44,7 +43,6 @@ BEGIN
         SELECT
           vd.place_id,
           vd.name,
-          vd.short_formatted_address,
           COUNT(CASE WHEN e.event_type = 'venue_card_opened' THEN 1 END)::int                                                    AS card_opens,
           COUNT(CASE WHEN e.event_type = 'venue_action_clicked' AND e.metadata->>'action' = 'directions' THEN 1 END)::int       AS directions,
           COUNT(CASE WHEN e.event_type = 'venue_action_clicked' AND e.metadata->>'action' = 'uber'       THEN 1 END)::int       AS uber
@@ -52,7 +50,7 @@ BEGIN
         JOIN venue_details vd ON vd.place_id = e.metadata->>'venue_id'
         WHERE e.created_at >= v_24h
           AND e.event_type IN ('venue_card_opened', 'venue_action_clicked')
-        GROUP BY vd.place_id, vd.name, vd.short_formatted_address
+        GROUP BY vd.place_id, vd.name
         HAVING COUNT(CASE WHEN e.event_type = 'venue_card_opened' THEN 1 END) > 0
         ORDER BY card_opens DESC
         LIMIT 10
