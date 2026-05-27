@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Venue Insights — Sunny</title>
+  <meta name="robots" content="noindex, nofollow">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #f59e0b;
+      --accent-hover: #d97706;
+      --green: #10b981;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #8b5cf6;
+      --shadow: 0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-lg: 0 4px 16px rgba(0,0,0,0.09);
+      --r: 12px;
+      --r-sm: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ── Screens ── */
+    .screen { display: none; }
+    .screen.active { display: flex; }
+
+    /* ── Password screen ── */
+    #screen-password {
+      min-height: 100vh;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      gap: 20px;
+    }
+
+    .auth-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: var(--shadow-lg);
+      text-align: center;
+    }
+
+    .auth-logo {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 56px;
+      height: 56px;
+      background: #fef3c7;
+      border-radius: 14px;
+      font-size: 28px;
+      margin-bottom: 20px;
+    }
+
+    .auth-card h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .auth-card .desc {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 28px;
+    }
+
+    .form-group { display: flex; flex-direction: column; gap: 10px; }
+
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      padding: 11px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--r-sm);
+      font-size: 15px;
+      font-family: inherit;
+      outline: none;
+      background: var(--bg);
+      color: var(--text);
+      transition: border-color 0.15s;
+    }
+
+    input:focus { border-color: var(--accent); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 11px 20px;
+      border: none;
+      border-radius: var(--r-sm);
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      text-decoration: none;
+    }
+
+    .btn:hover { opacity: 0.85; }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--accent); color: #111827; width: 100%; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 13px; padding: 7px 14px; }
+    .btn-ghost:hover { border-color: var(--text); color: var(--text); opacity: 1; }
+    .btn-share { background: var(--accent); color: #111827; font-size: 13px; padding: 7px 16px; }
+    .btn-search-back { background: var(--card); border: 1px solid var(--border); color: var(--muted); font-size: 13px; padding: 7px 14px; }
+
+    .err {
+      color: var(--red);
+      font-size: 13px;
+      margin-top: 2px;
+      display: none;
+    }
+    .err.show { display: block; }
+
+    .auth-footer { color: var(--muted); font-size: 12px; }
+
+    /* ── Search screen ── */
+    #screen-search {
+      min-height: 100vh;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      gap: 20px;
+    }
+
+    .search-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 36px;
+      width: 100%;
+      max-width: 500px;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .search-card h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .search-card .desc { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+
+    .search-wrap { position: relative; }
+
+    .ac-list {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--card);
+      border: 1.5px solid var(--accent);
+      border-top: none;
+      border-radius: 0 0 var(--r-sm) var(--r-sm);
+      list-style: none;
+      z-index: 50;
+      max-height: 280px;
+      overflow-y: auto;
+      box-shadow: var(--shadow-lg);
+      display: none;
+    }
+
+    .ac-list.open { display: block; }
+
+    .ac-item {
+      padding: 11px 14px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .ac-item:last-child { border-bottom: none; }
+
+    .ac-item:hover,
+    .ac-item.hi { background: #fffbeb; }
+
+    .ac-name { font-weight: 600; font-size: 14px; }
+    .ac-addr { font-size: 12px; color: var(--muted); }
+
+    .search-hint { font-size: 12px; color: var(--muted); margin-top: 10px; }
+
+    /* ── Report screen ── */
+    #screen-report {
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    .report-topbar {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 20;
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .topbar-logo {
+      font-size: 20px;
+      width: 36px;
+      height: 36px;
+      background: #fef3c7;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .topbar-venue h2 {
+      font-size: 15px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 280px;
+    }
+
+    .topbar-venue p {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 280px;
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .date-tabs {
+      display: flex;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: 3px;
+      gap: 2px;
+    }
+
+    .date-tab {
+      padding: 5px 14px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+
+    .date-tab.active {
+      background: var(--card);
+      color: var(--text);
+      box-shadow: var(--shadow);
+    }
+
+    .shared-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* ── Report body ── */
+    .report-body {
+      padding: 24px 20px;
+      max-width: 1000px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .section-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    /* ── Metric cards ── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .metric-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 18px 16px 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric-card.accent-top { border-top: 3px solid var(--accent); }
+    .metric-card.blue-top   { border-top: 3px solid var(--blue); }
+    .metric-card.green-top  { border-top: 3px solid var(--green); }
+    .metric-card.purple-top { border-top: 3px solid var(--purple); }
+    .metric-card.red-top    { border-top: 3px solid var(--red); }
+    .metric-card.gray-top   { border-top: 3px solid #d1d5db; }
+
+    .metric-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .metric-value {
+      font-size: 34px;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--text);
+      letter-spacing: -1px;
+    }
+
+    .metric-trend {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-top: 8px;
+    }
+
+    .metric-trend .arrow { font-size: 11px; }
+    .trend-up   { color: var(--green); }
+    .trend-down { color: var(--red); }
+    .trend-flat { color: var(--muted); }
+    .trend-note { color: var(--muted); font-weight: 400; }
+
+    /* ── Charts ── */
+    .chart-row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .chart-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 22px 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .chart-card h3 {
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .chart-card .chart-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+
+    .chart-wrap { position: relative; }
+    .chart-wrap-tall { height: 260px; }
+    .chart-wrap-med  { height: 220px; }
+
+    .actions-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .pie-legend {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 14px;
+    }
+
+    .legend-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+
+    .legend-label { font-weight: 600; font-size: 13px; }
+    .legend-val   { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+    /* ── Loading ── */
+    .loading-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 80px 24px;
+      gap: 14px;
+    }
+
+    .loading-wrap.show { display: flex; }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.65s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-txt { font-size: 14px; color: var(--muted); }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(10px);
+      background: #111827;
+      color: #f9fafb;
+      padding: 11px 22px;
+      border-radius: var(--r-sm);
+      font-size: 14px;
+      font-weight: 500;
+      opacity: 0;
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none;
+      z-index: 999;
+      white-space: nowrap;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      .actions-split { grid-template-columns: 1fr; }
+      .auth-card, .search-card { padding: 28px 20px; }
+      .topbar-venue h2, .topbar-venue p { max-width: 160px; }
+      .metric-value { font-size: 28px; }
+    }
+
+    @media (min-width: 768px) {
+      .chart-row { grid-template-columns: 1fr 1fr; }
+      .daily-chart-card { grid-column: 1 / -1; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     SCREEN 1 — Password
+══════════════════════════════════════════════════════ -->
+<div id="screen-password" class="screen active">
+  <div class="auth-card">
+    <div class="auth-logo">☀️</div>
+    <h1>Venue Insights</h1>
+    <p class="desc">Internal analytics tool — enter your password to continue</p>
+    <div class="form-group">
+      <input type="password" id="pw-input" placeholder="Password" autocomplete="current-password">
+      <p class="err" id="pw-err">Incorrect password</p>
+      <button class="btn btn-primary" id="pw-btn">Unlock</button>
+    </div>
+  </div>
+  <p class="auth-footer">Sunny · Internal use only</p>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     SCREEN 2 — Search
+══════════════════════════════════════════════════════ -->
+<div id="screen-search" class="screen">
+  <div class="search-card">
+    <h1>Find a Venue</h1>
+    <p class="desc">Search by name or address to view its analytics</p>
+    <div class="search-wrap">
+      <input type="text" id="venue-input" placeholder="e.g. The Lord Nelson Brewery Hotel" autocomplete="off" spellcheck="false">
+      <ul class="ac-list" id="ac-list" role="listbox" aria-label="Venue suggestions"></ul>
+    </div>
+    <p class="search-hint">Type 2+ characters to search the Sunny venue database</p>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     SCREEN 3 — Report
+══════════════════════════════════════════════════════ -->
+<div id="screen-report" class="screen">
+
+  <div class="report-topbar">
+    <div class="topbar-left">
+      <div class="topbar-logo">☀️</div>
+      <div class="topbar-venue">
+        <h2 id="r-name">—</h2>
+        <p id="r-addr">—</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="shared-badge" id="shared-badge" style="display:none">✓ Shared report</span>
+      <div class="date-tabs" id="date-tabs">
+        <button class="date-tab" data-days="7">7d</button>
+        <button class="date-tab active" data-days="14">14d</button>
+        <button class="date-tab" data-days="28">28d</button>
+      </div>
+      <button class="btn btn-share" id="share-btn">Share</button>
+      <button class="btn btn-search-back" id="back-btn" style="display:none">← Search</button>
+    </div>
+  </div>
+
+  <!-- Loading state -->
+  <div class="loading-wrap" id="r-loading">
+    <div class="spinner"></div>
+    <p class="loading-txt">Loading analytics…</p>
+  </div>
+
+  <!-- Report content -->
+  <div class="report-body" id="r-body" style="display:none">
+
+    <p class="section-label" id="r-period-label">Last 14 days</p>
+
+    <!-- Metric cards -->
+    <div class="metrics-grid">
+      <div class="metric-card accent-top">
+        <div class="metric-label">Card Opens</div>
+        <div class="metric-value" id="m-opens">—</div>
+        <div class="metric-trend" id="mt-opens"></div>
+      </div>
+      <div class="metric-card blue-top">
+        <div class="metric-label">Directions</div>
+        <div class="metric-value" id="m-dirs">—</div>
+        <div class="metric-trend" id="mt-dirs"></div>
+      </div>
+      <div class="metric-card green-top">
+        <div class="metric-label">Website</div>
+        <div class="metric-value" id="m-web">—</div>
+        <div class="metric-trend" id="mt-web"></div>
+      </div>
+      <div class="metric-card purple-top">
+        <div class="metric-label">Uber Ride</div>
+        <div class="metric-value" id="m-uber">—</div>
+        <div class="metric-trend" id="mt-uber"></div>
+      </div>
+      <div class="metric-card red-top">
+        <div class="metric-label">Total Actions</div>
+        <div class="metric-value" id="m-total">—</div>
+        <div class="metric-trend" id="mt-total"></div>
+      </div>
+      <div class="metric-card gray-top">
+        <div class="metric-label">All-Time Views</div>
+        <div class="metric-value" id="m-views">—</div>
+        <div class="metric-trend"><span class="trend-note">Lifetime cumulative</span></div>
+      </div>
+    </div>
+
+    <!-- Charts row -->
+    <div class="chart-row">
+      <!-- Daily activity (full width) -->
+      <div class="chart-card daily-chart-card">
+        <h3>Daily Activity</h3>
+        <p class="chart-sub">Card opens and actions by day</p>
+        <div class="chart-wrap chart-wrap-tall">
+          <canvas id="chart-daily"></canvas>
+        </div>
+      </div>
+
+      <!-- Action breakdown doughnut -->
+      <div class="chart-card">
+        <h3>Action Breakdown</h3>
+        <p class="chart-sub">How users engage with this venue</p>
+        <div class="actions-split">
+          <div class="chart-wrap chart-wrap-med">
+            <canvas id="chart-pie"></canvas>
+          </div>
+          <div class="pie-legend" id="pie-legend"></div>
+        </div>
+      </div>
+
+      <!-- Opens trend line -->
+      <div class="chart-card">
+        <h3>Card Opens Trend</h3>
+        <p class="chart-sub">Rolling view of user interest</p>
+        <div class="chart-wrap chart-wrap-med">
+          <canvas id="chart-line"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /report-body -->
+</div><!-- /screen-report -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   CONFIGURATION
+   ──────────────────────────────────────────────────────
+   Change CONFIG.password to set your access password.
+   The page also requires a Supabase RPC function —
+   see the SQL block below these config lines.
+═══════════════════════════════════════════════════════ */
+const CONFIG = {
+  password:       'sunny',   // ← CHANGE THIS to your desired password
+  supabaseUrl:    'https://ivylljoqjswkuyrpevmg.supabase.co',
+  supabaseAnonKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs',
+  defaultDays:    14,
+  sessionKey:     'vr_auth_v1',
+};
+
+/*
+ * ─── REQUIRED SUPABASE SETUP ────────────────────────────────────────────────
+ * Run this SQL once in your Supabase SQL Editor before using this page.
+ * It creates a SECURITY DEFINER function so the anon key can read
+ * aggregated analytics without exposing raw event rows.
+ *
+ * The full SQL is also in docs/venue-insights-setup.sql in the repo.
+ * ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION get_venue_insights(p_venue_id TEXT, p_days INT DEFAULT 28)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_cut  TIMESTAMPTZ := NOW() - (p_days  || ' days')::INTERVAL;
+  v_prev TIMESTAMPTZ := NOW() - (p_days * 2 || ' days')::INTERVAL;
+BEGIN
+  RETURN jsonb_build_object(
+    'current', jsonb_build_object(
+      'card_opens', (SELECT COUNT(*) FROM events WHERE event_type='venue_card_opened'    AND metadata->>'venue_id'=p_venue_id AND created_at>=v_cut),
+      'directions', (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='directions' AND created_at>=v_cut),
+      'website',    (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='website'    AND created_at>=v_cut),
+      'uber',       (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='uber'       AND created_at>=v_cut)
+    ),
+    'previous', jsonb_build_object(
+      'card_opens', (SELECT COUNT(*) FROM events WHERE event_type='venue_card_opened'    AND metadata->>'venue_id'=p_venue_id AND created_at>=v_prev AND created_at<v_cut),
+      'directions', (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='directions' AND created_at>=v_prev AND created_at<v_cut),
+      'website',    (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='website'    AND created_at>=v_prev AND created_at<v_cut),
+      'uber',       (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='uber'       AND created_at>=v_prev AND created_at<v_cut)
+    ),
+    'daily_opens', (
+      SELECT COALESCE(jsonb_agg(jsonb_build_object('d', day, 'n', cnt) ORDER BY day), '[]'::jsonb)
+      FROM (SELECT created_at::DATE AS day, COUNT(*) AS cnt FROM events
+            WHERE event_type='venue_card_opened' AND metadata->>'venue_id'=p_venue_id AND created_at>=v_cut
+            GROUP BY day) x
+    ),
+    'daily_actions', (
+      SELECT COALESCE(jsonb_agg(jsonb_build_object('d', day, 'a', action, 'n', cnt) ORDER BY day, action), '[]'::jsonb)
+      FROM (SELECT created_at::DATE AS day, metadata->>'action' AS action, COUNT(*) AS cnt FROM events
+            WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND created_at>=v_cut
+            GROUP BY day, action) x
+    )
+  );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION get_venue_insights(TEXT, INT) TO anon;
+
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/* ─── Supabase client ─── */
+const sb = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey);
+
+/* ─── App state ─── */
+let state = {
+  venue:         null,
+  days:          CONFIG.defaultDays,
+  authenticated: false,
+  directLink:    false,
+};
+
+let chartDaily = null;
+let chartPie   = null;
+let chartLine  = null;
+
+/* ─── Helpers ─── */
+function $(id) { return document.getElementById(id); }
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+
+function toast(msg, ms = 2800) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), ms);
+}
+
+function esc(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function trend(current, previous, id) {
+  const el = $(id);
+  if (!el) return;
+  const diff = current - previous;
+  if (previous === 0 && current === 0) {
+    el.innerHTML = `<span class="trend-flat">No activity</span>`;
+    return;
+  }
+  if (previous === 0) {
+    el.innerHTML = `<span class="trend-up">New activity</span>`;
+    return;
+  }
+  const pct = Math.round(Math.abs(diff / previous) * 100);
+  const dir = diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
+  const arrow = diff > 0 ? '↑' : diff < 0 ? '↓' : '→';
+  const label = diff > 0 ? `+${pct}%` : diff < 0 ? `−${pct}%` : 'No change';
+  el.innerHTML = `<span class="arrow trend-${dir}">${arrow}</span><span class="trend-${dir}">${label}</span><span class="trend-note">&nbsp;vs prev ${state.days}d</span>`;
+}
+
+/* ─── Auth ─── */
+$('pw-btn').addEventListener('click', doAuth);
+$('pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
+
+function doAuth() {
+  if ($('pw-input').value === CONFIG.password) {
+    $('pw-err').classList.remove('show');
+    state.authenticated = true;
+    try { sessionStorage.setItem(CONFIG.sessionKey, '1'); } catch {}
+    goToSearch();
+  } else {
+    $('pw-err').classList.add('show');
+    $('pw-input').value = '';
+    $('pw-input').focus();
+  }
+}
+
+function goToSearch() {
+  showScreen('screen-search');
+  setTimeout(() => $('venue-input').focus(), 60);
+}
+
+/* ─── Venue search autocomplete ─── */
+const venueInput = $('venue-input');
+const acList     = $('ac-list');
+let   searchTimer;
+
+venueInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = venueInput.value.trim();
+  if (q.length < 2) { acList.classList.remove('open'); return; }
+  searchTimer = setTimeout(() => searchVenues(q), 280);
+});
+
+venueInput.addEventListener('keydown', e => {
+  const items = acList.querySelectorAll('.ac-item');
+  const hi    = acList.querySelector('.hi');
+  const idx   = Array.from(items).indexOf(hi);
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    hi?.classList.remove('hi');
+    items[Math.min(idx + 1, items.length - 1)]?.classList.add('hi');
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    hi?.classList.remove('hi');
+    items[Math.max(idx - 1, 0)]?.classList.add('hi');
+  } else if (e.key === 'Enter') {
+    const sel = acList.querySelector('.hi');
+    if (sel) sel.click();
+  } else if (e.key === 'Escape') {
+    acList.classList.remove('open');
+  }
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) acList.classList.remove('open');
+});
+
+async function searchVenues(q) {
+  const { data, error } = await sb
+    .from('venue_details')
+    .select('place_id, name, short_formatted_address')
+    .ilike('name', `%${q}%`)
+    .limit(12);
+
+  if (error || !data?.length) {
+    acList.innerHTML = `<li class="ac-item"><span class="ac-name" style="color:var(--muted)">No venues found</span></li>`;
+    acList.classList.add('open');
+    return;
+  }
+
+  acList.innerHTML = '';
+  data.forEach(v => {
+    const li = document.createElement('li');
+    li.className = 'ac-item';
+    li.setAttribute('role', 'option');
+    li.innerHTML = `<span class="ac-name">${esc(v.name)}</span><span class="ac-addr">${esc(v.short_formatted_address || v.place_id)}</span>`;
+    li.addEventListener('click', () => loadReport(v));
+    acList.appendChild(li);
+  });
+  acList.classList.add('open');
+}
+
+/* ─── Report loading ─── */
+async function loadReport(venue) {
+  state.venue = venue;
+  acList.classList.remove('open');
+
+  $('r-name').textContent = venue.name;
+  $('r-addr').textContent = venue.short_formatted_address || venue.place_id;
+
+  // Update URL for sharing (no page reload)
+  const url = new URL(window.location.href);
+  url.searchParams.set('v', venue.place_id);
+  window.history.replaceState({}, '', url.toString());
+
+  showScreen('screen-report');
+  $('r-loading').classList.add('show');
+  $('r-body').style.display = 'none';
+
+  // Show/hide back button based on entry path
+  $('back-btn').style.display = state.directLink ? 'none' : 'inline-flex';
+  $('shared-badge').style.display = 'none';
+
+  await renderReport(venue.place_id, state.days);
+}
+
+async function renderReport(placeId, days) {
+  $('r-period-label').textContent = `Last ${days} day${days === 1 ? '' : 's'}`;
+
+  try {
+    // Fetch aggregated stats via RPC (SECURITY DEFINER bypasses events RLS)
+    const [rpcRes, detailsRes] = await Promise.all([
+      sb.rpc('get_venue_insights', { p_venue_id: placeId, p_days: days }),
+      sb.from('venue_details').select('view_count').eq('place_id', placeId).single(),
+    ]);
+
+    if (rpcRes.error) throw rpcRes.error;
+
+    const d       = rpcRes.data;
+    const curr    = d.current;
+    const prev    = d.previous;
+    const daily   = d.daily_opens   || [];
+    const daction = d.daily_actions || [];
+    const vcount  = detailsRes.data?.view_count ?? 0;
+
+    const totalCurr = curr.directions + curr.website + curr.uber;
+    const totalPrev = prev.directions + prev.website + prev.uber;
+
+    // Metric cards
+    $('m-opens').textContent = curr.card_opens.toLocaleString();
+    $('m-dirs').textContent  = curr.directions.toLocaleString();
+    $('m-web').textContent   = curr.website.toLocaleString();
+    $('m-uber').textContent  = curr.uber.toLocaleString();
+    $('m-total').textContent = totalCurr.toLocaleString();
+    $('m-views').textContent = vcount.toLocaleString();
+
+    trend(curr.card_opens, prev.card_opens, 'mt-opens');
+    trend(curr.directions, prev.directions, 'mt-dirs');
+    trend(curr.website,    prev.website,    'mt-web');
+    trend(curr.uber,       prev.uber,       'mt-uber');
+    trend(totalCurr,       totalPrev,       'mt-total');
+
+    // Build full date labels for the period
+    const labels     = [];
+    const opensArr   = [];
+    const dirsArr    = [];
+    const webArr     = [];
+    const uberArr    = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const d2 = new Date();
+      d2.setDate(d2.getDate() - i);
+      const ds = d2.toISOString().slice(0, 10);
+      labels.push(fmtDate(d2, days));
+      opensArr.push(daily.find(x => x.d === ds)?.n || 0);
+      dirsArr .push(daction.filter(x => x.d === ds && x.a === 'directions').reduce((s,x) => s+x.n, 0));
+      webArr  .push(daction.filter(x => x.d === ds && x.a === 'website')  .reduce((s,x) => s+x.n, 0));
+      uberArr .push(daction.filter(x => x.d === ds && x.a === 'uber')     .reduce((s,x) => s+x.n, 0));
+    }
+
+    renderDailyChart(labels, opensArr, dirsArr, webArr, uberArr);
+    renderPieChart(curr.directions, curr.website, curr.uber);
+    renderLineChart(labels, opensArr);
+
+    $('r-loading').classList.remove('show');
+    $('r-body').style.display = 'block';
+
+  } catch (err) {
+    console.error('Report error:', err);
+    $('r-loading').innerHTML = `<p style="color:var(--red);text-align:center">
+      Failed to load data.<br><small>${esc(err?.message || 'Unknown error')}</small><br><br>
+      <button class="btn btn-ghost" onclick="location.reload()">Retry</button>
+    </p>`;
+  }
+}
+
+function fmtDate(date, days) {
+  if (days <= 7)  return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric' });
+  if (days <= 14) return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return date.getDate() % 4 === 0
+    ? date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    : '';
+}
+
+const COLORS = {
+  opens: 'rgba(245,158,11,0.8)',
+  dirs:  'rgba(59,130,246,0.8)',
+  web:   'rgba(16,185,129,0.8)',
+  uber:  'rgba(139,92,246,0.8)',
+};
+
+function chartDefaults() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+  };
+}
+
+function renderDailyChart(labels, opens, dirs, web, uber) {
+  if (chartDaily) chartDaily.destroy();
+  const ctx = $('chart-daily').getContext('2d');
+  chartDaily = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Card Opens', data: opens, backgroundColor: COLORS.opens, borderRadius: 3, stack: 's' },
+        { label: 'Directions', data: dirs,  backgroundColor: COLORS.dirs,  borderRadius: 3, stack: 's' },
+        { label: 'Website',    data: web,   backgroundColor: COLORS.web,   borderRadius: 3, stack: 's' },
+        { label: 'Uber',       data: uber,  backgroundColor: COLORS.uber,  borderRadius: 3, stack: 's' },
+      ]
+    },
+    options: {
+      ...chartDefaults(),
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { boxWidth: 12, padding: 16, font: { size: 12 } }
+        },
+        tooltip: { mode: 'index', intersect: false }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#9ca3af', maxRotation: 0 } },
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 11 }, color: '#9ca3af' }, grid: { color: 'rgba(0,0,0,0.04)' } }
+      }
+    }
+  });
+}
+
+function renderPieChart(dirs, web, uber) {
+  if (chartPie) chartPie.destroy();
+  const total = dirs + web + uber;
+  const ctx   = $('chart-pie').getContext('2d');
+
+  const items = [
+    { label: 'Directions', value: dirs, color: COLORS.dirs },
+    { label: 'Website',    value: web,  color: COLORS.web  },
+    { label: 'Uber',       value: uber, color: COLORS.uber },
+  ];
+
+  $('pie-legend').innerHTML = items.map(item => `
+    <div class="legend-row">
+      <div class="legend-dot" style="background:${item.color}"></div>
+      <div>
+        <div class="legend-label">${item.label}</div>
+        <div class="legend-val">${item.value.toLocaleString()} action${item.value !== 1 ? 's' : ''}${total > 0 ? ` · ${Math.round(item.value/total*100)}%` : ''}</div>
+      </div>
+    </div>
+  `).join('');
+
+  chartPie = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: items.map(i => i.label),
+      datasets: [{
+        data:            items.map(i => i.value),
+        backgroundColor: items.map(i => i.color),
+        borderWidth:     0,
+        hoverOffset:     6,
+      }]
+    },
+    options: {
+      ...chartDefaults(),
+      cutout: '60%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.label}: ${ctx.raw} (${total > 0 ? Math.round(ctx.raw/total*100) : 0}%)`
+          }
+        }
+      }
+    }
+  });
+}
+
+function renderLineChart(labels, opens) {
+  if (chartLine) chartLine.destroy();
+  const ctx = $('chart-line').getContext('2d');
+
+  // Smooth gradient fill
+  const gradient = ctx.createLinearGradient(0, 0, 0, 220);
+  gradient.addColorStop(0,   'rgba(245,158,11,0.25)');
+  gradient.addColorStop(1,   'rgba(245,158,11,0.0)');
+
+  chartLine = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Card Opens',
+        data:  opens,
+        borderColor:     '#f59e0b',
+        backgroundColor: gradient,
+        borderWidth:     2,
+        pointRadius:     opens.length > 14 ? 0 : 3,
+        pointHoverRadius: 5,
+        tension:         0.35,
+        fill:            true,
+      }]
+    },
+    options: {
+      ...chartDefaults(),
+      plugins: {
+        legend: { display: false },
+        tooltip: { mode: 'index', intersect: false }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#9ca3af', maxRotation: 0 } },
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 11 }, color: '#9ca3af' }, grid: { color: 'rgba(0,0,0,0.04)' } }
+      }
+    }
+  });
+}
+
+/* ─── Date range tabs ─── */
+$('date-tabs').addEventListener('click', async e => {
+  const btn = e.target.closest('.date-tab');
+  if (!btn || !state.venue) return;
+  document.querySelectorAll('.date-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  state.days = parseInt(btn.dataset.days);
+  $('r-loading').classList.add('show');
+  $('r-body').style.display = 'none';
+  await renderReport(state.venue.place_id, state.days);
+});
+
+/* ─── Share button ─── */
+$('share-btn').addEventListener('click', () => {
+  if (!state.venue) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('v', state.venue.place_id);
+  navigator.clipboard.writeText(url.toString())
+    .then(() => toast('Link copied — anyone with this URL can view the report'))
+    .catch(() => {
+      const t = prompt('Copy this link to share:', url.toString());
+    });
+});
+
+/* ─── Back button ─── */
+$('back-btn').addEventListener('click', () => {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('v');
+  window.history.replaceState({}, '', url.toString());
+  showScreen('screen-search');
+  $('venue-input').focus();
+});
+
+/* ─── Init ─── */
+async function init() {
+  const params  = new URLSearchParams(window.location.search);
+  const vParam  = params.get('v');
+
+  if (vParam) {
+    // Direct/shared link — bypass password, show report immediately
+    state.directLink = true;
+
+    $('shared-badge').style.display = 'inline-flex';
+    $('back-btn').style.display = 'none';
+
+    showScreen('screen-report');
+    $('r-loading').classList.add('show');
+
+    const { data: venue, error } = await sb
+      .from('venue_details')
+      .select('place_id, name, short_formatted_address, view_count')
+      .eq('place_id', vParam)
+      .single();
+
+    if (error || !venue) {
+      $('r-loading').innerHTML = `<div style="text-align:center">
+        <p style="color:var(--red);margin-bottom:16px">Venue not found.</p>
+        <a href="${window.location.pathname}" class="btn btn-ghost">Go to search</a>
+      </div>`;
+      return;
+    }
+
+    state.venue = venue;
+    $('r-name').textContent = venue.name;
+    $('r-addr').textContent = venue.short_formatted_address || vParam;
+
+    await renderReport(vParam, state.days);
+    return;
+  }
+
+  // Check for existing session auth
+  try {
+    if (sessionStorage.getItem(CONFIG.sessionKey) === '1') {
+      state.authenticated = true;
+      goToSearch();
+      return;
+    }
+  } catch {}
+
+  showScreen('screen-password');
+  setTimeout(() => $('pw-input').focus(), 60);
+}
+
+init();
+</script>
+</body>
+</html>
