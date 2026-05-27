@@ -4445,6 +4445,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         if(detailCard.currentVenue) trackVenueAction("directions",detailCard.currentVenue);
       });
     }
+    if(detailCard.actions.uber){
+      detailCard.actions.uber.addEventListener("click",()=>{
+        if(detailCard.currentVenue) trackVenueAction("uber",detailCard.currentVenue);
+      });
+    }
     if(detailCard.actions.website){
       detailCard.actions.website.addEventListener("click",()=>{
         if(detailCard.currentVenue) trackVenueAction("website",detailCard.currentVenue);
