@@ -794,13 +794,32 @@ document.addEventListener('click', e => {
 });
 
 async function searchVenues(q) {
-  const { data, error } = await sb
+  // Try with address column first; fall back to name-only if the column doesn't exist yet
+  let data, error;
+
+  ({ data, error } = await sb
     .from('venue_details')
     .select('place_id, name, short_formatted_address')
     .ilike('name', `%${q}%`)
-    .limit(12);
+    .limit(12));
 
-  if (error || !data?.length) {
+  if (error) {
+    console.warn('[venue-report] search with address failed, retrying without:', error.message);
+    ({ data, error } = await sb
+      .from('venue_details')
+      .select('place_id, name')
+      .ilike('name', `%${q}%`)
+      .limit(12));
+  }
+
+  if (error) {
+    console.error('[venue-report] search error:', error);
+    acList.innerHTML = `<li class="ac-item"><span class="ac-name" style="color:var(--red)">Search error: ${esc(error.message)}</span></li>`;
+    acList.classList.add('open');
+    return;
+  }
+
+  if (!data?.length) {
     acList.innerHTML = `<li class="ac-item"><span class="ac-name" style="color:var(--muted)">No venues found</span></li>`;
     acList.classList.add('open');
     return;
@@ -811,7 +830,7 @@ async function searchVenues(q) {
     const li = document.createElement('li');
     li.className = 'ac-item';
     li.setAttribute('role', 'option');
-    li.innerHTML = `<span class="ac-name">${esc(v.name)}</span><span class="ac-addr">${esc(v.short_formatted_address || v.place_id)}</span>`;
+    li.innerHTML = `<span class="ac-name">${esc(v.name)}</span><span class="ac-addr">${esc(v.short_formatted_address || '')}</span>`;
     li.addEventListener('click', () => loadReport(v));
     acList.appendChild(li);
   });
