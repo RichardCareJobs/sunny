@@ -339,6 +339,7 @@
       box-shadow: var(--shadow);
     }
 
+    .metric-card.yellow-top { border-top: 3px solid #fcd34d; }
     .metric-card.accent-top { border-top: 3px solid var(--accent); }
     .metric-card.blue-top   { border-top: 3px solid var(--blue); }
     .metric-card.green-top  { border-top: 3px solid var(--green); }
@@ -578,10 +579,20 @@
 
     <!-- Metric cards -->
     <div class="metrics-grid">
+      <div class="metric-card yellow-top">
+        <div class="metric-label">Venue Views</div>
+        <div class="metric-value" id="m-vviews">—</div>
+        <div class="metric-trend" id="mt-vviews"></div>
+      </div>
       <div class="metric-card accent-top">
         <div class="metric-label">Card Opens</div>
         <div class="metric-value" id="m-opens">—</div>
         <div class="metric-trend" id="mt-opens"></div>
+      </div>
+      <div class="metric-card red-top">
+        <div class="metric-label">Total Actions</div>
+        <div class="metric-value" id="m-total">—</div>
+        <div class="metric-trend" id="mt-total"></div>
       </div>
       <div class="metric-card blue-top">
         <div class="metric-label">Directions</div>
@@ -597,16 +608,6 @@
         <div class="metric-label">Uber Ride</div>
         <div class="metric-value" id="m-uber">—</div>
         <div class="metric-trend" id="mt-uber"></div>
-      </div>
-      <div class="metric-card red-top">
-        <div class="metric-label">Total Actions</div>
-        <div class="metric-value" id="m-total">—</div>
-        <div class="metric-trend" id="mt-total"></div>
-      </div>
-      <div class="metric-card gray-top">
-        <div class="metric-label">All-Time Views</div>
-        <div class="metric-value" id="m-views">—</div>
-        <div class="metric-trend"><span class="trend-note">Lifetime cumulative</span></div>
       </div>
     </div>
 
@@ -633,10 +634,10 @@
         </div>
       </div>
 
-      <!-- Opens trend line -->
+      <!-- Views → Opens funnel line -->
       <div class="chart-card">
-        <h3>Card Opens Trend</h3>
-        <p class="chart-sub">Rolling view of user interest</p>
+        <h3>Views → Opens Funnel</h3>
+        <p class="chart-sub">Map impressions vs card opens over time</p>
         <div class="chart-wrap chart-wrap-med">
           <canvas id="chart-line"></canvas>
         </div>
@@ -673,46 +674,8 @@ const CONFIG = {
  * The full SQL is also in docs/venue-insights-setup.sql in the repo.
  * ─────────────────────────────────────────────────────────────────────────────
 
-CREATE OR REPLACE FUNCTION get_venue_insights(p_venue_id TEXT, p_days INT DEFAULT 28)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_cut  TIMESTAMPTZ := NOW() - (p_days  || ' days')::INTERVAL;
-  v_prev TIMESTAMPTZ := NOW() - (p_days * 2 || ' days')::INTERVAL;
-BEGIN
-  RETURN jsonb_build_object(
-    'current', jsonb_build_object(
-      'card_opens', (SELECT COUNT(*) FROM events WHERE event_type='venue_card_opened'    AND metadata->>'venue_id'=p_venue_id AND created_at>=v_cut),
-      'directions', (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='directions' AND created_at>=v_cut),
-      'website',    (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='website'    AND created_at>=v_cut),
-      'uber',       (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='uber'       AND created_at>=v_cut)
-    ),
-    'previous', jsonb_build_object(
-      'card_opens', (SELECT COUNT(*) FROM events WHERE event_type='venue_card_opened'    AND metadata->>'venue_id'=p_venue_id AND created_at>=v_prev AND created_at<v_cut),
-      'directions', (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='directions' AND created_at>=v_prev AND created_at<v_cut),
-      'website',    (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='website'    AND created_at>=v_prev AND created_at<v_cut),
-      'uber',       (SELECT COUNT(*) FROM events WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND metadata->>'action'='uber'       AND created_at>=v_prev AND created_at<v_cut)
-    ),
-    'daily_opens', (
-      SELECT COALESCE(jsonb_agg(jsonb_build_object('d', day, 'n', cnt) ORDER BY day), '[]'::jsonb)
-      FROM (SELECT created_at::DATE AS day, COUNT(*) AS cnt FROM events
-            WHERE event_type='venue_card_opened' AND metadata->>'venue_id'=p_venue_id AND created_at>=v_cut
-            GROUP BY day) x
-    ),
-    'daily_actions', (
-      SELECT COALESCE(jsonb_agg(jsonb_build_object('d', day, 'a', action, 'n', cnt) ORDER BY day, action), '[]'::jsonb)
-      FROM (SELECT created_at::DATE AS day, metadata->>'action' AS action, COUNT(*) AS cnt FROM events
-            WHERE event_type='venue_action_clicked' AND metadata->>'venue_id'=p_venue_id AND created_at>=v_cut
-            GROUP BY day, action) x
-    )
-  );
-END;
-$$;
-
-GRANT EXECUTE ON FUNCTION get_venue_insights(TEXT, INT) TO anon;
+-- See docs/venue-insights-setup.sql for the full CREATE FUNCTION statement.
+-- Run that file once in the Supabase SQL Editor, then this page will work.
 
  * ─────────────────────────────────────────────────────────────────────────────
  */
@@ -895,47 +858,50 @@ async function renderReport(placeId, days) {
     const curr    = d.current;
     const prev    = d.previous;
     const daily   = d.daily_opens   || [];
+    const dviews  = d.daily_views   || [];
     const daction = d.daily_actions || [];
-    const vcount  = detailsRes.data?.view_count ?? 0;
 
     const totalCurr = curr.directions + curr.website + curr.uber;
     const totalPrev = prev.directions + prev.website + prev.uber;
 
     // Metric cards
-    $('m-opens').textContent = curr.card_opens.toLocaleString();
-    $('m-dirs').textContent  = curr.directions.toLocaleString();
-    $('m-web').textContent   = curr.website.toLocaleString();
-    $('m-uber').textContent  = curr.uber.toLocaleString();
-    $('m-total').textContent = totalCurr.toLocaleString();
-    $('m-views').textContent = vcount.toLocaleString();
+    $('m-vviews').textContent = curr.venue_views.toLocaleString();
+    $('m-opens').textContent  = curr.card_opens.toLocaleString();
+    $('m-dirs').textContent   = curr.directions.toLocaleString();
+    $('m-web').textContent    = curr.website.toLocaleString();
+    $('m-uber').textContent   = curr.uber.toLocaleString();
+    $('m-total').textContent  = totalCurr.toLocaleString();
 
-    trend(curr.card_opens, prev.card_opens, 'mt-opens');
-    trend(curr.directions, prev.directions, 'mt-dirs');
-    trend(curr.website,    prev.website,    'mt-web');
-    trend(curr.uber,       prev.uber,       'mt-uber');
-    trend(totalCurr,       totalPrev,       'mt-total');
+    trend(curr.venue_views, prev.venue_views, 'mt-vviews');
+    trend(curr.card_opens,  prev.card_opens,  'mt-opens');
+    trend(curr.directions,  prev.directions,  'mt-dirs');
+    trend(curr.website,     prev.website,     'mt-web');
+    trend(curr.uber,        prev.uber,        'mt-uber');
+    trend(totalCurr,        totalPrev,        'mt-total');
 
-    // Build full date labels for the period
-    const labels     = [];
-    const opensArr   = [];
-    const dirsArr    = [];
-    const webArr     = [];
-    const uberArr    = [];
+    // Build full date arrays for the period
+    const labels   = [];
+    const viewsArr = [];
+    const opensArr = [];
+    const dirsArr  = [];
+    const webArr   = [];
+    const uberArr  = [];
 
     for (let i = days - 1; i >= 0; i--) {
       const d2 = new Date();
       d2.setDate(d2.getDate() - i);
       const ds = d2.toISOString().slice(0, 10);
       labels.push(fmtDate(d2, days));
-      opensArr.push(daily.find(x => x.d === ds)?.n || 0);
+      viewsArr.push(dviews .find(x => x.d === ds)?.n || 0);
+      opensArr.push(daily  .find(x => x.d === ds)?.n || 0);
       dirsArr .push(daction.filter(x => x.d === ds && x.a === 'directions').reduce((s,x) => s+x.n, 0));
       webArr  .push(daction.filter(x => x.d === ds && x.a === 'website')  .reduce((s,x) => s+x.n, 0));
       uberArr .push(daction.filter(x => x.d === ds && x.a === 'uber')     .reduce((s,x) => s+x.n, 0));
     }
 
-    renderDailyChart(labels, opensArr, dirsArr, webArr, uberArr);
+    renderDailyChart(labels, viewsArr, opensArr, dirsArr, webArr, uberArr);
     renderPieChart(curr.directions, curr.website, curr.uber);
-    renderLineChart(labels, opensArr);
+    renderLineChart(labels, viewsArr, opensArr);
 
     $('r-loading').classList.remove('show');
     $('r-body').style.display = 'block';
@@ -958,6 +924,7 @@ function fmtDate(date, days) {
 }
 
 const COLORS = {
+  views: 'rgba(252,211,77,0.85)',
   opens: 'rgba(245,158,11,0.8)',
   dirs:  'rgba(59,130,246,0.8)',
   web:   'rgba(16,185,129,0.8)',
@@ -972,7 +939,7 @@ function chartDefaults() {
   };
 }
 
-function renderDailyChart(labels, opens, dirs, web, uber) {
+function renderDailyChart(labels, views, opens, dirs, web, uber) {
   if (chartDaily) chartDaily.destroy();
   const ctx = $('chart-daily').getContext('2d');
   chartDaily = new Chart(ctx, {
@@ -980,10 +947,11 @@ function renderDailyChart(labels, opens, dirs, web, uber) {
     data: {
       labels,
       datasets: [
-        { label: 'Card Opens', data: opens, backgroundColor: COLORS.opens, borderRadius: 3, stack: 's' },
-        { label: 'Directions', data: dirs,  backgroundColor: COLORS.dirs,  borderRadius: 3, stack: 's' },
-        { label: 'Website',    data: web,   backgroundColor: COLORS.web,   borderRadius: 3, stack: 's' },
-        { label: 'Uber',       data: uber,  backgroundColor: COLORS.uber,  borderRadius: 3, stack: 's' },
+        { label: 'Venue Views', data: views, backgroundColor: COLORS.views, borderRadius: 3, stack: 's' },
+        { label: 'Card Opens',  data: opens, backgroundColor: COLORS.opens, borderRadius: 3, stack: 's' },
+        { label: 'Directions',  data: dirs,  backgroundColor: COLORS.dirs,  borderRadius: 3, stack: 's' },
+        { label: 'Website',     data: web,   backgroundColor: COLORS.web,   borderRadius: 3, stack: 's' },
+        { label: 'Uber',        data: uber,  backgroundColor: COLORS.uber,  borderRadius: 3, stack: 's' },
       ]
     },
     options: {
@@ -1051,35 +1019,56 @@ function renderPieChart(dirs, web, uber) {
   });
 }
 
-function renderLineChart(labels, opens) {
+function renderLineChart(labels, views, opens) {
   if (chartLine) chartLine.destroy();
   const ctx = $('chart-line').getContext('2d');
 
-  // Smooth gradient fill
-  const gradient = ctx.createLinearGradient(0, 0, 0, 220);
-  gradient.addColorStop(0,   'rgba(245,158,11,0.25)');
-  gradient.addColorStop(1,   'rgba(245,158,11,0.0)');
+  const gradViews = ctx.createLinearGradient(0, 0, 0, 220);
+  gradViews.addColorStop(0, 'rgba(252,211,77,0.3)');
+  gradViews.addColorStop(1, 'rgba(252,211,77,0.0)');
 
+  const gradOpens = ctx.createLinearGradient(0, 0, 0, 220);
+  gradOpens.addColorStop(0, 'rgba(245,158,11,0.2)');
+  gradOpens.addColorStop(1, 'rgba(245,158,11,0.0)');
+
+  const pts = views.length > 14 ? 0 : 3;
   chartLine = new Chart(ctx, {
     type: 'line',
     data: {
       labels,
-      datasets: [{
-        label: 'Card Opens',
-        data:  opens,
-        borderColor:     '#f59e0b',
-        backgroundColor: gradient,
-        borderWidth:     2,
-        pointRadius:     opens.length > 14 ? 0 : 3,
-        pointHoverRadius: 5,
-        tension:         0.35,
-        fill:            true,
-      }]
+      datasets: [
+        {
+          label: 'Venue Views',
+          data:  views,
+          borderColor:      '#fcd34d',
+          backgroundColor:  gradViews,
+          borderWidth:      2,
+          pointRadius:      pts,
+          pointHoverRadius: 5,
+          tension:          0.35,
+          fill:             true,
+        },
+        {
+          label: 'Card Opens',
+          data:  opens,
+          borderColor:      '#f59e0b',
+          backgroundColor:  gradOpens,
+          borderWidth:      2,
+          pointRadius:      pts,
+          pointHoverRadius: 5,
+          tension:          0.35,
+          fill:             true,
+        },
+      ]
     },
     options: {
       ...chartDefaults(),
       plugins: {
-        legend: { display: false },
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { boxWidth: 12, padding: 14, font: { size: 12 } }
+        },
         tooltip: { mode: 'index', intersect: false }
       },
       scales: {

@@ -130,6 +130,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let markersLayer = [];
   const markersById = new Map();
   const markerLastSeenAt = new Map();
+  const shownVenueIds = new Set();
   let markerClusterer = null;
   const CLUSTER_THRESHOLD = 60;
   let locateButton = null;
@@ -2830,6 +2831,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     markersById.forEach(marker=>marker.setMap(null));
     markersById.clear();
     markerLastSeenAt.clear();
+    shownVenueIds.clear();
     markersLayer=[];
   }
 
@@ -4804,6 +4806,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
     const visibleIds=new Set(visibleVenues.map((v)=>v.id));
+
+    // Fire venue_view for each venue newly entering the viewport.
+    // Fires again if the venue scrolls off-screen and comes back.
+    visibleVenues.forEach((v)=>{ if(!shownVenueIds.has(v.id)) trackEvent("venue_view",{ venue_id:String(v.id), venue_name:v.name||"" }); });
+    shownVenueIds.forEach((id)=>{ if(!visibleIds.has(id)) shownVenueIds.delete(id); });
+    visibleIds.forEach((id)=>shownVenueIds.add(id));
 
     // Reuse existing markers: hide off-screen markers immediately, and remove only after a stale grace window.
     markersById.forEach((marker,id)=>{
