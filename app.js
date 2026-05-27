@@ -1067,6 +1067,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(isAlreadyOpen) return;
     const payload={
       venue_id: String(venue.id || ""),
+      venue_name: venue.name || "",
       provider: MAP_PROVIDER
     };
     const distanceMeters=getVenueDistanceMeters(venue);
@@ -1078,6 +1079,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!venue||!action) return;
     const payload={
       venue_id: String(venue.id || ""),
+      venue_name: venue.name || "",
       action,
       provider: MAP_PROVIDER
     };
