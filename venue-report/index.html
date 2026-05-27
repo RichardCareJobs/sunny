@@ -143,9 +143,18 @@
       min-height: 100vh;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      padding: 24px;
+      justify-content: flex-start;
+      padding: 32px 20px;
+      gap: 0;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 20px;
+      width: 100%;
+      max-width: 1100px;
+      align-items: start;
     }
 
     .search-card {
@@ -154,12 +163,130 @@
       border-radius: var(--r);
       padding: 36px;
       width: 100%;
-      max-width: 500px;
       box-shadow: var(--shadow-lg);
     }
 
     .search-card h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
     .search-card .desc { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+
+    /* ── Dashboard cards ── */
+    .dash-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 24px 20px;
+      box-shadow: var(--shadow-lg);
+    }
+
+    .dash-card-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .dash-card-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 16px;
+    }
+
+    .dash-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 24px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dash-empty {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      padding: 24px 0;
+    }
+
+    /* ── Dashboard tables ── */
+    .dash-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .dash-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      padding: 0 8px 8px 4px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .dash-table th.num-th { text-align: right; }
+
+    .dash-table td {
+      padding: 9px 8px 9px 4px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .dash-table tr:last-child td { border-bottom: none; }
+
+    .dash-table tbody tr.tv-row:hover {
+      background: #fffbeb;
+      cursor: pointer;
+    }
+
+    .tv-rank {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      width: 20px;
+      padding-right: 2px;
+    }
+
+    .tv-name {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+      display: block;
+    }
+
+    .tv-location {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 200px;
+      display: block;
+      margin-top: 1px;
+    }
+
+    .num-td {
+      text-align: right;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+
+    .nv-period { font-weight: 500; color: var(--text); }
+
+    .nv-count {
+      text-align: right;
+      font-size: 20px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
 
     .search-wrap { position: relative; }
 
@@ -501,6 +628,11 @@
       .metric-value { font-size: 28px; }
     }
 
+    @media (max-width: 768px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+      #screen-search { padding: 20px 16px; }
+    }
+
     @media (min-width: 768px) {
       .chart-row { grid-template-columns: 1fr 1fr; }
       .daily-chart-card { grid-column: 1 / -1; }
@@ -527,19 +659,103 @@
 </div>
 
 <!-- ══════════════════════════════════════════════════════
-     SCREEN 2 — Search
+     SCREEN 2 — Search / Dashboard
 ══════════════════════════════════════════════════════ -->
 <div id="screen-search" class="screen">
-  <div class="search-card">
-    <h1>Find a Venue</h1>
-    <p class="desc">Search by name or address to view its analytics</p>
-    <div class="search-wrap">
-      <input type="text" id="venue-input" placeholder="e.g. The Lord Nelson Brewery Hotel" autocomplete="off" spellcheck="false">
-      <ul class="ac-list" id="ac-list" role="listbox" aria-label="Venue suggestions"></ul>
+  <div class="dashboard-grid">
+
+    <!-- ① Find a Venue (search) -->
+    <div class="search-card">
+      <h1>Find a Venue</h1>
+      <p class="desc">Search by name or address to view its analytics</p>
+      <div class="search-wrap">
+        <input type="text" id="venue-input" placeholder="e.g. The Lord Nelson Brewery Hotel" autocomplete="off" spellcheck="false">
+        <ul class="ac-list" id="ac-list" role="listbox" aria-label="Venue suggestions"></ul>
+      </div>
+      <p class="search-hint">Type 2+ characters to search the Sunny venue database</p>
+      <p id="conn-status" style="font-size:12px;margin-top:8px;color:var(--muted)"></p>
     </div>
-    <p class="search-hint">Type 2+ characters to search the Sunny venue database</p>
-    <p id="conn-status" style="font-size:12px;margin-top:8px;color:var(--muted)"></p>
-  </div>
+
+    <!-- ② Today's Top Venues -->
+    <div class="dash-card">
+      <h2 class="dash-card-title">Today's Top Venues</h2>
+      <p class="dash-card-sub">Most venue card opens in the last 24 hours</p>
+      <div id="top-venues-loading" class="dash-loading">
+        <div class="spinner"></div><span>Loading…</span>
+      </div>
+      <div id="top-venues-table-wrap" style="display:none">
+        <table class="dash-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Venue</th>
+              <th class="num-th">Opens</th>
+              <th class="num-th">Dirs</th>
+              <th class="num-th">Uber</th>
+            </tr>
+          </thead>
+          <tbody id="top-venues-tbody"></tbody>
+        </table>
+      </div>
+      <div id="top-venues-empty" class="dash-empty" style="display:none">
+        No venue activity recorded in the last 24 hours
+      </div>
+    </div>
+
+    <!-- ③ New Venues Added -->
+    <div class="dash-card">
+      <h2 class="dash-card-title">New Venues Added</h2>
+      <p class="dash-card-sub">Venues added to the Sunny database</p>
+      <div id="new-venues-loading" class="dash-loading">
+        <div class="spinner"></div><span>Loading…</span>
+      </div>
+      <div id="new-venues-table-wrap" style="display:none">
+        <table class="dash-table">
+          <thead>
+            <tr>
+              <th>Period</th>
+              <th class="num-th">Venues Added</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="nv-period">Last 24 hours</td>
+              <td class="nv-count" id="nv-24h">—</td>
+            </tr>
+            <tr>
+              <td class="nv-period">Last 7 days</td>
+              <td class="nv-count" id="nv-7d">—</td>
+            </tr>
+            <tr>
+              <td class="nv-period">Last 28 days</td>
+              <td class="nv-count" id="nv-28d">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ④ Action Breakdown (global, last 24h) -->
+    <div class="dash-card">
+      <h2 class="dash-card-title">Action Breakdown</h2>
+      <p class="dash-card-sub">All venue card actions across the app — last 24 hours</p>
+      <div id="home-actions-loading" class="dash-loading">
+        <div class="spinner"></div><span>Loading…</span>
+      </div>
+      <div id="home-actions-chart" style="display:none">
+        <div class="actions-split">
+          <div class="chart-wrap chart-wrap-med">
+            <canvas id="chart-home-pie"></canvas>
+          </div>
+          <div class="pie-legend" id="home-pie-legend"></div>
+        </div>
+      </div>
+      <div id="home-actions-empty" class="dash-empty" style="display:none">
+        No action data recorded in the last 24 hours
+      </div>
+    </div>
+
+  </div><!-- /dashboard-grid -->
 </div>
 
 <!-- ══════════════════════════════════════════════════════
@@ -692,9 +908,10 @@ let state = {
   directLink:    false,
 };
 
-let chartDaily = null;
-let chartPie   = null;
-let chartLine  = null;
+let chartDaily   = null;
+let chartPie     = null;
+let chartLine    = null;
+let chartHomePie = null;
 
 /* ─── Helpers ─── */
 function $(id) { return document.getElementById(id); }
@@ -757,6 +974,7 @@ function goToSearch() {
   showScreen('screen-search');
   setTimeout(() => $('venue-input').focus(), 60);
   checkConnection();
+  loadHomepageStats();
 }
 
 // ─── Cached venue list for client-side fallback filtering ────────────────────
@@ -1179,6 +1397,121 @@ $('back-btn').addEventListener('click', () => {
   showScreen('screen-search');
   $('venue-input').focus();
 });
+
+/* ─── Homepage stats ─── */
+async function loadHomepageStats() {
+  try {
+    const { data, error } = await sb.rpc('get_homepage_stats');
+    if (error) throw error;
+    renderTopVenuesTable(data.top_venues || []);
+    renderNewVenuesCard(data.new_venues  || {});
+    renderHomeActionsChart(data.global_actions || {});
+  } catch (err) {
+    console.error('[venue-report] homepage stats error:', err);
+    $('top-venues-loading').innerHTML  = '<span style="color:var(--red)">Failed to load</span>';
+    $('new-venues-loading').innerHTML  = '<span style="color:var(--red)">Failed to load</span>';
+    $('home-actions-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+  }
+}
+
+function renderTopVenuesTable(venues) {
+  $('top-venues-loading').style.display = 'none';
+  if (!venues.length) {
+    $('top-venues-empty').style.display = 'block';
+    return;
+  }
+  $('top-venues-tbody').innerHTML = venues.map((v, i) => `
+    <tr class="tv-row"
+        data-place-id="${esc(v.place_id)}"
+        data-name="${esc(v.name)}"
+        data-addr="${esc(v.address || '')}">
+      <td class="tv-rank">${i + 1}</td>
+      <td>
+        <span class="tv-name">${esc(v.name)}</span>
+        ${v.address ? `<span class="tv-location">${esc(v.address)}</span>` : ''}
+      </td>
+      <td class="num-td">${v.card_opens.toLocaleString()}</td>
+      <td class="num-td">${v.directions.toLocaleString()}</td>
+      <td class="num-td">${v.uber.toLocaleString()}</td>
+    </tr>
+  `).join('');
+
+  $('top-venues-tbody').querySelectorAll('.tv-row').forEach(row => {
+    row.addEventListener('click', () => loadReport({
+      place_id:               row.dataset.placeId,
+      name:                   row.dataset.name,
+      short_formatted_address: row.dataset.addr || row.dataset.placeId,
+    }));
+  });
+
+  $('top-venues-table-wrap').style.display = 'block';
+}
+
+function renderNewVenuesCard(data) {
+  $('new-venues-loading').style.display = 'none';
+  $('nv-24h').textContent = (data.last_24h ?? 0).toLocaleString();
+  $('nv-7d').textContent  = (data.last_7d  ?? 0).toLocaleString();
+  $('nv-28d').textContent = (data.last_28d ?? 0).toLocaleString();
+  $('new-venues-table-wrap').style.display = 'block';
+}
+
+function renderHomeActionsChart(actions) {
+  $('home-actions-loading').style.display = 'none';
+  const dirs  = actions.directions || 0;
+  const web   = actions.website    || 0;
+  const uber  = actions.uber       || 0;
+  const total = dirs + web + uber;
+
+  if (total === 0) {
+    $('home-actions-empty').style.display = 'block';
+    return;
+  }
+
+  const items = [
+    { label: 'Directions', value: dirs, color: COLORS.dirs },
+    { label: 'Website',    value: web,  color: COLORS.web  },
+    { label: 'Uber',       value: uber, color: COLORS.uber },
+  ];
+
+  $('home-pie-legend').innerHTML = items.map(item => `
+    <div class="legend-row">
+      <div class="legend-dot" style="background:${item.color}"></div>
+      <div>
+        <div class="legend-label">${item.label}</div>
+        <div class="legend-val">${item.value.toLocaleString()} action${item.value !== 1 ? 's' : ''} · ${Math.round(item.value / total * 100)}%</div>
+      </div>
+    </div>
+  `).join('');
+
+  if (chartHomePie) chartHomePie.destroy();
+  const ctx = $('chart-home-pie').getContext('2d');
+  chartHomePie = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: items.map(i => i.label),
+      datasets: [{
+        data:            items.map(i => i.value),
+        backgroundColor: items.map(i => i.color),
+        borderWidth:     0,
+        hoverOffset:     6,
+      }]
+    },
+    options: {
+      ...chartDefaults(),
+      cutout: '60%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${ctx.label}: ${ctx.raw} (${Math.round(ctx.raw / total * 100)}%)`
+          }
+        }
+      }
+    }
+  });
+
+  $('home-actions-chart').style.display = 'block';
+}
 
 /* ─── Init ─── */
 async function init() {
