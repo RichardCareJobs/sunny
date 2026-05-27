@@ -730,6 +730,10 @@
               <td class="nv-period">Last 28 days</td>
               <td class="nv-count" id="nv-28d">—</td>
             </tr>
+            <tr style="border-top:2px solid var(--border)">
+              <td class="nv-period" style="font-weight:700">Total venues</td>
+              <td class="nv-count" id="nv-total">—</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -1449,9 +1453,10 @@ function renderTopVenuesTable(venues) {
 
 function renderNewVenuesCard(data) {
   $('new-venues-loading').style.display = 'none';
-  $('nv-24h').textContent = (data.last_24h ?? 0).toLocaleString();
-  $('nv-7d').textContent  = (data.last_7d  ?? 0).toLocaleString();
-  $('nv-28d').textContent = (data.last_28d ?? 0).toLocaleString();
+  $('nv-24h').textContent  = (data.last_24h ?? 0).toLocaleString();
+  $('nv-7d').textContent   = (data.last_7d  ?? 0).toLocaleString();
+  $('nv-28d').textContent  = (data.last_28d ?? 0).toLocaleString();
+  $('nv-total').textContent = (data.total   ?? 0).toLocaleString();
   $('new-venues-table-wrap').style.display = 'block';
 }
 
