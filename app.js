@@ -2034,13 +2034,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     const excludeFiltered=allowFiltered.filter(place=>{
       const types=place?.types||[];
-      const keep=!types.some(type=>excludeTypes.includes(type));
-      if(!keep){
-        const hit=types.find(type=>excludeTypes.includes(type));
-        logExclusion(place,`excluded: ${hit}`);
-        if(place?.clubLane) logClubExclusion(place,`excluded: ${hit}`);
-      }
-      return keep;
+      const hit=types.find(type=>excludeTypes.includes(type));
+      if(!hit) return true;
+      // Pub hotels: "lodging" is ancillary when the venue is also a pub/bar
+      if(hit==="lodging"&&(types.includes("pub")||types.includes("bar")||types.includes("night_club"))) return true;
+      logExclusion(place,`excluded: ${hit}`);
+      if(place?.clubLane) logClubExclusion(place,`excluded: ${hit}`);
+      return false;
     });
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
       const primary=place?.primaryType||"";
@@ -2279,7 +2279,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     const excludeFiltered=allowFiltered.filter(place=>{
       const types=place?.types||[];
-      return !types.some(type=>excludeTypes.includes(type));
+      const hit=types.find(type=>excludeTypes.includes(type));
+      if(!hit) return true;
+      // Pub hotels: "lodging" is ancillary when the venue is also a pub/bar
+      if(hit==="lodging"&&(types.includes("pub")||types.includes("bar")||types.includes("night_club"))) return true;
+      return false;
     });
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
       const primary=place?.primaryType||"";
