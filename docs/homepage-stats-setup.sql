@@ -3,10 +3,11 @@
 -- ───────────────────────────────────────────────────────────────────────────
 -- Run this once in the Supabase SQL Editor after venue-insights-setup.sql.
 --
--- Returns three aggregates for the venue report homepage dashboard:
---   top_venues    — top 10 venues by card opens in the last 24 hours
---   new_venues    — count of venues added in the last 24h / 7d / 28d
---   global_actions — total action clicks (directions/website/uber) last 24h
+-- Returns four aggregates for the venue report homepage dashboard:
+--   top_venues          — top 10 venues by card opens in the last 24 hours
+--   top_venues_all_time — top 10 venues by card opens across all time
+--   new_venues          — count of venues added in the last 24h / 7d / 28d
+--   global_actions      — total action clicks (directions/website/uber) last 24h
 --
 -- Uses SECURITY DEFINER so the anon key can read aggregated event data
 -- without direct access to raw event rows.
@@ -50,6 +51,37 @@ BEGIN
         JOIN venue_details vd ON vd.place_id = e.metadata->>'venue_id'
         WHERE e.created_at >= v_24h
           AND e.event_type IN ('venue_card_opened', 'venue_action_clicked')
+        GROUP BY vd.place_id, vd.name
+        HAVING COUNT(CASE WHEN e.event_type = 'venue_card_opened' THEN 1 END) > 0
+        ORDER BY card_opens DESC
+        LIMIT 10
+      ) v
+    ),
+
+    -- Top 10 venues by card opens across all time (no time filter)
+    'top_venues_all_time', (
+      SELECT COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'place_id',   v.place_id,
+            'name',       v.name,
+            'card_opens', v.card_opens,
+            'directions', v.directions,
+            'uber',       v.uber
+          ) ORDER BY v.card_opens DESC
+        ),
+        '[]'::jsonb
+      )
+      FROM (
+        SELECT
+          vd.place_id,
+          vd.name,
+          COUNT(CASE WHEN e.event_type = 'venue_card_opened' THEN 1 END)::int                                                    AS card_opens,
+          COUNT(CASE WHEN e.event_type = 'venue_action_clicked' AND e.metadata->>'action' = 'directions' THEN 1 END)::int       AS directions,
+          COUNT(CASE WHEN e.event_type = 'venue_action_clicked' AND e.metadata->>'action' = 'uber'       THEN 1 END)::int       AS uber
+        FROM events e
+        JOIN venue_details vd ON vd.place_id = e.metadata->>'venue_id'
+        WHERE e.event_type IN ('venue_card_opened', 'venue_action_clicked')
         GROUP BY vd.place_id, vd.name
         HAVING COUNT(CASE WHEN e.event_type = 'venue_card_opened' THEN 1 END) > 0
         ORDER BY card_opens DESC

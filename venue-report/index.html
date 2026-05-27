@@ -166,6 +166,10 @@
       box-shadow: var(--shadow-lg);
     }
 
+    .search-card-wide {
+      grid-column: 1 / -1;
+    }
+
     .search-card h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
     .search-card .desc { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
 
@@ -664,8 +668,8 @@
 <div id="screen-search" class="screen">
   <div class="dashboard-grid">
 
-    <!-- ① Find a Venue (search) -->
-    <div class="search-card">
+    <!-- ① Find a Venue (search) — full width -->
+    <div class="search-card search-card-wide">
       <h1>Find a Venue</h1>
       <p class="desc">Search by name or address to view its analytics</p>
       <div class="search-wrap">
@@ -702,7 +706,33 @@
       </div>
     </div>
 
-    <!-- ③ New Venues Added -->
+    <!-- ③ Top Venues All Time -->
+    <div class="dash-card">
+      <h2 class="dash-card-title">Top Venues All Time</h2>
+      <p class="dash-card-sub">Most venue card opens across all time</p>
+      <div id="all-time-venues-loading" class="dash-loading">
+        <div class="spinner"></div><span>Loading…</span>
+      </div>
+      <div id="all-time-venues-table-wrap" style="display:none">
+        <table class="dash-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Venue</th>
+              <th class="num-th">Opens</th>
+              <th class="num-th">Dirs</th>
+              <th class="num-th">Uber</th>
+            </tr>
+          </thead>
+          <tbody id="all-time-venues-tbody"></tbody>
+        </table>
+      </div>
+      <div id="all-time-venues-empty" class="dash-empty" style="display:none">
+        No venue activity recorded
+      </div>
+    </div>
+
+    <!-- ④ New Venues Added -->
     <div class="dash-card">
       <h2 class="dash-card-title">New Venues Added</h2>
       <p class="dash-card-sub">Venues added to the Sunny database</p>
@@ -1408,13 +1438,15 @@ async function loadHomepageStats() {
     const { data, error } = await sb.rpc('get_homepage_stats');
     if (error) throw error;
     renderTopVenuesTable(data.top_venues || []);
+    renderTopVenuesAllTimeTable(data.top_venues_all_time || []);
     renderNewVenuesCard(data.new_venues  || {});
     renderHomeActionsChart(data.global_actions || {});
   } catch (err) {
     console.error('[venue-report] homepage stats error:', err);
-    $('top-venues-loading').innerHTML  = '<span style="color:var(--red)">Failed to load</span>';
-    $('new-venues-loading').innerHTML  = '<span style="color:var(--red)">Failed to load</span>';
-    $('home-actions-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+    $('top-venues-loading').innerHTML      = '<span style="color:var(--red)">Failed to load</span>';
+    $('all-time-venues-loading').innerHTML = '<span style="color:var(--red)">Failed to load</span>';
+    $('new-venues-loading').innerHTML      = '<span style="color:var(--red)">Failed to load</span>';
+    $('home-actions-loading').innerHTML    = '<span style="color:var(--red)">Failed to load</span>';
   }
 }
 
@@ -1449,6 +1481,39 @@ function renderTopVenuesTable(venues) {
   });
 
   $('top-venues-table-wrap').style.display = 'block';
+}
+
+function renderTopVenuesAllTimeTable(venues) {
+  $('all-time-venues-loading').style.display = 'none';
+  if (!venues.length) {
+    $('all-time-venues-empty').style.display = 'block';
+    return;
+  }
+  $('all-time-venues-tbody').innerHTML = venues.map((v, i) => `
+    <tr class="tv-row"
+        data-place-id="${esc(v.place_id)}"
+        data-name="${esc(v.name)}"
+        data-addr="${esc(v.address || '')}">
+      <td class="tv-rank">${i + 1}</td>
+      <td>
+        <span class="tv-name">${esc(v.name)}</span>
+        ${v.address ? `<span class="tv-location">${esc(v.address)}</span>` : ''}
+      </td>
+      <td class="num-td">${v.card_opens.toLocaleString()}</td>
+      <td class="num-td">${v.directions.toLocaleString()}</td>
+      <td class="num-td">${v.uber.toLocaleString()}</td>
+    </tr>
+  `).join('');
+
+  $('all-time-venues-tbody').querySelectorAll('.tv-row').forEach(row => {
+    row.addEventListener('click', () => loadReport({
+      place_id:               row.dataset.placeId,
+      name:                   row.dataset.name,
+      short_formatted_address: row.dataset.addr || row.dataset.placeId,
+    }));
+  });
+
+  $('all-time-venues-table-wrap').style.display = 'block';
 }
 
 function renderNewVenuesCard(data) {
