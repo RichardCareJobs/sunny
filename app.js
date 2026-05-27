@@ -13,9 +13,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
   const FAVOURITES_STORAGE_KEY = "sunny:favourites:v1";
   const SUNNY_SAVES_STORAGE_KEY = "sunny_saves_v1";
+  const VIEWPORT_CACHE_SESSION_KEY = "sunny-viewport-cache-v1";
   const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 30;
   const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 120;
-  const VIEWPORT_CACHE_GRID_DEG = 0.002;
+  const VIEWPORT_CACHE_GRID_DEG = 0.01;
   const VENUE_DETAILS_CACHE_TTL_MS = 28 * 24 * 60 * 60 * 1000;
   const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs";
@@ -145,7 +146,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
-  const MOVE_DEBOUNCE_MS = 300;
+  const MOVE_DEBOUNCE_MS = 800;
   const MARKER_BATCH_SIZE = 50;
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   let moveTimer = null;
@@ -598,6 +599,29 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
   function setViewportCacheEntry(key,data){
     viewportCache.set(key,{ data, ts: Date.now() });
+    saveViewportCacheToSession();
+  }
+  function saveViewportCacheToSession(){
+    try{
+      const now=Date.now();
+      const entries=[];
+      for(const [k,v] of viewportCache.entries()){
+        if(now-v.ts<=VIEWPORT_CACHE_STALE_MS) entries.push([k,v]);
+      }
+      sessionStorage.setItem(VIEWPORT_CACHE_SESSION_KEY,JSON.stringify(entries));
+    }catch{}
+  }
+  function loadViewportCacheFromSession(){
+    try{
+      const raw=sessionStorage.getItem(VIEWPORT_CACHE_SESSION_KEY);
+      if(!raw) return;
+      const entries=JSON.parse(raw);
+      if(!Array.isArray(entries)) return;
+      const now=Date.now();
+      for(const [k,v] of entries){
+        if(k&&v&&v.ts&&(now-v.ts)<=VIEWPORT_CACHE_STALE_MS) viewportCache.set(k,v);
+      }
+    }catch{}
   }
   function getCrawlVenueCacheEntry(key){
     return crawlVenueCache.get(key) || null;
@@ -6374,6 +6398,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   async function boot(){
     pendingSharedCrawl=detectPendingSharedCrawl();
     requestUserLocationOnce();
+    loadViewportCacheFromSession();
     const cached=loadLocal(VENUE_CACHE_KEY);
     if(cached&&typeof cached==="object"){
       const filtered=filterGloballyExcludedVenues(Object.values(cached),"local cache");
