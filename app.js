@@ -265,6 +265,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !menu.hidden) closeMenu();
     });
+    document.querySelectorAll("[data-cookie-settings]").forEach((link) => {
+      link.addEventListener("click", (e) => {
+        e.preventDefault();
+        closeMenu();
+        if (window.SunnyConsent) window.SunnyConsent.showConsentBanner();
+      });
+    });
   }
   function saveLocal(k,v){ try{localStorage.setItem(k,JSON.stringify({v,t:Date.now()}));}catch{} }
   function loadLocal(k,maxAge=null){
