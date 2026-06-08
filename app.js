@@ -4117,8 +4117,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         { featureType: "poi", elementType: "labels.text", stylers: [{ visibility: "off" }] }
       ]
     });
-    markerScaledSize=new google.maps.Size(32, 32);
-    markerAnchorPoint=new google.maps.Point(16, 16);
+    markerScaledSize=new google.maps.Size(36, 47);
+    markerAnchorPoint=new google.maps.Point(18, 47);
     markerIcon={
       url: MARKER_ICON_URL,
       scaledSize: markerScaledSize,
