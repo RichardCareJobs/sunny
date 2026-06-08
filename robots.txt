@@ -3,3 +3,5 @@ Allow: /
 
 Disallow: /ads/
 Disallow: /crawl/
+
+Sitemap: https://visit.sunnypubs.app/sitemap.xml
