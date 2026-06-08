@@ -20,7 +20,7 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 
 /* Cookie consent banner */
 .consent-banner { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1500; padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); }
-.consent-banner__content { max-width: 720px; margin: 0 auto; background: #fff; border: 1px solid #e5e7eb; border-radius: 16px; box-shadow: 0 -12px 30px rgba(0,0,0,.18); padding: 16px; display: grid; gap: 12px; }
+.consent-banner__content { max-width: 720px; margin: 0 auto; background: #fff; border: none; border-radius: 16px; box-shadow: 0 -12px 30px rgba(0,0,0,.18); padding: 16px; display: grid; gap: 12px; }
 .consent-banner__title { margin: 0; font-size: 1.05rem; font-weight: 800; }
 .consent-banner__body { margin: 0; color: #4b5563; line-height: 1.45; }
 .consent-banner__links { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
