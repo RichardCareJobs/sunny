@@ -1,5 +1,8 @@
 (() => {
   const STORAGE_KEY = "sunny_cookie_consent";
+  const COOKIE_NAME = "sunny_consent";
+  const COOKIE_DOMAIN = ".sunnypubs.app";
+  const COOKIE_MAX_AGE = 31536000;
   const STORAGE_VERSION = "1.0";
   const BANNER_ID = "sunny-consent-banner";
   const ACCEPTED = "accepted";
@@ -26,6 +29,34 @@
     });
   }
 
+  function readCookie() {
+    try {
+      const match = document.cookie.match(new RegExp("(?:^|; )" + COOKIE_NAME + "=([^;]*)"));
+      if (!match) return null;
+      const parsed = JSON.parse(decodeURIComponent(match[1]));
+      if (!parsed || (parsed.choice !== ACCEPTED && parsed.choice !== DECLINED)) return null;
+      if (parsed.version !== STORAGE_VERSION) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeCookie(payload) {
+    try {
+      const value = encodeURIComponent(JSON.stringify(payload));
+      const parts = [
+        COOKIE_NAME + "=" + value,
+        "domain=" + COOKIE_DOMAIN,
+        "path=/",
+        "max-age=" + COOKIE_MAX_AGE,
+        "SameSite=Lax"
+      ];
+      if (location.protocol === "https:") parts.push("Secure");
+      document.cookie = parts.join("; ");
+    } catch { /* no-op */ }
+  }
+
   function readStoredConsent() {
     try {
       const raw = window.localStorage?.getItem(STORAGE_KEY);
@@ -39,6 +70,16 @@
     }
   }
 
+  function readConsent() {
+    const fromCookie = readCookie();
+    if (fromCookie) return fromCookie;
+    const fromStorage = readStoredConsent();
+    if (fromStorage) {
+      writeCookie(fromStorage);
+    }
+    return fromStorage;
+  }
+
   function persistChoice(choice) {
     try {
       const payload = {
@@ -47,6 +88,7 @@
         version: STORAGE_VERSION
       };
       window.localStorage?.setItem(STORAGE_KEY, JSON.stringify(payload));
+      writeCookie(payload);
       return payload;
     } catch {
       return null;
@@ -154,7 +196,7 @@
   }
 
   function hasAnalyticsConsent() {
-    const stored = readStoredConsent();
+    const stored = readConsent();
     if (stored) consentState.choice = stored.choice;
     return consentState.choice === ACCEPTED;
   }
@@ -163,7 +205,7 @@
     if (initDone) return;
     initDone = true;
     setDefaultDenied();
-    const stored = readStoredConsent();
+    const stored = readConsent();
     if (stored) {
       consentState.choice = stored.choice;
       updateConsent(stored.choice);
