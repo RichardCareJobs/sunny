@@ -7,7 +7,7 @@
   const VISITS_BETWEEN     = 3;
   const DELAY_MS           = 20000;
   const SHARE_URL          = 'https://visit.sunnypubs.app/';
-  const SHARE_TITLE        = 'Sunny — Find great outdoor pubs';
+  const SHARE_TITLE        = 'Sunny — The Live Map of Sunny Pubs & Beer Gardens';
   const SHARE_TEXT         = 'Find the best outdoor pubs near you with Sunny — free, fast, and built for pub lovers. 🌞';
 
   // ── Visit tracking ──────────────────────────────────────────────────────────
@@ -98,8 +98,8 @@
           </div>
           <div class="share-prompt__preview-meta">
             <span class="share-prompt__preview-domain">visit.sunnypubs.app</span>
-            <span class="share-prompt__preview-name">Sunny — Find great outdoor pubs</span>
-            <span class="share-prompt__preview-desc">Find pubs nearby, spot the best outdoor vibes, and build a pub crawl in a couple of taps.</span>
+            <span class="share-prompt__preview-name">Sunny — The Live Map of Sunny Pubs & Beer Gardens</span>
+            <span class="share-prompt__preview-desc">Live sun map of pubs, beer gardens and rooftop bars. Find what's in the sun near you right now — free and instant.</span>
           </div>
         </div>
         <div class="share-prompt__actions">
