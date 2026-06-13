@@ -4304,10 +4304,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <button class="venue-card__fab-item venue-card__rate-btn" type="button" data-action="rate">Rate outdoor area</button>
         </div>
         <div class="venue-card__actions">
-          <!-- Wishlist toggle button stays visually distinct from favourites (heart) and ratings (stars). -->
-          <button class="action action-button venue-card__save-toggle" type="button" aria-label="Toggle wishlist" aria-pressed="false"></button>
-          <a class="action primary" target="_blank" rel="noopener" data-action="directions">Directions</a>
-          <a class="action" target="_blank" rel="noopener" data-action="uber">Ride</a>
+          <!-- Wishlist toggle removed from the UI; backend save/wishlist logic is kept intact so it can be re-enabled. -->
+          <a class="action cta cta--directions" target="_blank" rel="noopener" data-action="directions">Get Directions</a>
+          <a class="action cta cta--uber" target="_blank" rel="noopener" data-action="uber">Book an Uber Now</a>
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
         </div>
         <div class="venue-card__fab" aria-haspopup="true">
