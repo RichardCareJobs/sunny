@@ -4306,7 +4306,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         <div class="venue-card__actions">
           <!-- Wishlist toggle removed from the UI; backend save/wishlist logic is kept intact so it can be re-enabled. -->
           <a class="action cta cta--directions" target="_blank" rel="noopener" data-action="directions">Get Directions</a>
-          <a class="action cta cta--uber" target="_blank" rel="noopener" data-action="uber">Book an Uber Now</a>
+          <a class="action cta cta--uber" target="_blank" rel="noopener" data-action="uber">Book an Uber</a>
           <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
         </div>
         <div class="venue-card__fab" aria-haspopup="true">
