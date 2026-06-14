@@ -4686,9 +4686,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     renderVenueThumbnails(card,v);
 
-    card.actions.directions.textContent="Google Maps";
+    card.actions.directions.textContent="Get Directions";
     card.actions.directions.href=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}`;
-    card.actions.uber.textContent="Uber";
+    card.actions.uber.textContent="Book an Uber";
     card.actions.uber.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}`;
     if(website){
       card.actions.website.classList.remove("hidden");
