@@ -143,6 +143,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let locationWatchId = null;
   let locationWatchTimer = null;
   let hasCenteredOnUser = false;
+  let userLocationMarker = null;
+  let userLocationAccuracyCircle = null;
 
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
@@ -1210,6 +1212,55 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     map.panTo({lat,lng});
     if(typeof zoom==="number") map.setZoom(zoom);
   }
+  // Renders the "you are here" blue dot from the location we already have via
+  // navigator.geolocation. Reuses a single Marker/Circle across updates and adds
+  // no billable Google Maps requests (overlays are free once the map is loaded).
+  function updateUserLocationMarker(lat,lng,accuracy=null){
+    if(!map||typeof google==="undefined"||!google.maps) return;
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)) return;
+    const position={lat,lng};
+    if(!userLocationMarker){
+      userLocationMarker=new google.maps.Marker({
+        map,
+        position,
+        clickable:false,
+        optimized:false,
+        zIndex:10000,
+        title:"Your location",
+        icon:{
+          path:google.maps.SymbolPath.CIRCLE,
+          scale:7,
+          fillColor:"#1a73e8",
+          fillOpacity:1,
+          strokeColor:"#ffffff",
+          strokeWeight:3
+        }
+      });
+    } else {
+      userLocationMarker.setPosition(position);
+      if(userLocationMarker.getMap()!==map) userLocationMarker.setMap(map);
+    }
+    if(Number.isFinite(accuracy)&&accuracy>0){
+      if(!userLocationAccuracyCircle){
+        userLocationAccuracyCircle=new google.maps.Circle({
+          map,
+          center:position,
+          radius:accuracy,
+          clickable:false,
+          strokeColor:"#1a73e8",
+          strokeOpacity:0.4,
+          strokeWeight:1,
+          fillColor:"#1a73e8",
+          fillOpacity:0.12,
+          zIndex:9999
+        });
+      } else {
+        userLocationAccuracyCircle.setCenter(position);
+        userLocationAccuracyCircle.setRadius(accuracy);
+        if(userLocationAccuracyCircle.getMap()!==map) userLocationAccuracyCircle.setMap(map);
+      }
+    }
+  }
   function acceptAccurateLocation(p,{shouldCenter=false,forceCenter=false,onComplete=null}={}){
     if(!p||!p.coords){ resolveLocation(); if(onComplete) onComplete(); return false; }
     const {latitude,longitude,accuracy}=p.coords;
@@ -1233,6 +1284,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     }
     clearLocationWatch();
     userLocation={lat:latitude,lng:longitude};
+    updateUserLocationMarker(latitude,longitude,accuracy);
     resolveLocation();
     if(shouldCenter) centerOnUserIfAvailable(15,{force:forceCenter});
     if(onComplete) onComplete();
@@ -4149,6 +4201,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     addLocateControl();
     centerOnUserIfAvailable();
+    if(userLocation&&typeof userLocation.lat==="number") updateUserLocationMarker(userLocation.lat,userLocation.lng);
   }
   function debouncedLoadVisible(){
     if(moveTimer) clearTimeout(moveTimer);
