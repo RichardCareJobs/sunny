@@ -4847,6 +4847,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   // single cached Supabase aggregate for the "looked today" badge — no extra
   // Google Places calls, so it adds no API cost.
   const SUNSOUT_MAX_CARDS = 6;
+  const SUNSOUT_MIN_VENUES = 3; // hide the shelf entirely unless the user's area has at least this many venues
   const SUNSOUT_STATS_TTL_MS = 5 * 60 * 1000;
   const SUNSOUT_VIEW_THRESHOLD = 10; // only surface a real view count above this
   let sunsOutTray = null;
@@ -5113,7 +5114,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(openVenueId) return; // the detail card owns the bottom of the screen
     const list = pickSunsOutVenues(venues);
     const tray = ensureSunsOutTray();
-    if(!list.length){
+    // Not enough venues in the user's area to be worth a shelf → stay hidden.
+    if(list.length < SUNSOUT_MIN_VENUES){
       setSunsOutState("hidden");
       return;
     }
@@ -5129,7 +5131,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const distText = Number.isFinite(distM) ? formatDistanceKm(distM/1000) : "";
       const hot = sunsOutHotBadge(v.id);
       const photoUrl = sunsOutCardPhotoUrl(v);
-      const metaText = [open?.status, distText].filter(Boolean).join(" · ");
+      // Open status is unreliable right now (reads "Unknown" everywhere) → omit it for now.
+      const openStatus = open?.status && open.status !== "Unknown" ? open.status : "";
+      const metaText = [openStatus, distText].filter(Boolean).join(" · ");
       const photoStyle = photoUrl ? ` style="background-image:url('${sunsOutEscape(photoUrl)}')"` : "";
       // No cached photo yet → keep the branded gradient but invite the tap that loads them.
       const ctaMarkup = photoUrl ? "" : `<span class="sunsout-card__cta">📷 Tap for photos</span>`;
