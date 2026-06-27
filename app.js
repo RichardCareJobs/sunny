@@ -5131,10 +5131,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const photoUrl = sunsOutCardPhotoUrl(v);
       const metaText = [open?.status, distText].filter(Boolean).join(" · ");
       const photoStyle = photoUrl ? ` style="background-image:url('${sunsOutEscape(photoUrl)}')"` : "";
+      // No cached photo yet → keep the branded gradient but invite the tap that loads them.
+      const ctaMarkup = photoUrl ? "" : `<span class="sunsout-card__cta">📷 Tap for photos</span>`;
       card.innerHTML = `
         <span class="sunsout-card__photo${photoUrl ? "" : " is-empty"}"${photoStyle}>
           <span class="sunsout-card__sun">${sun.icon} ${sunsOutEscape(sun.label)}</span>
           <span class="sunsout-card__hot sunsout-card__hot--${hot.kind}">${sunsOutEscape(hot.text)}</span>
+          ${ctaMarkup}
         </span>
         <span class="sunsout-card__body">
           <span class="sunsout-card__name">${sunsOutEscape(v.name || "Outdoor venue")}</span>
