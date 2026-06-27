@@ -504,7 +504,7 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .toolbar h1 { margin: 0; line-height: 1; }
 .menu-btn { width: 36px; height: 36px; padding: 0; }
 
-/* ── "Sun's Out" tray ─────────────────────────────────────────────────────── */
+/* ── "Hot Spots" tray ─────────────────────────────────────────────────────── */
 .sunsout-tray { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1080;
   background: linear-gradient(to top, rgba(255,255,255,0.98), rgba(255,255,255,0.92));
   border-top: 1px solid #ffd9bd; border-radius: 18px 18px 0 0;

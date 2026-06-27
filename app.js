@@ -4841,7 +4841,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     requestAnimationFrame(step);
   }
 
-  // ── "Sun's Out" tray ──────────────────────────────────────────────────────
+  // ── "Hot Spots" tray ──────────────────────────────────────────────────────
   // A horizontal shelf of the sunniest venues currently in view. Built entirely
   // from data already in hand (photos, sun position, open status, distance) plus a
   // single cached Supabase aggregate for the "looked today" badge — no extra
@@ -4901,8 +4901,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const visible = Math.max(0, sunsOutTray.offsetHeight - Math.max(0, px));
     document.documentElement.style.setProperty("--sunsout-h", visible + "px");
   }
-  function setSunsOutState(state, { animate=true }={}){
+  // Fire a Hot Spots shelf event to both Supabase and GA4 (via trackEvent).
+  function trackHotSpots(eventName, params={}){
+    trackEvent(eventName, { ...params, provider: MAP_PROVIDER });
+  }
+  function setSunsOutState(state, { animate=true, track=true }={}){
     if(!sunsOutTray) return;
+    const prevState = sunsOutState;
     if(state !== "hidden") sunsOutPrevState = state;
     sunsOutState = state;
     sunsOutTray.dataset.state = state;
@@ -4911,6 +4916,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     applySunsOutTransform(px, { animate });
     publishSunsOutHeight(px);
     document.body.classList.toggle("sunsout-open", state !== "hidden");
+    // Only count genuine, user-driven transitions in/out of the expanded state.
+    if(track && state !== prevState){
+      if(state === "expanded") trackHotSpots("hotspots_shelf_expanded", { from_state: prevState });
+      else if(prevState === "expanded") trackHotSpots("hotspots_shelf_collapsed", { to_state: state });
+    }
   }
 
   // ── Drag handling ─────────────────────────────────────────────────────────
@@ -5051,14 +5061,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     el.id = "sunsout-tray";
     el.className = "sunsout-tray hidden";
     el.dataset.state = "hidden";
-    el.setAttribute("aria-label", "Sun's Out — sunniest venues in view");
+    el.setAttribute("aria-label", "Hot Spots — sunniest venues in view");
     el.innerHTML = `
       <div class="sunsout-tray__head" role="button" tabindex="0"
-           aria-label="Drag to reveal or hide the Sun's Out shelf">
+           aria-label="Drag to reveal or hide the Hot Spots shelf">
         <span class="sunsout-tray__grabber" aria-hidden="true"></span>
         <div class="sunsout-tray__bar">
-          <span class="sunsout-tray__title">☀️ Sun's Out</span>
-          <button class="sunsout-tray__close" type="button" aria-label="Hide Sun's Out shelf">×</button>
+          <span class="sunsout-tray__title">🔥 Hot Spots</span>
+          <button class="sunsout-tray__close" type="button" aria-label="Hide Hot Spots shelf">×</button>
         </div>
       </div>
       <div class="sunsout-tray__track" role="list"></div>`;
@@ -5093,6 +5103,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function openSunsOutVenue(venue){
     if(!venue) return;
+    const tilePayload = { venue_id: String(venue.id || ""), venue_name: venue.name || "" };
+    const distanceMeters = getVenueDistanceMeters(venue);
+    if(Number.isFinite(distanceMeters)) tilePayload.distance_m = distanceMeters;
+    trackHotSpots("hotspots_venue_clicked", tilePayload);
     openVenueId = venue.id;
     if(map && Number.isFinite(venue.lat) && Number.isFinite(venue.lng)){
       map.panTo({ lat: venue.lat, lng: venue.lng });
@@ -5116,7 +5130,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const tray = ensureSunsOutTray();
     // Not enough venues in the user's area to be worth a shelf → stay hidden.
     if(list.length < SUNSOUT_MIN_VENUES){
-      setSunsOutState("hidden");
+      setSunsOutState("hidden", { track: false });
       return;
     }
     sunsOutTrackEl.innerHTML = "";
@@ -5179,14 +5193,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   function hideSunsOutTrayForCard(){
     if(sunsOutTray && sunsOutState !== "hidden"){
-      setSunsOutState("hidden");
+      setSunsOutState("hidden", { track: false });
       sunsOutHiddenForCard = true;
     }
   }
 
   function restoreSunsOutTrayAfterCard(){
     if(sunsOutHiddenForCard && sunsOutTray && sunsOutTrackEl && sunsOutTrackEl.children.length){
-      setSunsOutState(sunsOutPrevState || "peek");
+      setSunsOutState(sunsOutPrevState || "peek", { track: false });
       sunsOutHiddenForCard = false;
     }
   }
