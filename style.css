@@ -503,3 +503,49 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .toolbar { height: 52px; min-height: 52px; padding: 0 .8rem; align-items: center; }
 .toolbar h1 { margin: 0; line-height: 1; }
 .menu-btn { width: 36px; height: 36px; padding: 0; }
+
+/* ── "Sun's Out" tray ─────────────────────────────────────────────────────── */
+.sunsout-tray { position: fixed; left: 0; right: 0; bottom: 0; z-index: 1080;
+  background: linear-gradient(to top, rgba(255,255,255,0.98), rgba(255,255,255,0.92));
+  border-top: 1px solid #ffd9bd; box-shadow: 0 -8px 24px rgba(15,23,42,0.12);
+  padding: .4rem .25rem calc(.45rem + env(safe-area-inset-bottom));
+  transition: opacity .18s ease, transform .18s ease; }
+.sunsout-tray.hidden { opacity: 0; transform: translateY(110%); pointer-events: none; }
+.sunsout-tray__head { display: flex; align-items: center; justify-content: space-between;
+  padding: .1rem .65rem .25rem; }
+.sunsout-tray__title { font-weight: 800; font-size: .95rem; color: #b34700; letter-spacing: .01em; }
+.sunsout-tray__close { border: none; background: transparent; color: #9ca3af; font-size: 1.2rem;
+  line-height: 1; padding: 2px 6px; cursor: pointer; border-radius: 8px; }
+.sunsout-tray__close:hover { color: #374151; background: #f3f4f6; }
+.sunsout-tray__track { display: flex; gap: .55rem; overflow-x: auto; overflow-y: hidden;
+  padding: .15rem .65rem .3rem; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; }
+.sunsout-tray__track::-webkit-scrollbar { display: none; }
+
+.sunsout-card { flex: 0 0 auto; width: 158px; scroll-snap-align: start; text-align: left;
+  border: 1px solid #eee; border-radius: 14px; background: #fff; padding: 0; overflow: hidden;
+  cursor: pointer; display: flex; flex-direction: column; font: inherit; color: inherit;
+  box-shadow: 0 2px 8px rgba(15,23,42,0.06); transition: transform .12s ease, box-shadow .12s ease; }
+.sunsout-card:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(15,23,42,0.14); }
+.sunsout-card:active { transform: translateY(0); }
+.sunsout-card__photo { position: relative; display: block; width: 100%; height: 96px;
+  background-size: cover; background-position: center; background-color: #f1f5f9; }
+.sunsout-card__photo.is-empty { background-image: linear-gradient(135deg, #ffd27a, #ff8a3d); }
+.sunsout-card__sun { position: absolute; left: 6px; top: 6px; font-size: .7rem; font-weight: 700;
+  color: #fff; background: rgba(17,17,17,0.62); padding: 2px 7px; border-radius: 999px;
+  backdrop-filter: blur(2px); }
+.sunsout-card__hot { position: absolute; right: 6px; bottom: 6px; font-size: .68rem; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px; background: rgba(255,255,255,0.92); color: #b34700;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+.sunsout-card__hot--views { background: #111; color: #fff; }
+.sunsout-card__hot--trending { background: #ff6a00; color: #fff; }
+.sunsout-card__body { padding: .45rem .55rem .55rem; display: flex; flex-direction: column; gap: 2px; }
+.sunsout-card__name { font-weight: 700; font-size: .9rem; line-height: 1.15; color: #111;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sunsout-card__meta { font-size: .78rem; color: #6b7280; }
+.sunsout-card__meta.is-open { color: #15803d; font-weight: 600; }
+
+@media (max-width: 480px) {
+  .sunsout-card { width: 144px; }
+  .sunsout-card__photo { height: 88px; }
+}

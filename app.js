@@ -4643,6 +4643,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     detailCard.container.classList.remove("show");
     detailCard.container.removeAttribute("data-venue-id");
     openVenueId=null;
+    restoreSunsOutTrayAfterCard();
   }
   function applyToneClass(el,tone){
     if(!el) return;
@@ -4658,6 +4659,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     const card=ensureDetailCard();
+    hideSunsOutTrayForCard();
     trackVenueCardOpened(card,v);
     openVenueId=v.id;
     card.currentVenue=v;
@@ -4839,6 +4841,159 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     requestAnimationFrame(step);
   }
 
+  // ── "Sun's Out" tray ──────────────────────────────────────────────────────
+  // A horizontal shelf of the sunniest venues currently in view. Built entirely
+  // from data already in hand (photos, sun position, open status, distance) plus a
+  // single cached Supabase aggregate for the "looked today" badge — no extra
+  // Google Places calls, so it adds no API cost.
+  const SUNSOUT_MAX_CARDS = 12;
+  const SUNSOUT_STATS_TTL_MS = 5 * 60 * 1000;
+  const SUNSOUT_VIEW_THRESHOLD = 10; // only surface a real view count above this
+  let sunsOutTray = null;
+  let sunsOutTrackEl = null;
+  let sunsOutRenderTimer = null;
+  let sunsOutStats = { map: new Map(), fetchedAt: 0, loading: false };
+  let sunsOutHiddenForCard = false;
+
+  function sunsOutEscape(value){
+    return String(value==null?"":value).replace(/[&<>"']/g,ch=>(
+      { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]
+    ));
+  }
+
+  // One cached Supabase aggregate (free; no Google cost) → place_id ⇒ card opens in 24h.
+  async function loadSunsOutStats(){
+    const fresh = sunsOutStats.fetchedAt && (Date.now() - sunsOutStats.fetchedAt < SUNSOUT_STATS_TTL_MS);
+    if(fresh || sunsOutStats.loading) return sunsOutStats.map;
+    const sb = getVenueDetailsSupabase();
+    if(!sb) return sunsOutStats.map;
+    sunsOutStats.loading = true;
+    try{
+      const { data } = await sb.rpc("get_homepage_stats");
+      const next = new Map();
+      const rows = Array.isArray(data?.top_venues) ? data.top_venues : [];
+      rows.forEach(row=>{
+        const id = row && (row.place_id || row.placeId);
+        const opens = Number(row && row.card_opens);
+        if(id && Number.isFinite(opens)) next.set(String(id), opens);
+      });
+      sunsOutStats = { map: next, fetchedAt: Date.now(), loading: false };
+    }catch{
+      sunsOutStats.loading = false; // keep any prior map; retry next TTL window
+    }
+    return sunsOutStats.map;
+  }
+
+  // Badge priority: real "looked today" count → trending → generic on-brand pick.
+  function sunsOutHotBadge(venueId){
+    const opens = sunsOutStats.map.get(String(venueId)) || 0;
+    if(opens > SUNSOUT_VIEW_THRESHOLD) return { text:`👀 ${opens} looked today`, kind:"views" };
+    if(opens > 0) return { text:"🔥 Trending", kind:"trending" };
+    return { text:"☀️ Sunny pick", kind:"pick" };
+  }
+
+  function sunsOutCardPhotoUrl(venue){
+    const data = resolvePlacePhotoData(venue, { width: 480, mode: "thumbnail" });
+    if(data && data.url) return data.url;
+    return Array.isArray(venue?.photos) && venue.photos.length ? (getThumbnailUrl(venue.photos[0], 480) || "") : "";
+  }
+
+  function ensureSunsOutTray(){
+    if(sunsOutTray) return sunsOutTray;
+    const el = document.createElement("section");
+    el.id = "sunsout-tray";
+    el.className = "sunsout-tray hidden";
+    el.setAttribute("aria-label", "Sun's Out — sunniest venues in view");
+    el.innerHTML = `
+      <div class="sunsout-tray__head">
+        <span class="sunsout-tray__title">☀️ Sun's Out</span>
+        <button class="sunsout-tray__close" type="button" aria-label="Hide Sun's Out shelf">×</button>
+      </div>
+      <div class="sunsout-tray__track" role="list"></div>`;
+    document.body.appendChild(el);
+    sunsOutTrackEl = el.querySelector(".sunsout-tray__track");
+    el.querySelector(".sunsout-tray__close").addEventListener("click", ()=>{
+      el.classList.add("hidden");
+      sunsOutHiddenForCard = false; // user-dismissed; reappears on the next map move
+    });
+    sunsOutTray = el;
+    return el;
+  }
+
+  function openSunsOutVenue(venue){
+    if(!venue) return;
+    openVenueId = venue.id;
+    if(map && Number.isFinite(venue.lat) && Number.isFinite(venue.lng)){
+      map.panTo({ lat: venue.lat, lng: venue.lng });
+    }
+    showVenueCard(venue);
+  }
+
+  function renderSunsOutTray(venues){
+    if(openVenueId) return; // the detail card owns the bottom of the screen
+    const list = (Array.isArray(venues) ? venues : [])
+      .filter(v => v && !isGloballyExcludedVenue(v) && Number.isFinite(v.lat) && Number.isFinite(v.lng))
+      .map(v => ({ v, score: getSunScore(v, new Date()) }))
+      .filter(item => Number.isFinite(item.score))
+      .sort((a,b)=> b.score - a.score)
+      .slice(0, SUNSOUT_MAX_CARDS);
+    const tray = ensureSunsOutTray();
+    if(!list.length){
+      tray.classList.add("hidden");
+      return;
+    }
+    sunsOutTrackEl.innerHTML = "";
+    list.forEach(({ v })=>{
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "sunsout-card";
+      card.setAttribute("role", "listitem");
+      const sun = sunBadge(v.lat, v.lng);
+      const open = resolveOpenStatus(v);
+      const distM = getVenueDistanceMeters(v);
+      const distText = Number.isFinite(distM) ? formatDistanceKm(distM/1000) : "";
+      const hot = sunsOutHotBadge(v.id);
+      const photoUrl = sunsOutCardPhotoUrl(v);
+      const metaText = [open?.status, distText].filter(Boolean).join(" · ");
+      const photoStyle = photoUrl ? ` style="background-image:url('${sunsOutEscape(photoUrl)}')"` : "";
+      card.innerHTML = `
+        <span class="sunsout-card__photo${photoUrl ? "" : " is-empty"}"${photoStyle}>
+          <span class="sunsout-card__sun">${sun.icon} ${sunsOutEscape(sun.label)}</span>
+          <span class="sunsout-card__hot sunsout-card__hot--${hot.kind}">${sunsOutEscape(hot.text)}</span>
+        </span>
+        <span class="sunsout-card__body">
+          <span class="sunsout-card__name">${sunsOutEscape(v.name || "Outdoor venue")}</span>
+          <span class="sunsout-card__meta${open?.tone==="good" ? " is-open" : ""}">${sunsOutEscape(metaText)}</span>
+        </span>`;
+      card.addEventListener("click", ()=> openSunsOutVenue(v));
+      sunsOutTrackEl.appendChild(card);
+    });
+    sunsOutHiddenForCard = false;
+    tray.classList.remove("hidden");
+  }
+
+  function scheduleSunsOutTray(venues){
+    if(sunsOutRenderTimer) clearTimeout(sunsOutRenderTimer);
+    const snapshot = Array.isArray(venues) ? venues.slice() : [];
+    sunsOutRenderTimer = setTimeout(()=>{
+      loadSunsOutStats().finally(()=> renderSunsOutTray(snapshot));
+    }, 150);
+  }
+
+  function hideSunsOutTrayForCard(){
+    if(sunsOutTray && !sunsOutTray.classList.contains("hidden")){
+      sunsOutTray.classList.add("hidden");
+      sunsOutHiddenForCard = true;
+    }
+  }
+
+  function restoreSunsOutTrayAfterCard(){
+    if(sunsOutHiddenForCard && sunsOutTray && sunsOutTrackEl && sunsOutTrackEl.children.length){
+      sunsOutTray.classList.remove("hidden");
+      sunsOutHiddenForCard = false;
+    }
+  }
+
   function renderMarkers({ perfStart=null, cacheStatus=null }={}){
     if(!map) return;
     if(isCrawlMode&&crawlState&&crawlState.venues&&crawlState.venues.length){
@@ -4917,6 +5072,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       markersLayer=visibleMarkers;
       isRenderingMarkers=false;
       showVenueCount(visibleMarkers.length);
+      scheduleSunsOutTray(visibleVenues);
       if(perfStart){
         perfLog("markers rendered",{ ms: Math.round(performance.now()-perfStart), count: visibleMarkers.length, cache: cacheStatus || "none" });
       } else if(cacheStatus){
