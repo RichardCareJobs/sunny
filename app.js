@@ -4854,6 +4854,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let sunsOutRenderTimer = null;
   let sunsOutStats = { map: new Map(), fetchedAt: 0, loading: false };
   let sunsOutHiddenForCard = false;
+  // The shelf behaves like a draggable bottom sheet (cf. Google Maps "Local vibe"):
+  // it opens only as a peek — just the header — and the user drags it up to reveal the
+  // cards, or down to dismiss it.
+  let sunsOutState = "hidden";    // "hidden" | "peek" | "expanded"
+  let sunsOutPrevState = "peek";  // visible state to restore after a venue card closes
+  let sunsOutDrag = null;
+  let sunsOutResizeBound = false;
 
   function sunsOutEscape(value){
     return String(value==null?"":value).replace(/[&<>"']/g,ch=>(
@@ -4861,13 +4868,106 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     ));
   }
 
-  // Toggle a body flag (and publish the live shelf height) so the floating bottom
-  // controls — favourites FAB, crawl controls, locate button — can lift above the shelf.
-  function setSunsOutOpen(isOpen){
-    if(isOpen && sunsOutTray){
-      document.documentElement.style.setProperty("--sunsout-h", sunsOutTray.offsetHeight + "px");
+  // ── Bottom-sheet position model ───────────────────────────────────────────
+  // We drive the sheet purely with an inline translateY in pixels so dragging and the
+  // three resting states (expanded / peek / hidden) share one coordinate system.
+  function sunsOutHeadHeight(){
+    const head = sunsOutTray && sunsOutTray.querySelector(".sunsout-tray__head");
+    return head ? head.offsetHeight : 46;
+  }
+  // How far to push the sheet down so only the header peeks above the fold.
+  function sunsOutPeekOffset(){
+    if(!sunsOutTray) return 0;
+    return Math.max(0, sunsOutTray.offsetHeight - sunsOutHeadHeight());
+  }
+  function sunsOutHiddenOffset(){
+    return sunsOutTray ? sunsOutTray.offsetHeight + 24 : 0;
+  }
+  function sunsOutOffsetForState(state){
+    if(state === "expanded") return 0;
+    if(state === "peek") return sunsOutPeekOffset();
+    return sunsOutHiddenOffset();
+  }
+  function applySunsOutTransform(px, { animate=true }={}){
+    if(!sunsOutTray) return;
+    sunsOutTray.style.transition = animate ? "transform .24s cubic-bezier(.22,.61,.36,1)" : "none";
+    sunsOutTray.style.transform = `translateY(${Math.round(px)}px)`;
+  }
+  // Publish the visible height (and a body flag) so the floating bottom controls —
+  // favourites FAB, crawl controls, locate button — lift above the shelf as it moves.
+  function publishSunsOutHeight(px){
+    if(!sunsOutTray) return;
+    const visible = Math.max(0, sunsOutTray.offsetHeight - Math.max(0, px));
+    document.documentElement.style.setProperty("--sunsout-h", visible + "px");
+  }
+  function setSunsOutState(state, { animate=true }={}){
+    if(!sunsOutTray) return;
+    if(state !== "hidden") sunsOutPrevState = state;
+    sunsOutState = state;
+    sunsOutTray.dataset.state = state;
+    sunsOutTray.classList.toggle("hidden", state === "hidden");
+    const px = sunsOutOffsetForState(state);
+    applySunsOutTransform(px, { animate });
+    publishSunsOutHeight(px);
+    document.body.classList.toggle("sunsout-open", state !== "hidden");
+  }
+
+  // ── Drag handling ─────────────────────────────────────────────────────────
+  function beginSunsOutDrag(e){
+    if(!sunsOutTray) return;
+    if(e.target.closest(".sunsout-tray__close")) return; // let the close button work
+    const startPx = sunsOutOffsetForState(sunsOutState);
+    sunsOutDrag = { startY: e.clientY, startPx, curPx: startPx, lastY: e.clientY,
+      lastT: performance.now(), vy: 0, moved: false, pointerId: e.pointerId, captureEl: e.currentTarget };
+    // Capture on the head (the element these listeners live on) so moves keep firing
+    // here even when the pointer leaves the shelf mid-drag.
+    try{ e.currentTarget.setPointerCapture(e.pointerId); }catch{}
+    applySunsOutTransform(startPx, { animate: false });
+  }
+  function moveSunsOutDrag(e){
+    if(!sunsOutDrag) return;
+    const dy = e.clientY - sunsOutDrag.startY;
+    let px = sunsOutDrag.startPx + dy;
+    const max = sunsOutHiddenOffset();
+    if(px < 0) px = px / 3;          // light rubber-band past the fully-expanded edge
+    if(px > max) px = max;
+    if(Math.abs(dy) > 4) sunsOutDrag.moved = true;
+    const now = performance.now();
+    const dt = now - sunsOutDrag.lastT;
+    if(dt > 0) sunsOutDrag.vy = (e.clientY - sunsOutDrag.lastY) / dt; // px/ms, +down
+    sunsOutDrag.lastY = e.clientY;
+    sunsOutDrag.lastT = now;
+    sunsOutDrag.curPx = px;
+    applySunsOutTransform(px, { animate: false });
+    publishSunsOutHeight(px);
+    e.preventDefault();
+  }
+  function endSunsOutDrag(){
+    if(!sunsOutDrag) return;
+    const drag = sunsOutDrag;
+    sunsOutDrag = null;
+    try{ drag.captureEl.releasePointerCapture(drag.pointerId); }catch{}
+    if(!drag.moved){
+      // A tap on the header toggles between peek and expanded.
+      setSunsOutState(sunsOutState === "expanded" ? "peek" : "expanded");
+      return;
     }
-    document.body.classList.toggle("sunsout-open", !!isOpen);
+    const peek = sunsOutPeekOffset();
+    const hidden = sunsOutHiddenOffset();
+    let next;
+    if(drag.vy < -0.35){                       // flung up
+      next = "expanded";
+    } else if(drag.vy > 0.5){                   // flung down
+      next = sunsOutState === "expanded" ? "peek" : "hidden";
+    } else if(drag.curPx < peek * 0.5){         // settle to nearest resting point
+      next = "expanded";
+    } else if(drag.curPx < peek + (hidden - peek) * 0.5){
+      next = "peek";
+    } else {
+      next = "hidden";
+    }
+    if(next === "hidden") sunsOutHiddenForCard = false; // user-dismissed; reappears on next map move
+    setSunsOutState(next);
   }
 
   // One cached Supabase aggregate (free; no Google cost) → place_id ⇒ card opens in 24h.
@@ -4893,6 +4993,43 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return sunsOutStats.map;
   }
 
+  // Venue search results carry no photos (PLACE_SEARCH_FIELDS omits them to stay cheap),
+  // so the shelf cards would otherwise be photoless. Hydrate them from the free Supabase
+  // `venue_details` cache — populated whenever anyone opens a venue — with no Google call.
+  async function loadSunsOutPhotos(venues){
+    const sb = getVenueDetailsSupabase();
+    if(!sb) return false;
+    const ids = [];
+    (venues || []).forEach(v=>{
+      const id = v && v.id;
+      if(!id) return;
+      const cached = venuePhotoCache[id];
+      const hasCache = cached && Array.isArray(cached.photos) && cached.photos.length;
+      const hasOwn = Array.isArray(v.photos) && v.photos.length;
+      if(!hasCache && !hasOwn) ids.push(id);
+    });
+    if(!ids.length) return false;
+    try{
+      const { data } = await sb.from("venue_details").select("place_id,photos").in("place_id", ids);
+      if(!Array.isArray(data) || !data.length) return false;
+      let added = false;
+      data.forEach(row=>{
+        const id = row && row.place_id;
+        if(!id) return;
+        const photos = deserializePhotosFromCache(row.photos);
+        if(!photos.length) return;
+        const pick = selectPlacePhoto({ place_id: id }, photos.map(p=>p.source));
+        if(pick.selectedIndex < 0) return;
+        venuePhotoCache[id] = { photos, selectedIndex: pick.selectedIndex, strategy: pick.strategy, photosCount: photos.length };
+        added = true;
+      });
+      if(added) saveLocal(VENUE_PHOTO_CACHE_KEY, venuePhotoCache);
+      return added;
+    }catch{
+      return false;
+    }
+  }
+
   // Badge priority: real "looked today" count → trending → generic on-brand pick.
   function sunsOutHotBadge(venueId){
     const opens = sunsOutStats.map.get(String(venueId)) || 0;
@@ -4912,21 +5049,44 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const el = document.createElement("section");
     el.id = "sunsout-tray";
     el.className = "sunsout-tray hidden";
+    el.dataset.state = "hidden";
     el.setAttribute("aria-label", "Sun's Out — sunniest venues in view");
     el.innerHTML = `
-      <div class="sunsout-tray__head">
-        <span class="sunsout-tray__title">☀️ Sun's Out</span>
-        <button class="sunsout-tray__close" type="button" aria-label="Hide Sun's Out shelf">×</button>
+      <div class="sunsout-tray__head" role="button" tabindex="0"
+           aria-label="Drag to reveal or hide the Sun's Out shelf">
+        <span class="sunsout-tray__grabber" aria-hidden="true"></span>
+        <div class="sunsout-tray__bar">
+          <span class="sunsout-tray__title">☀️ Sun's Out</span>
+          <button class="sunsout-tray__close" type="button" aria-label="Hide Sun's Out shelf">×</button>
+        </div>
       </div>
       <div class="sunsout-tray__track" role="list"></div>`;
     document.body.appendChild(el);
     sunsOutTrackEl = el.querySelector(".sunsout-tray__track");
-    el.querySelector(".sunsout-tray__close").addEventListener("click", ()=>{
-      el.classList.add("hidden");
-      setSunsOutOpen(false);
-      sunsOutHiddenForCard = false; // user-dismissed; reappears on the next map move
-    });
     sunsOutTray = el;
+    el.querySelector(".sunsout-tray__close").addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      sunsOutHiddenForCard = false; // user-dismissed; reappears on the next map move
+      setSunsOutState("hidden");
+    });
+    const head = el.querySelector(".sunsout-tray__head");
+    head.addEventListener("pointerdown", beginSunsOutDrag);
+    head.addEventListener("pointermove", moveSunsOutDrag);
+    head.addEventListener("pointerup", endSunsOutDrag);
+    head.addEventListener("pointercancel", endSunsOutDrag);
+    // Keyboard affordance: Enter/Space toggles between peek and expanded.
+    head.addEventListener("keydown", (ev)=>{
+      if(ev.key === "Enter" || ev.key === " "){
+        ev.preventDefault();
+        setSunsOutState(sunsOutState === "expanded" ? "peek" : "expanded");
+      }
+    });
+    if(!sunsOutResizeBound){
+      sunsOutResizeBound = true;
+      window.addEventListener("resize", ()=>{
+        if(sunsOutState !== "hidden" && !sunsOutDrag) setSunsOutState(sunsOutState, { animate: false });
+      });
+    }
     return el;
   }
 
@@ -4939,18 +5099,22 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     showVenueCard(venue);
   }
 
-  function renderSunsOutTray(venues){
-    if(openVenueId) return; // the detail card owns the bottom of the screen
-    const list = (Array.isArray(venues) ? venues : [])
+  // The sunniest venues currently in view, capped at SUNSOUT_MAX_CARDS.
+  function pickSunsOutVenues(venues){
+    return (Array.isArray(venues) ? venues : [])
       .filter(v => v && !isGloballyExcludedVenue(v) && Number.isFinite(v.lat) && Number.isFinite(v.lng))
       .map(v => ({ v, score: getSunScore(v, new Date()) }))
       .filter(item => Number.isFinite(item.score))
       .sort((a,b)=> b.score - a.score)
       .slice(0, SUNSOUT_MAX_CARDS);
+  }
+
+  function renderSunsOutTray(venues){
+    if(openVenueId) return; // the detail card owns the bottom of the screen
+    const list = pickSunsOutVenues(venues);
     const tray = ensureSunsOutTray();
     if(!list.length){
-      tray.classList.add("hidden");
-      setSunsOutOpen(false);
+      setSunsOutState("hidden");
       return;
     }
     sunsOutTrackEl.innerHTML = "";
@@ -4967,10 +5131,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const photoUrl = sunsOutCardPhotoUrl(v);
       const metaText = [open?.status, distText].filter(Boolean).join(" · ");
       const photoStyle = photoUrl ? ` style="background-image:url('${sunsOutEscape(photoUrl)}')"` : "";
+      // No cached photo yet → keep the branded gradient but invite the tap that loads them.
+      const ctaMarkup = photoUrl ? "" : `<span class="sunsout-card__cta">📷 Tap for photos</span>`;
       card.innerHTML = `
         <span class="sunsout-card__photo${photoUrl ? "" : " is-empty"}"${photoStyle}>
           <span class="sunsout-card__sun">${sun.icon} ${sunsOutEscape(sun.label)}</span>
           <span class="sunsout-card__hot sunsout-card__hot--${hot.kind}">${sunsOutEscape(hot.text)}</span>
+          ${ctaMarkup}
         </span>
         <span class="sunsout-card__body">
           <span class="sunsout-card__name">${sunsOutEscape(v.name || "Outdoor venue")}</span>
@@ -4980,30 +5147,42 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       sunsOutTrackEl.appendChild(card);
     });
     sunsOutHiddenForCard = false;
-    tray.classList.remove("hidden");
-    setSunsOutOpen(true);
+    if(sunsOutState === "hidden"){
+      // First reveal: park the sheet below the fold, then slide it up to a peek
+      // (mostly hidden) so the motion reads as the shelf arriving from the bottom.
+      applySunsOutTransform(sunsOutHiddenOffset(), { animate: false });
+      void tray.offsetHeight; // force reflow so the next transform animates
+      setSunsOutState("peek", { animate: true });
+    } else {
+      // Already visible: keep the user's resting state, just recompute offsets now
+      // that the card heights are known.
+      setSunsOutState(sunsOutState, { animate: false });
+    }
   }
 
   function scheduleSunsOutTray(venues){
     if(sunsOutRenderTimer) clearTimeout(sunsOutRenderTimer);
     const snapshot = Array.isArray(venues) ? venues.slice() : [];
-    sunsOutRenderTimer = setTimeout(()=>{
-      loadSunsOutStats().finally(()=> renderSunsOutTray(snapshot));
+    sunsOutRenderTimer = setTimeout(async ()=>{
+      const top = pickSunsOutVenues(snapshot).map(item => item.v);
+      // Both lookups are free (cached Supabase aggregates), so the shelf adds no
+      // Google Places cost: stats power the "looked today" badge, photos fill the cards.
+      await loadSunsOutStats();
+      await loadSunsOutPhotos(top);
+      renderSunsOutTray(snapshot);
     }, 150);
   }
 
   function hideSunsOutTrayForCard(){
-    if(sunsOutTray && !sunsOutTray.classList.contains("hidden")){
-      sunsOutTray.classList.add("hidden");
-      setSunsOutOpen(false);
+    if(sunsOutTray && sunsOutState !== "hidden"){
+      setSunsOutState("hidden");
       sunsOutHiddenForCard = true;
     }
   }
 
   function restoreSunsOutTrayAfterCard(){
     if(sunsOutHiddenForCard && sunsOutTray && sunsOutTrackEl && sunsOutTrackEl.children.length){
-      sunsOutTray.classList.remove("hidden");
-      setSunsOutOpen(true);
+      setSunsOutState(sunsOutPrevState || "peek");
       sunsOutHiddenForCard = false;
     }
   }
@@ -5012,7 +5191,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!map) return;
     if(isCrawlMode&&crawlState&&crawlState.venues&&crawlState.venues.length){
       clearMarkersLayer();
-      if(sunsOutTray){ sunsOutTray.classList.add("hidden"); setSunsOutOpen(false); sunsOutHiddenForCard=false; }
+      if(sunsOutTray){ sunsOutHiddenForCard=false; setSunsOutState("hidden"); }
       return;
     }
     const renderToken=++pendingMarkerRenderToken;
