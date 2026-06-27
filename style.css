@@ -549,3 +549,10 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
   .sunsout-card { width: 144px; }
   .sunsout-card__photo { height: 88px; }
 }
+
+/* Lift the floating bottom controls so they sit above the shelf while it's open. */
+.fab, .bottom-right-actions, .crawl-controls, .locate-control { transition: transform .18s ease; }
+body.sunsout-open .fab,
+body.sunsout-open .bottom-right-actions,
+body.sunsout-open .crawl-controls,
+body.sunsout-open .locate-control { transform: translateY(calc(-1 * var(--sunsout-h, 168px))); }

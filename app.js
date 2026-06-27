@@ -4846,7 +4846,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   // from data already in hand (photos, sun position, open status, distance) plus a
   // single cached Supabase aggregate for the "looked today" badge — no extra
   // Google Places calls, so it adds no API cost.
-  const SUNSOUT_MAX_CARDS = 12;
+  const SUNSOUT_MAX_CARDS = 6;
   const SUNSOUT_STATS_TTL_MS = 5 * 60 * 1000;
   const SUNSOUT_VIEW_THRESHOLD = 10; // only surface a real view count above this
   let sunsOutTray = null;
@@ -4859,6 +4859,15 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return String(value==null?"":value).replace(/[&<>"']/g,ch=>(
       { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch]
     ));
+  }
+
+  // Toggle a body flag (and publish the live shelf height) so the floating bottom
+  // controls — favourites FAB, crawl controls, locate button — can lift above the shelf.
+  function setSunsOutOpen(isOpen){
+    if(isOpen && sunsOutTray){
+      document.documentElement.style.setProperty("--sunsout-h", sunsOutTray.offsetHeight + "px");
+    }
+    document.body.classList.toggle("sunsout-open", !!isOpen);
   }
 
   // One cached Supabase aggregate (free; no Google cost) → place_id ⇒ card opens in 24h.
@@ -4914,6 +4923,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     sunsOutTrackEl = el.querySelector(".sunsout-tray__track");
     el.querySelector(".sunsout-tray__close").addEventListener("click", ()=>{
       el.classList.add("hidden");
+      setSunsOutOpen(false);
       sunsOutHiddenForCard = false; // user-dismissed; reappears on the next map move
     });
     sunsOutTray = el;
@@ -4940,6 +4950,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const tray = ensureSunsOutTray();
     if(!list.length){
       tray.classList.add("hidden");
+      setSunsOutOpen(false);
       return;
     }
     sunsOutTrackEl.innerHTML = "";
@@ -4970,6 +4981,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     sunsOutHiddenForCard = false;
     tray.classList.remove("hidden");
+    setSunsOutOpen(true);
   }
 
   function scheduleSunsOutTray(venues){
@@ -4983,6 +4995,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function hideSunsOutTrayForCard(){
     if(sunsOutTray && !sunsOutTray.classList.contains("hidden")){
       sunsOutTray.classList.add("hidden");
+      setSunsOutOpen(false);
       sunsOutHiddenForCard = true;
     }
   }
@@ -4990,6 +5003,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function restoreSunsOutTrayAfterCard(){
     if(sunsOutHiddenForCard && sunsOutTray && sunsOutTrackEl && sunsOutTrackEl.children.length){
       sunsOutTray.classList.remove("hidden");
+      setSunsOutOpen(true);
       sunsOutHiddenForCard = false;
     }
   }
@@ -4998,6 +5012,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!map) return;
     if(isCrawlMode&&crawlState&&crawlState.venues&&crawlState.venues.length){
       clearMarkersLayer();
+      if(sunsOutTray){ sunsOutTray.classList.add("hidden"); setSunsOutOpen(false); sunsOutHiddenForCard=false; }
       return;
     }
     const renderToken=++pendingMarkerRenderToken;
