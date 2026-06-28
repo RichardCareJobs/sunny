@@ -123,5 +123,11 @@ BEGIN
 END;
 $$;
 
--- Allow the anon (public) role to call this function
+-- Allow the anon (public) role to call this function.
+-- NOTE: this is intentionally left open to anon because the main public app
+-- (sunnypubs.app) calls get_homepage_stats() for its "Suns Out" feature, and
+-- the data it returns (top-venue card-open counts, new-venue totals) is already
+-- surfaced publicly there. Do NOT lock this to authenticated, or the public app
+-- will break. The sensitive per-venue analytics live in get_venue_insights,
+-- which IS restricted — see docs/venue-insights-setup.sql.
 GRANT EXECUTE ON FUNCTION get_homepage_stats() TO anon;

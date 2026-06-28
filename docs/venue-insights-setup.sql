@@ -152,5 +152,13 @@ BEGIN
 END;
 $$;
 
--- Allow the anon (public) role to call this function
-GRANT EXECUTE ON FUNCTION get_venue_insights(TEXT, INT) TO anon;
+-- ─── Access control ───────────────────────────────────────────────────────
+-- This function exposes detailed per-venue analytics, so it is restricted to
+-- signed-in (authenticated) users only. The venue-report page signs in via
+-- Supabase Auth, so it runs with the `authenticated` role. The public `anon`
+-- role must NOT be able to call it (otherwise anyone with the public anon key
+-- could pull this data directly, bypassing the page). See also
+-- docs/secure-venue-report.sql, which can be re-run to enforce this.
+REVOKE EXECUTE ON FUNCTION get_venue_insights(TEXT, INT) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_venue_insights(TEXT, INT) FROM anon;
+GRANT  EXECUTE ON FUNCTION get_venue_insights(TEXT, INT) TO authenticated;

@@ -658,11 +658,12 @@
   <div class="auth-card">
     <div class="auth-logo">☀️</div>
     <h1>Venue Insights</h1>
-    <p class="desc">Internal analytics tool — enter your password to continue</p>
+    <p class="desc">Internal analytics tool — sign in to continue</p>
     <div class="form-group">
+      <input type="email" id="email-input" placeholder="Email" autocomplete="username" autocapitalize="off" spellcheck="false">
       <input type="password" id="pw-input" placeholder="Password" autocomplete="current-password">
-      <p class="err" id="pw-err">Incorrect password</p>
-      <button class="btn btn-primary" id="pw-btn">Unlock</button>
+      <p class="err" id="pw-err">Incorrect email or password</p>
+      <button class="btn btn-primary" id="pw-btn">Sign in</button>
     </div>
   </div>
   <p class="auth-footer">Sunny · Internal use only</p>
@@ -676,8 +677,13 @@
 
     <!-- ① Find a Venue (search) — full width -->
     <div class="search-card search-card-wide">
-      <h1>Find a Venue</h1>
-      <p class="desc">Search by name or address to view its analytics</p>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+        <div>
+          <h1>Find a Venue</h1>
+          <p class="desc">Search by name or address to view its analytics</p>
+        </div>
+        <button class="btn btn-search-back" id="signout-btn-search">Sign out</button>
+      </div>
       <div class="search-wrap">
         <input type="text" id="venue-input" placeholder="e.g. The Lord Nelson Brewery Hotel" autocomplete="off" spellcheck="false">
         <ul class="ac-list" id="ac-list" role="listbox" aria-label="Venue suggestions"></ul>
@@ -820,6 +826,7 @@
       </div>
       <button class="btn btn-share" id="share-btn">Share</button>
       <button class="btn btn-search-back" id="back-btn" style="display:none">← Search</button>
+      <button class="btn btn-search-back" id="signout-btn">Sign out</button>
     </div>
   </div>
 
@@ -910,16 +917,21 @@
 /* ═══════════════════════════════════════════════════════
    CONFIGURATION
    ──────────────────────────────────────────────────────
-   Change CONFIG.password to set your access password.
-   The page also requires a Supabase RPC function —
-   see the SQL block below these config lines.
+   Access is gated by Supabase Auth — there is no password
+   stored in this file. Create your login in the Supabase
+   dashboard (Authentication → Users) and disable public
+   sign-ups so only accounts you create can sign in.
+
+   The supabaseAnonKey below is a PUBLIC key (it is shipped
+   to every browser by design, and is the same key used by
+   the main public site). Security comes from Supabase Auth
+   plus the locked-down get_venue_insights function — not
+   from hiding this key. See docs/secure-venue-report.sql.
 ═══════════════════════════════════════════════════════ */
 const CONFIG = {
-  password:       'sunny',   // ← CHANGE THIS to your desired password
   supabaseUrl:    'https://ivylljoqjswkuyrpevmg.supabase.co',
   supabaseAnonKey:'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs',
   defaultDays:    14,
-  sessionKey:     'vr_auth_v1',
 };
 
 /*
@@ -993,21 +1005,101 @@ function trend(current, previous, id) {
   el.innerHTML = `<span class="arrow trend-${dir}">${arrow}</span><span class="trend-${dir}">${label}</span><span class="trend-note">&nbsp;vs prev ${state.days}d</span>`;
 }
 
-/* ─── Auth ─── */
+/* ─── Auth (Supabase Auth) ─── */
+let pendingVenueParam = null;   // deep-link venue to open after sign-in
+
 $('pw-btn').addEventListener('click', doAuth);
+$('email-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('pw-input').focus(); });
 $('pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') doAuth(); });
 
-function doAuth() {
-  if ($('pw-input').value === CONFIG.password) {
-    $('pw-err').classList.remove('show');
-    state.authenticated = true;
-    try { sessionStorage.setItem(CONFIG.sessionKey, '1'); } catch {}
-    goToSearch();
-  } else {
-    $('pw-err').classList.add('show');
+async function doAuth() {
+  const email    = $('email-input').value.trim();
+  const password = $('pw-input').value;
+  const errEl    = $('pw-err');
+  const btn      = $('pw-btn');
+
+  errEl.classList.remove('show');
+
+  if (!email || !password) {
+    errEl.textContent = 'Enter your email and password';
+    errEl.classList.add('show');
+    return;
+  }
+
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+
+  btn.disabled = false;
+  btn.textContent = prevLabel;
+
+  if (error) {
+    errEl.textContent = error.message || 'Incorrect email or password';
+    errEl.classList.add('show');
     $('pw-input').value = '';
     $('pw-input').focus();
+    return;
   }
+
+  state.authenticated = true;
+  routeAfterAuth();
+}
+
+async function signOut() {
+  try { await sb.auth.signOut(); } catch {}
+  state.authenticated = false;
+  state.venue = null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('v');
+  window.history.replaceState({}, '', url.toString());
+  $('email-input').value = '';
+  $('pw-input').value = '';
+  showScreen('screen-password');
+  setTimeout(() => $('email-input').focus(), 60);
+}
+
+// After a successful sign-in, honour any deep link (?v=…) or go to search
+async function routeAfterAuth() {
+  if (pendingVenueParam) {
+    const v = pendingVenueParam;
+    pendingVenueParam = null;
+    await openDirectVenue(v);
+  } else {
+    goToSearch();
+  }
+}
+
+// Open a single venue report directly (used by ?v=… deep/shared links)
+async function openDirectVenue(vParam) {
+  state.directLink = true;
+  $('shared-badge').style.display = 'inline-flex';
+  $('back-btn').style.display = 'none';
+
+  showScreen('screen-report');
+  $('r-loading').classList.add('show');
+  $('r-body').style.display = 'none';
+
+  const { data: venue, error } = await sb
+    .from('venue_details')
+    .select('place_id, name, view_count')
+    .eq('place_id', vParam)
+    .single();
+
+  if (error || !venue) {
+    $('r-loading').innerHTML = `<div style="text-align:center">
+      <p style="color:var(--red);margin-bottom:16px">Venue not found.</p>
+      <a href="${window.location.pathname}" class="btn btn-ghost">Go to search</a>
+    </div>`;
+    return;
+  }
+
+  state.venue = venue;
+  $('r-name').textContent = venue.name;
+  $('r-addr').textContent = venue.short_formatted_address || vParam;
+
+  await renderReport(vParam, state.days);
 }
 
 function goToSearch() {
@@ -1607,52 +1699,32 @@ function renderHomeActionsChart(actions) {
 
 /* ─── Init ─── */
 async function init() {
-  const params  = new URLSearchParams(window.location.search);
-  const vParam  = params.get('v');
+  const params = new URLSearchParams(window.location.search);
+  const vParam = params.get('v');
 
-  if (vParam) {
-    // Direct/shared link — bypass password, show report immediately
-    state.directLink = true;
+  // Wire sign-out buttons (present on the report and search screens)
+  $('signout-btn')?.addEventListener('click', signOut);
+  $('signout-btn-search')?.addEventListener('click', signOut);
 
-    $('shared-badge').style.display = 'inline-flex';
-    $('back-btn').style.display = 'none';
+  // Require a real Supabase Auth session — there is no client-side password.
+  const { data: { session } } = await sb.auth.getSession();
 
-    showScreen('screen-report');
-    $('r-loading').classList.add('show');
-
-    const { data: venue, error } = await sb
-      .from('venue_details')
-      .select('place_id, name, view_count')
-      .eq('place_id', vParam)
-      .single();
-
-    if (error || !venue) {
-      $('r-loading').innerHTML = `<div style="text-align:center">
-        <p style="color:var(--red);margin-bottom:16px">Venue not found.</p>
-        <a href="${window.location.pathname}" class="btn btn-ghost">Go to search</a>
-      </div>`;
-      return;
-    }
-
-    state.venue = venue;
-    $('r-name').textContent = venue.name;
-    $('r-addr').textContent = venue.short_formatted_address || vParam;
-
-    await renderReport(vParam, state.days);
+  if (!session) {
+    // Not signed in: remember any deep link so we can open it after sign-in.
+    pendingVenueParam = vParam || null;
+    showScreen('screen-password');
+    setTimeout(() => $('email-input').focus(), 60);
     return;
   }
 
-  // Check for existing session auth
-  try {
-    if (sessionStorage.getItem(CONFIG.sessionKey) === '1') {
-      state.authenticated = true;
-      goToSearch();
-      return;
-    }
-  } catch {}
+  state.authenticated = true;
 
-  showScreen('screen-password');
-  setTimeout(() => $('pw-input').focus(), 60);
+  if (vParam) {
+    await openDirectVenue(vParam);
+    return;
+  }
+
+  goToSearch();
 }
 
 init();
