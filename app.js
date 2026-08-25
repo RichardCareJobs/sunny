@@ -443,7 +443,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     dogs_allowed:{
       label:"Dog friendly",
       svg:'<svg viewBox="0 0 24 24" focusable="false" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none">'
-        +'<path d="M7.7 16.3C7.5 14 9 12.5 10.5 13.2C11.3 13.6 12.7 13.6 13.5 13.2C15 12.5 16.5 14 16.3 16.3C16.1 18.6 14.3 20.7 12 20.7C9.7 20.7 7.9 18.6 7.7 16.3Z"/>'
+        +'<path d="M9.4 13.4C8.1 13.3 7.0 14.6 7.2 16.3C7.3 18.4 8.5 20.5 10.2 21.3C10.9 21.6 13.1 21.6 13.8 21.3C15.5 20.5 16.7 18.4 16.8 16.3C17.0 14.6 15.9 13.3 14.6 13.4C13.8 13.1 10.2 13.1 9.4 13.4Z"/>'
         +'<ellipse cx="9.3" cy="8.6" rx="1.7" ry="2.15"/>'
         +'<ellipse cx="14.7" cy="8.6" rx="1.7" ry="2.15"/>'
         +'<ellipse cx="5.5" cy="11.4" rx="1.5" ry="1.9"/>'
