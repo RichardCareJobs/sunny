@@ -430,6 +430,100 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     icon.innerHTML='<svg viewBox="0 0 24 24" focusable="false"><path d="M20 6 9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     return icon;
   }
+  // Venue card attribute icons — sourced ONLY from the `venue_attributes` table
+  // (populated by the offline Apify enrichment pipeline). Never inferred, never
+  // backed by a live Google Places call — that's what made the earlier dog icon
+  // too expensive. If a venue has no row for an attribute, no icon is shown; we
+  // never guess or default to "not present" vs "unknown" the wrong way.
+  // Priority order also doubles as the cap: at most VENUE_ATTR_ICON_MAX icons
+  // are shown per card, chosen by walking this list in order.
+  const VENUE_ATTR_ICON_PRIORITY=["dogs_allowed","good_for_kids","live_music","crowd_lgbtq_friendly"];
+  const VENUE_ATTR_ICON_MAX=2;
+  const VENUE_ATTR_ICON_DEFS={
+    dogs_allowed:{
+      label:"Dog friendly",
+      svg:'<svg viewBox="0 0 24 24" focusable="false" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none">'
+        +'<path d="M9.4 13.4C8.1 13.3 7.0 14.6 7.2 16.3C7.3 18.4 8.5 20.5 10.2 21.3C10.9 21.6 13.1 21.6 13.8 21.3C15.5 20.5 16.7 18.4 16.8 16.3C17.0 14.6 15.9 13.3 14.6 13.4C13.8 13.1 10.2 13.1 9.4 13.4Z"/>'
+        +'<ellipse cx="9.3" cy="8.6" rx="1.7" ry="2.15"/>'
+        +'<ellipse cx="14.7" cy="8.6" rx="1.7" ry="2.15"/>'
+        +'<ellipse cx="5.5" cy="11.4" rx="1.5" ry="1.9"/>'
+        +'<ellipse cx="18.5" cy="11.4" rx="1.5" ry="1.9"/>'
+        +'</svg>'
+    },
+    good_for_kids:{
+      label:"Good for kids",
+      svg:'<svg viewBox="0 0 24 24" focusable="false">'
+        +'<circle cx="7.5" cy="6" r="1.9" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+        +'<path d="M4.3 17.5v-3.8c0-2.2 1.4-3.7 3.2-3.7s3.2 1.5 3.2 3.7v3.8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+        +'<circle cx="16.3" cy="9.3" r="1.4" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+        +'<path d="M14 17.5v-2.9c0-1.6 1-2.7 2.3-2.7s2.3 1.1 2.3 2.7v2.9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
+        +'</svg>'
+    },
+    live_music:{
+      label:"Live music",
+      svg:'<svg viewBox="0 0 24 24" focusable="false">'
+        +'<path d="M9 18V5.5l10-2v12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+        +'<circle cx="6.5" cy="18" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+        +'<circle cx="16.5" cy="16" r="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+        +'</svg>'
+    },
+    crowd_lgbtq_friendly:{
+      label:"LGBTQ+ friendly",
+      svg:'<svg viewBox="0 0 34 22" focusable="false">'
+        +'<rect x="1" y="1" width="32" height="20" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>'
+        +'<rect x="4" y="4" width="12" height="2.33" fill="#ef4444"/>'
+        +'<rect x="4" y="6.33" width="12" height="2.33" fill="#f97316"/>'
+        +'<rect x="4" y="8.67" width="12" height="2.33" fill="#eab308"/>'
+        +'<rect x="4" y="11" width="12" height="2.33" fill="#22c55e"/>'
+        +'<rect x="4" y="13.33" width="12" height="2.33" fill="#3b82f6"/>'
+        +'<rect x="4" y="15.67" width="12" height="2.33" fill="#8b5cf6"/>'
+        +'<circle cx="25" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+        +'<circle cx="22.7" cy="9.3" r="0.85" fill="currentColor"/>'
+        +'<circle cx="27.3" cy="9.3" r="0.85" fill="currentColor"/>'
+        +'<path d="M22 12.6c.9 1.2 2.2 1.9 3 1.9s2.1-.7 3-1.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>'
+        +'</svg>'
+    }
+  };
+  function createVenueAttrIcon(attrKey){
+    const def=VENUE_ATTR_ICON_DEFS[attrKey];
+    if(!def) return null;
+    const el=document.createElement("span");
+    el.className="venue-card__attr-icon venue-card__attr-icon--"+attrKey.replace(/_/g,"-");
+    el.setAttribute("role","img");
+    el.setAttribute("aria-label",def.label);
+    el.title=def.label;
+    el.innerHTML=def.svg;
+    return el;
+  }
+  // Populates card.attrIconsEl by querying `venue_attributes` directly (not a
+  // denormalized copy) so it always reflects the latest Apify enrichment run.
+  // Fires async from showVenueCard; guards against the user swiping to a
+  // different venue before the query resolves.
+  async function renderVenueAttrIcons(card, placeId){
+    if(!card||!card.attrIconsEl) return;
+    card.attrIconsEl.innerHTML="";
+    card.attrIconsEl.classList.add("hidden");
+    if(!placeId) return;
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return;
+    try{
+      const { data, error }=await sb.from("venue_attributes")
+        .select("attribute")
+        .eq("place_id",placeId)
+        .eq("value",true)
+        .in("attribute",VENUE_ATTR_ICON_PRIORITY);
+      if(error||!data||!data.length) return;
+      if(openVenueId!==placeId) return;
+      const present=new Set(data.map(row=>row.attribute));
+      const chosen=VENUE_ATTR_ICON_PRIORITY.filter(attr=>present.has(attr)).slice(0,VENUE_ATTR_ICON_MAX);
+      if(!chosen.length) return;
+      chosen.forEach(attr=>{
+        const icon=createVenueAttrIcon(attr);
+        if(icon) card.attrIconsEl.appendChild(icon);
+      });
+      card.attrIconsEl.classList.remove("hidden");
+    } catch(e){ /* non-fatal — attribute icons simply stay hidden */ }
+  }
   function renderWishlistButton(buttonEl,placeId){
     if(!buttonEl) return;
     const id=normalizePlaceId(placeId);
@@ -4348,6 +4442,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           <span class="chip chip-sun"><span class="chip-emoji">☀️</span><span class="chip-label">Full sun</span></span>
           <span class="chip chip-open"></span>
         </div>
+        <div class="venue-card__attr-icons hidden" aria-label="Venue highlights"></div>
         <div class="venue-card__hours hidden"></div>
         <div class="venue-card__hours-next hidden"></div>
         <div class="venue-card__note"></div>
@@ -4476,6 +4571,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       metaEl:container.querySelector(".venue-card__meta"),
       addressEl:container.querySelector(".venue-card__address"),
       openChip:container.querySelector(".chip-open"),
+      attrIconsEl:container.querySelector(".venue-card__attr-icons"),
       hoursEl:container.querySelector(".venue-card__hours"),
       hoursNextEl:container.querySelector(".venue-card__hours-next"),
       sunChip:container.querySelector(".chip-sun"),
@@ -4671,6 +4767,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       v.id,"user_initiated","venue_card_opened",venueScoreCache.get(v.id)||{}
     ).catch(()=>{});
     fetchVenueDetails(v);
+    renderVenueAttrIcons(card,v.id);
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
     const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
