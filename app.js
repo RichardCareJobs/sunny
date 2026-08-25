@@ -442,20 +442,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const VENUE_ATTR_ICON_DEFS={
     dogs_allowed:{
       label:"Dog friendly",
-      svg:'<svg viewBox="0 0 64 40" focusable="false" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" fill="none">'
-        +'<path d="M12 17C9 13 5 13.5 4 17.5C3.3 20 5.5 21.5 8 20.3"/>'
-        +'<path d="M13 18C20 13 30 11 39 11C42 11 44 10 45 8.5L46 5L48 0.8L50.5 4C54 4.8 57 6 61 8.5C63.5 10 64 12.5 61.5 13.8C58 15.8 54 18 50.5 20.5"/>'
-        +'<path d="M50.5 20.5C49.5 22.5 48.7 24 48.2 25.5"/>'
-        +'<path d="M48.2 25.5L48.2 35L44.7 36L44.7 27.3"/>'
-        +'<path d="M46.4 34L46.4 36.2"/>'
-        +'<path d="M42 26.5L41.5 34.5L38 35.5L38.2 29"/>'
-        +'<path d="M40 33.5L40 35.4"/>'
-        +'<path d="M38.2 29C33 32 20 32 15 29"/>'
-        +'<path d="M15 29L14.8 35.5L11.3 36.3L11.3 30"/>'
-        +'<path d="M13 34.7L13 36.4"/>'
-        +'<path d="M10.3 28.3L9.8 35L6.5 35.8L6.8 30.5"/>'
-        +'<path d="M8.3 34.2L8.3 35.9"/>'
-        +'<path d="M6.8 30.5C7 25 9 19 13 18"/>'
+      svg:'<svg viewBox="0 0 24 24" focusable="false" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" fill="none">'
+        +'<path d="M7.7 16.3C7.5 14 9 12.5 10.5 13.2C11.3 13.6 12.7 13.6 13.5 13.2C15 12.5 16.5 14 16.3 16.3C16.1 18.6 14.3 20.7 12 20.7C9.7 20.7 7.9 18.6 7.7 16.3Z"/>'
+        +'<ellipse cx="9.3" cy="8.6" rx="1.7" ry="2.15"/>'
+        +'<ellipse cx="14.7" cy="8.6" rx="1.7" ry="2.15"/>'
+        +'<ellipse cx="5.5" cy="11.4" rx="1.5" ry="1.9"/>'
+        +'<ellipse cx="18.5" cy="11.4" rx="1.5" ry="1.9"/>'
         +'</svg>'
     },
     good_for_kids:{
