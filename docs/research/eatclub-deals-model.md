@@ -97,36 +97,100 @@ they ordered before they arrive.
   safety/inspection rating thresholds — i.e. EatClub vets restaurants before
   onboarding rather than being fully self-serve.
 
-## 6. What's transferable to Sunny
+## 6. Card-linked offers: considered, and ruled out for Sunny
 
-If we want a "secure deals with restaurants" feature that resists the usual
-failure modes (fake coupons, no-shows, staff friction, restaurants under- or
-over-committing):
+EatClub Pay (§3) is the strongest anti-fraud design of the options surveyed
+— the discount is enforced by the payment rail, not a human checking a
+screen — but on discussion it's a bad fit for Sunny and **we're not pursuing
+it**:
 
-1. **Make deals supply-triggered, not calendar-triggered** — let venues
-   toggle a deal on/off in real time tied to actual availability, with a
-   cap on quantity, rather than a static always-on discount.
-2. **Avoid staff-facing redemption codes if at all possible.** A
-   card-linked-offer model (EatClub Pay) is the strongest anti-fraud
-   design because the discount is enforced by the payment rail, not by a
-   human checking a screen. Building this ourselves means either:
-   - Partnering with a card-linked-offer provider (e.g. **Cardlytics**,
-     **Fidel API**, or issuing our own prepaid virtual card via a program
-     like **Marqeta/Stripe Issuing**), or
-   - Falling back to a simpler but weaker model (single-use redemption
-     code/QR tied to a specific user+venue+time, invalidated instantly on
-     use, shown to staff) if a card-linked integration is out of scope for
-     v1.
-3. **Charge restaurants a flat/subscription fee for marketplace access**
-   rather than a scary per-order commission — lowers the trust barrier for
-   independent restaurants to opt in versus a Groupon-style deep-discount
-   commission model.
-4. **Some form of no-show deterrent** for claimed-but-unused dine-in offers,
-   sized carefully to avoid the consumer-law/backlash issues EatClub has
-   hit.
-5. **Basic venue vetting at onboarding** (capacity, insurance, hygiene
-   rating) to protect deal quality and avoid restaurants publishing offers
-   they can't fulfill.
+- **Mismatch of effort to reward.** Sunny's offers are trivial-value (a
+  pint-for-half-pint, $5 off a main), not the kind of saving worth
+  provisioning a whole new virtual card for. Card-linked programs generally
+  see a majority of users never activate/complete setup in the first place
+  (general card-linked-offer industry data: ~57% of issued cards ever get
+  activated at all) — that setup tax isn't worth paying for a low-value
+  discount.
+- **Repeated trust friction, not just a one-time cost.** Every redemption
+  shows the customer the *full, undiscounted* bill on the terminal and asks
+  them to trust an invisible backend to true it up afterward. That's a
+  leap of faith paid on every visit, not just the first — and real EatClub
+  Pay reviews show this trust breaking in practice (terminal shows
+  "declined" while the bank shows a charge went through, confusion/refund
+  disputes over whether the discount actually applied).
+- **Tourist/overseas-card friction.** A meaningful share of Sunny's users
+  are likely to be visitors on foreign cards — adding a second virtual card
+  with its own currency/FX handling on top of an already-foreign primary
+  card is a bad ask for a small discount.
+- Building it ourselves would also mean either partnering with a
+  card-linked-offer provider (Cardlytics, Fidel API) or standing up our own
+  card-issuing program (Stripe Issuing/Marqeta) — a lot of build and
+  compliance surface for a feature that's meant to stay simple.
+
+## 7. Sunny's chosen direction: venue self-serve QR offers
+
+Landed on instead: **QR-code redemption, with offers authored by venues
+themselves, and (later) direct POS integration** — closer to the
+old-fashioned "show the code, staff mark it used" pattern, but made safe
+against reuse the same way modern coupon platforms do it (see e.g.
+[Coupon Carrier](https://www.couponcarrier.io/qr-redemption-system/),
+[Voucherify's QR playbook](https://www.voucherify.io/blog/use-qr-codes-to-integrate-promotions-in-your-mobile-app)),
+not the old print-a-static-code way.
+
+**QR technique.** There are two real approaches in the wild:
+- *Static image, live-checked token* — the QR encodes a unique token; a
+  backend tracks its status (`valid` / `used` / `expired`) and flips it to
+  `used` atomically on redemption. A screenshot becomes useless once
+  redeemed, because the token dies server-side, not because the image
+  changes. This is what most coupon platforms do, and needs no special
+  hardware — staff just open a scanner *webpage* on any phone.
+- *Rotating/regenerating image* — e.g. Ticketmaster SafeTix, where the
+  barcode pixels regenerate every ~15s from a shared secret (TOTP-style),
+  defeating even a screenshot forwarded to someone else before the
+  original claimer redeems it. Built to fight ticket-resale fraud on
+  high-value items.
+- **Decision: static token is enough for Sunny.** Rotating-image tech is
+  solving a higher-stakes problem (resold concert tickets) than a
+  pint discount getting texted to a mate before it's used. Not worth the
+  engineering cost.
+
+**Data model — two tiers**, so an offer's identity and a redemption's
+identity aren't conflated:
+- **Offer** (venue-authored, self-serve): `venue_id`, title, discount
+  details, active days/times, quantity cap, on/off toggle. Venues manage
+  this themselves through their own login, the same shape as EatClub's
+  Partner app (pick the deal, set a cap, publish/pause any time).
+- **Claim** (generated per user, per redemption — this is the actual QR):
+  minted the moment a user taps "claim": `claim_id` (the token encoded in
+  the QR), `offer_id`, `venue_id` (copied down from the offer), `user_id`,
+  `status`, `claimed_at`, `expires_at`.
+- Because a claim row already carries both `user_id` and `venue_id`, the
+  same QR is structurally incapable of working at a different venue or for
+  a different user — it was never generated for anything else. The
+  redemption check isn't just "is this token valid," it's "is this token
+  valid **and does its `venue_id` match the venue account that's scanning**"
+  — so venue staff logins are scoped to their own venue's redemptions only.
+- **Implementation gotcha to remember:** the "mark as used" step must be an
+  atomic, conditional update (`UPDATE ... SET status='used' WHERE
+  status='valid'`), not read-then-write, or two near-simultaneous scans of
+  the same screenshot can both succeed.
+- `expires_at` on the claim doubles as a no-show deterrent (an unused claim
+  just goes stale) without needing EatClub's no-show-fee approach, which
+  has drawn consumer-law criticism.
+
+**POS integration — phase 2, not v1.** There's no unified POS API; Square,
+Toast, Clover, Lightspeed etc. each have their own (and even differ on
+basics — Clover, for instance, doesn't support post-tax discounts the way
+you'd expect, custom discounts often have to ride in as a "custom tender").
+Two realistic paths when we get there:
+- An aggregator (Omnivore, Olo, POS Linker) normalizes multiple POS
+  systems behind one API, at the cost of a vendor fee/dependency.
+- Direct integration per platform, prioritized by whichever POS venues
+  actually run.
+Sequencing: ship QR + manual staff confirm first (works everywhere, zero
+integration lift), add POS sync per-platform later only where it buys
+something real — auto-expiring codes, auto-applying the discount at
+checkout, reconciling payouts without manual keying.
 
 ## Sources
 - https://eatclub.com.au/partners
@@ -138,3 +202,9 @@ over-committing):
 - https://apps.apple.com/gb/app/eatclub-restaurant-deals/id1053752571
 - https://www.thecaterer.com/news/eatclub-lands-in-london
 - https://glamadelaide.com.au/ssshhh-heres-how-you-can-secretly-score-huge-dining-discounts-with-eatclubs-latest-innovation/
+- https://www.getkard.com/blog/clos-the-what-and-why (card-linked-offer activation benchmarks)
+- https://www.couponcarrier.io/qr-redemption-system/
+- https://www.voucherify.io/blog/use-qr-codes-to-integrate-promotions-in-your-mobile-app
+- https://conduition.io/coding/ticketmaster/ (SafeTix rotating-barcode reverse-engineering)
+- https://community.clover.com/questions/2438/custom-app-to-process-coupons-with-qr-codes.html
+- https://pos-linker.com/blog/toast-api-integration-complete-guide
