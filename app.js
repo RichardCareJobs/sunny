@@ -443,11 +443,13 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     dogs_allowed:{
       label:"Dog friendly",
       svg:'<svg viewBox="0 0 24 24" focusable="false">'
-        +'<circle cx="12" cy="11" r="5.2" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-        +'<path d="M7.6 8.2c-1.8-.6-3.2.4-3.2 2.1 0 1.6 1.4 3.1 3.1 3.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
-        +'<path d="M9.4 15.6c.6 1 1.6 1.6 2.6 1.6s2-.6 2.6-1.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
-        +'<circle cx="14.1" cy="10" r="0.85" fill="currentColor"/>'
-        +'<circle cx="12" cy="15.4" r="0.7" fill="currentColor"/>'
+        +'<path d="M8.3 7.2C5.5 7.6 3.8 10.5 4.3 13.6C4.6 15.5 6.2 16.8 7.6 16.4C8.6 16.1 9 14.8 8.6 13C8.2 11 8 9 8.3 7.2Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'
+        +'<path d="M15.7 7.2C18.5 7.6 20.2 10.5 19.7 13.6C19.4 15.5 17.8 16.8 16.4 16.4C15.4 16.1 15 14.8 15.4 13C15.8 11 16 9 15.7 7.2Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>'
+        +'<circle cx="12" cy="12.2" r="5.2" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+        +'<ellipse cx="12" cy="15.3" rx="2.6" ry="2.3" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+        +'<ellipse cx="12" cy="13.7" rx="1.05" ry="0.7" fill="currentColor"/>'
+        +'<circle cx="9.6" cy="11.2" r="0.85" fill="currentColor"/>'
+        +'<circle cx="14.4" cy="11.2" r="0.85" fill="currentColor"/>'
         +'</svg>'
     },
     good_for_kids:{
