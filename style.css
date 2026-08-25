@@ -166,7 +166,11 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
 .chip-warn { background:#fff1f2; border-color:#fecdd3; color:#9f1239; }
 .chip-info { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
 .chip-muted { background:#f3f4f6; border-color:#e5e7eb; color:#4b5563; }
-.chip-dog { background:#fef3c7; border-color:#fde68a; color:#92400e; }
+.venue-card__attr-icons { display:flex; align-items:center; gap:.5rem; }
+.venue-card__attr-icons.hidden { display:none; }
+.venue-card__attr-icon { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; color:#4b5563; flex-shrink:0; }
+.venue-card__attr-icon svg { width:100%; height:100%; display:block; }
+.venue-card__attr-icon--crowd-lgbtq-friendly { width:34px; }
 .venue-card__hours { color:#374151; font-size:.9rem; }
 .venue-card__hours-next { color:#6b7280; font-size:.85rem; }
 .venue-card__note { color:#4b5563; font-size:.95rem; }
