@@ -1,0 +1,3 @@
+# Optional local override, layered on top of config.js. Not committed because
+# everyone's stage and Supabase URL differ, and a committed one silently wins.
+config.local.js

@@ -1,0 +1,108 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Sunny for Venues — design tokens
+   ---------------------------------------------------------------------------
+   The single source of truth for colour, type, spacing and radius. Both the
+   marketing-facing and authenticated screens consume these. Component styles
+   must never contain a raw hex value — if a colour is missing, add it here.
+
+   Palette is lifted from the consumer app (style.css), not invented.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Brand ───────────────────────────────────────────────────────────────
+     --brand-500 is the Sunny orange exactly as the consumer app uses it. It
+     measures 2.87:1 against white, so it is an identity colour for large
+     surfaces, fills, rules and focus rings — never small text on a light
+     ground. --brand-700 is the accessible sibling (5.43:1 on white) used for
+     link text and primary button fills. See README, "Colour and contrast". */
+  --brand-500: #ff6a00;
+  --brand-600: #e65f00;
+  --brand-700: #b84400;
+  --brand-050: #fff4ec;
+  --brand-100: #ffe4d1;
+
+  /* ── Ink and surface ─────────────────────────────────────────────────── */
+  --ink:        #111111;
+  --ink-2:      #3f3a35;
+  --muted:      #666666;
+  --surface:    #ffffff;
+  --surface-2:  #faf8f5;
+  --surface-3:  #f3efe9;
+  --line:       #dddddd;
+  --line-soft:  #ececec;
+
+  /* ── Semantic ─────────────────────────────────────────────────────────── */
+  --ok:         #136f63;
+  --ok-bg:      #e3f0ed;
+  --warn:       #7a5a00;
+  --warn-bg:    #fdf3d8;
+  --warn-mark:  #f4c95d;
+  --danger:     #b3352f;
+  --danger-bg:  #fbe9e8;
+  --info:       #1f5f8b;
+  --info-bg:    #e6f0f7;
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-xs:   0.78rem;
+  --text-sm:   0.875rem;
+  --text-base: 1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.35rem;
+  --text-2xl:  1.7rem;
+  --text-3xl:  2.15rem;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.62;
+
+  --weight-normal: 400;
+  --weight-medium: 600;
+  --weight-bold: 800;
+
+  /* ── Space — 4px base, matching the consumer app's rhythm ─────────────── */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
+  /* ── Radius — the consumer app's 10/12/14/16 and pill ─────────────────── */
+  --radius-sm:  8px;
+  --radius-md:  10px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+  --radius-pill: 999px;
+
+  /* ── Elevation ────────────────────────────────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(17, 17, 17, .06);
+  --shadow-md: 0 4px 14px rgba(17, 17, 17, .08);
+  --shadow-lg: 0 10px 30px rgba(17, 17, 17, .16);
+  --shadow-up: 0 -10px 30px rgba(17, 17, 17, .18);
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --ease: cubic-bezier(.2, .7, .3, 1);
+  --dur-fast: .12s;
+  --dur-base: .2s;
+
+  /* ── Layout ───────────────────────────────────────────────────────────── */
+  --shell-header-h: 56px;
+  --content-max: 1080px;
+  --measure: 68ch;
+  --focus-ring: 0 0 0 3px var(--brand-100), 0 0 0 1px var(--brand-700);
+
+  --z-header: 100;
+  --z-sheet: 300;
+  --z-modal: 400;
+  --z-toast: 500;
+}
+
+/* Dark mode is deliberately not implemented in Phase 1. The consumer app has
+   no dark palette to derive from, and inventing one here would violate the
+   brief's "do not invent a new palette". Every colour above is a token, so
+   adding a dark set later is a one-file change and no component moves. */

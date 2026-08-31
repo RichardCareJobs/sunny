@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sunny for Venues</title>
+  <meta name="description" content="Claim your venue on Sunny, run offers, and see how many people are finding you." />
+  <meta name="robots" content="noindex" />
+  <meta name="theme-color" content="#ff6a00" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+
+  <link rel="stylesheet" href="./styles/tokens.css" />
+  <link rel="stylesheet" href="./styles/base.css" />
+  <link rel="stylesheet" href="./styles/components.css" />
+
+  <!--
+    supabase-js as a pinned UMD build. The published ES module is not
+    self-contained (it imports `ws`, `buffer` and `process`), so the UMD file is
+    what can be vendored honestly. Pinned deliberately: the consumer app loads
+    `@supabase/supabase-js@2` unpinned from a CDN, which is fine for a public
+    map and not fine for an authenticated app.
+  -->
+  <script src="./vendor/supabase.umd.js"></script>
+
+  <!--
+    Configuration. Committed, and public by design — the anon key it carries is
+    the same one the consumer app ships. Secrets live in Edge Function
+    environment variables and nowhere near the browser. See .env.example.
+  -->
+  <script src="./config.js"></script>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "preact": "./vendor/preact.module.js",
+      "preact/hooks": "./vendor/preact-hooks.module.js",
+      "htm": "./vendor/htm.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="root">
+    <!-- Replaced on mount. Visible only if the module fails to load. -->
+    <noscript style="display:block;padding:2rem;font:1rem system-ui">
+      Sunny for Venues needs JavaScript. If you cannot enable it, email us and we will set your
+      venue up by hand.
+    </noscript>
+  </div>
+  <script type="module" src="./app/main.js"></script>
+</body>
+</html>
