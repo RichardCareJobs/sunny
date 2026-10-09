@@ -1,6 +1,6 @@
 // Sunny Service Worker — cache only same-origin static assets
 // Bump this name when you want to flush old caches
-const CACHE_NAME = 'sunny-v6';
+const CACHE_NAME = 'sunny-v7';
 const CORE_ASSETS = [
   '/index.html',
   '/app.js',
@@ -50,6 +50,22 @@ self.addEventListener('fetch', (event) => {
     // Use a query-param-free key so versioned URLs (e.g. app.js?v=x) don't
     // accumulate as separate cache entries on every deploy.
     const cacheKey = new Request(url.origin + url.pathname);
+    const isCode = /\.(html|js|css|webmanifest)$/.test(url.pathname);
+    if (isCode) {
+      // Network-first for code so a deploy reaches returning visitors
+      // straight away; the cached copy is only an offline fallback.
+      event.respondWith(
+        fetch(event.request).then((resp) => {
+          if (resp.ok) {
+            const copy = resp.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(cacheKey, copy));
+          }
+          return resp;
+        }).catch(() => caches.match(cacheKey).then((cached) => cached || Response.error()))
+      );
+      return;
+    }
+    // Images and other static files: cache-first.
     event.respondWith(
       caches.match(cacheKey).then((cached) => {
         if (cached) return cached;
