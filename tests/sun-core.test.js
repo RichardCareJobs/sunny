@@ -115,6 +115,17 @@ test("cloud only downgrades sun; shade stays shade", () => {
   assert.equal(S.sunState(flat(), DUBLIN.lat, DUBLIN.lng, new Date("2026-06-21T23:30:00Z")).state, "night");
 });
 
+test("weather rule: WMO 120 W/m² DNI threshold, cloud cover near the horizon", () => {
+  assert.equal(S.isCloudy({ dni: 80, cloudCover: 10, sunAltitudeDeg: 30 }), true);
+  assert.equal(S.isCloudy({ dni: 400, cloudCover: 95, sunAltitudeDeg: 30 }), false);
+  assert.equal(S.isCloudy({ dni: 40, cloudCover: 20, sunAltitudeDeg: 4 }), false); // low sun, clear sky
+  assert.equal(S.isCloudy({ dni: 40, cloudCover: 90, sunAltitudeDeg: 4 }), true);
+  assert.equal(S.isCloudy({}), null);
+  const t = new Date("2026-06-21T12:26:00Z");
+  assert.equal(S.sunState(flat(), DUBLIN.lat, DUBLIN.lng, t, { cloudy: true }).state, "cloud");
+  assert.equal(S.sunState(flat(), DUBLIN.lat, DUBLIN.lng, t, { cloudy: null, cloudCover: 85 }).state, "cloud");
+});
+
 test("western wall cuts the evening short; sun line reads 'Sun until …'", () => {
   const h = wall(240, 320, 25);
   const day = new Date("2026-06-21T12:00:00Z");

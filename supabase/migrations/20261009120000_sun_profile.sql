@@ -81,10 +81,8 @@ alter table public.venue_seating     enable row level security;
 alter table public.venue_sun_profile enable row level security;
 alter table public.sun_pipeline_runs enable row level security;
 
-drop policy if exists "Public can read venue seating" on public.venue_seating;
 create policy "Public can read venue seating"
   on public.venue_seating for select using (true);
 
-drop policy if exists "Public can read venue sun profiles" on public.venue_sun_profile;
 create policy "Public can read venue sun profiles"
   on public.venue_sun_profile for select using (true);

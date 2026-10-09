@@ -108,14 +108,26 @@
   }
 
   // state: 'sun' | 'shade' | 'night' | 'cloud'
-  // cloudCover: 0–100 (%), optional. 'cloud' only replaces 'sun' — shade stays shade.
-  function sunState(horizonDeg, lat, lng, date, { cloudCover = null, cloudThreshold = 75 } = {}) {
+  // Weather is optional and only ever downgrades 'sun' to 'cloud' — shade stays shade.
+  //   cloudy: boolean from the caller's own weather rule, or
+  //   cloudCover: 0–100 (%) compared with cloudThreshold.
+  function sunState(horizonDeg, lat, lng, date, { cloudy = null, cloudCover = null, cloudThreshold = 80 } = {}) {
     const sun = sunPosition(date, lat, lng);
     if (!(sun.altitudeDeg > 0)) return { state: "night", sun };
     const geometricSun = sun.altitudeDeg > horizonAt(horizonDeg, sun.azimuthDeg);
     if (!geometricSun) return { state: "shade", sun };
-    if (typeof cloudCover === "number" && cloudCover >= cloudThreshold) return { state: "cloud", sun };
-    return { state: "sun", sun };
+    const isCloudy = typeof cloudy === "boolean" ? cloudy
+      : (typeof cloudCover === "number" && cloudCover >= cloudThreshold);
+    return { state: isCloudy ? "cloud" : "sun", sun };
+  }
+
+  // Direct sun is blocked by cloud when the direct normal irradiance is below
+  // the WMO sunshine threshold (120 W/m²). Near the horizon clear-sky DNI is
+  // naturally low, so below 10° fall back to total cloud cover.
+  function isCloudy({ dni = null, cloudCover = null, sunAltitudeDeg = 90 } = {}) {
+    if (sunAltitudeDeg >= 10 && typeof dni === "number") return dni < 120;
+    if (typeof cloudCover === "number") return cloudCover >= 80;
+    return null;
   }
 
   // ── Time zones ────────────────────────────────────────────────────────────
@@ -222,7 +234,7 @@
     ALGORITHM_VERSION, HORIZON_STEPS, HORIZON_STEP_DEG,
     sunPosition, refractionDeg,
     decodeHorizon, encodeHorizon, horizonAt,
-    isInSun, sunState,
+    isInSun, sunState, isCloudy,
     startOfLocalDay, zonedParts,
     dayTimeline, nextChange, formatClock, sunLine,
   };
