@@ -1,0 +1,31 @@
+{
+  "name": "Dublin",
+  "time_zone": "Europe/Dublin",
+  "bbox": [53.20, -6.50, 53.48, -6.00],
+  "origin": [53.3438, -6.2546],
+  "venue_city_match": ["dublin%", "Kimmage", "Barracks"],
+  "osm_extract": {
+    "file": "Dublin.osm.pbf",
+    "url": "https://download.bbbike.org/osm/bbbike/Dublin/Dublin.osm.pbf"
+  },
+  "heights": {
+    "default_m": 12,
+    "storey_m": 3.29,
+    "levels_base_m": 3.9,
+    "roof_storey_m": 1.5,
+    "lidar_disagree_abs_m": 3,
+    "lidar_disagree_rel": 0.25
+  },
+  "horizon": {
+    "ray_length_m": 300,
+    "eye_height_m": 1.2,
+    "seat_offset_m": 2.5,
+    "quality_radius_m": 150
+  },
+  "lidar": {
+    "name": "2015 Aerial Laser and Photogrammetry Survey of Dublin City (NYU, CC BY 4.0)",
+    "index_url": "https://serv.cusp.nyu.edu/projects/ALSDublin15/json/all_bitstreams.json",
+    "crs": "EPSG:29902",
+    "heights_csv": "lidar_heights_dublin_2015.csv"
+  }
+}

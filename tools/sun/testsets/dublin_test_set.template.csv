@@ -1,0 +1,6 @@
+# Copy to dublin_test_set.csv and fill in. One row per observation; repeat place_id for several times on one day.
+# seating_side: front | rear | rooftop | street. Times are local Dublin time (HH:MM, 24 h).
+# observed_state: sun = direct sun on the seating at that time; shade = no direct sun (ignore cloud: note cloudy times in a separate row or leave out).
+# sun_from / sun_until: optional, the time direct sun arrived / left that day.
+place_id,name,seating_side,observed_seating_lat,observed_seating_lng,date,time,observed_state,sun_from,sun_until
+ChIJexample000000000000000,Example Pub,front,53.34400,-6.26100,2026-06-21,13:00,sun,10:40,17:20

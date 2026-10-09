@@ -126,6 +126,26 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   <script>window.SUNNY_ICON_URL = '/icons/marker.png';</script>
 
   <script src="analytics.js"></script>
+
+  <!-- Feature flag: live sun/shade (off in production until the accuracy report is approved).
+       Turn on with ?sun=1 (remembered on this device), off with ?sun=0. On by default on localhost. -->
+  <script>
+    (function(){
+      var on=false;
+      try{
+        var q=new URLSearchParams(location.search).get('sun');
+        if(q==='1') localStorage.setItem('sunny_flag_sun','1');
+        if(q==='0') localStorage.setItem('sunny_flag_sun','0');
+        var stored=localStorage.getItem('sunny_flag_sun');
+        on=stored==='1'||(stored!=='0'&&/^(localhost|127\.0\.0\.1)$/.test(location.hostname));
+      }catch(e){}
+      window.SUNNY_FEATURES=Object.assign(window.SUNNY_FEATURES||{},{sun:on});
+      if(!on) return;
+      ['js/sun-core.js','js/sun-ui.js'].forEach(function(src){
+        var s=document.createElement('script'); s.src=src; s.async=false; document.head.appendChild(s);
+      });
+    })();
+  </script>
   <script defer src="live-crawl.js"></script>
   <script defer src="share-prompt.js"></script>
 

@@ -1,0 +1,4 @@
+# Sun pipeline caches (raw OSM extracts, LiDAR tiles, venue exports)
+tools/sun/data/
+tools/sun/.venv/
+__pycache__/

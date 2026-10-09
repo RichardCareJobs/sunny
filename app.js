@@ -4705,6 +4705,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       card.sunChip.style.display="none";
     }
     if(hasValidCoords) populateCombinedWeatherChip(card.sunChip,v.lat,v.lng,sun);
+    window.SunnySunUI?.renderCard?.(card.container,v);
 
     // "Unknown" means hours data isn't available yet (regularOpeningHours no longer
     // returned by search — it arrives via fetchVenueDetails). Hide rather than show
@@ -5232,6 +5233,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
     const visibleIds=new Set(visibleVenues.map((v)=>v.id));
+    window.SunnySunUI?.onVenuesVisible?.(visibleVenues);
 
     // Fire venue_view for each venue newly entering the viewport.
     // Fires again if the venue scrolls off-screen and comes back.
@@ -5273,6 +5275,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         }
         if(markerIcon&&marker.getIcon()!==markerIcon) marker.setIcon(markerIcon);
       }
+      window.SunnySunUI?.decorateMarker?.(marker,v);
       marker.setVisible(true);
       visibleMarkers.push(marker);
     },()=>{
