@@ -44,7 +44,9 @@ only LiDAR product kept; it's committed so step 2a never needs re-running.
 
 * **Heights**, in priority order: LiDAR (p90 of returns inside the footprint
   eroded 1 m, minus the p20 of a minimum-height grid in a 3–10 m ring outside)
-  → OSM `height` → `building:levels` × 3 m (+ `roof:levels` × 1.5 m) → 12 m.
+  → OSM `height` → `building:levels` × 3.29 m + 3.9 m (+ `roof:levels` × 1.5 m)
+  → 12 m. The storey rule is calibrated against the LiDAR (3,054 Dublin
+  buildings with both): typical error 1.6 m, versus 4.2 m for a plain × 3 m.
   An explicit OSM `height` well above the LiDAR value wins (built since 2015).
   LiDAR/OSM disagreements over max(3 m, 25%) are listed in
   `out/lidar_disagreements.csv`.

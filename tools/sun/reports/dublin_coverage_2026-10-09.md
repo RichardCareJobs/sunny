@@ -26,10 +26,10 @@ Buildings counted are the ones the horizon rays actually hit, summed over all ve
 |---|---|---|
 | 2015 LiDAR | 39,167 | 29% |
 | OSM `height` | 3,202 | 2% |
-| OSM storeys × 3 m | 23,366 | 17% |
+| OSM storeys (× 3.29 m + 3.9 m) | 23,366 | 17% |
 | Default 12 m (fallback) | 70,728 | 52% |
 
-**Real heights 48% · fallback 52%.** LiDAR vs OSM disagreements flagged (> max(3 m, 25%)): 2286.
+**Real heights 48% · fallback 52%.** LiDAR vs OSM disagreements flagged (> max(3 m, 25%)): 377.
 
 ## Data quality per venue
 

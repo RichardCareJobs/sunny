@@ -10,8 +10,8 @@
   },
   "heights": {
     "default_m": 12,
-    "storey_m": 3,
-    "levels_base_m": 0,
+    "storey_m": 3.29,
+    "levels_base_m": 3.9,
     "roof_storey_m": 1.5,
     "lidar_disagree_abs_m": 3,
     "lidar_disagree_rel": 0.25

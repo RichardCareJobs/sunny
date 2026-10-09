@@ -65,7 +65,7 @@ def main():
     L.append("## Building heights behind the profiles\n")
     L.append("Buildings counted are the ones the horizon rays actually hit, summed over all venues.\n")
     L.append("| Height source | Buildings | Share |\n|---|---|---|")
-    for k, label in [("lidar", "2015 LiDAR"), ("osm_height", "OSM `height`"), ("levels", "OSM storeys × 3 m"),
+    for k, label in [("lidar", "2015 LiDAR"), ("osm_height", "OSM `height`"), ("levels", "OSM storeys (× 3.29 m + 3.9 m)"),
                      ("default", "Default 12 m (fallback)")]:
         L.append(f"| {label} | {rules[k]:,} | {pct(rules[k], tot)} |")
     L.append(f"\n**Real heights {pct(tot - rules['default'], tot)} · fallback {pct(rules['default'], tot)}.** "
