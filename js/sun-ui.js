@@ -75,6 +75,7 @@
     if (!raw) return null;
     const horizon = S.decodeHorizon(raw.h);
     if (!horizon) return null;
+    if (CITY_TZ[raw.city]) displayTz = CITY_TZ[raw.city];
     return {
       horizon, lat: raw.lat, lng: raw.lng, tz: CITY_TZ[raw.city] || undefined,
       label: raw.src === "venue" ? "Venue-verified" : "Estimated",
@@ -180,7 +181,11 @@
   }
 
   // ── Time (slider offset from now, today only) ─────────────────────────────
+  // Times are shown in the venues' city time zone (not the device's), so a
+  // visitor whose phone is on another zone still sees Dublin times.
   let offsetMin = 0;
+  let displayTz;
+  function tzNow() { return displayTz || Intl.DateTimeFormat().resolvedOptions().timeZone; }
   function selectedMs() { return Date.now() + offsetMin * 60000; }
 
   // ── State per venue ───────────────────────────────────────────────────────
@@ -271,6 +276,7 @@
     lastVisible = (venues || []).map((v) => v.id);
     ensureControls();
     const fetched = await fetchProfiles(lastVisible);
+    if (controls) controls.sync();
     const cells = new Map();
     lastVisible.forEach((id) => {
       const p = profiles.get(id);
@@ -325,9 +331,8 @@
   // ── Time slider ───────────────────────────────────────────────────────────
   let controls = null;
   function minutesLeftToday() {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const end = S.startOfLocalDay(Date.now() + 36 * 3600000, tz) - 1;
-    const endOfToday = Math.min(end, S.startOfLocalDay(Date.now(), tz) + 24 * 3600000 - 1);
+    const tz = tzNow();
+    const endOfToday = S.startOfLocalDay(S.startOfLocalDay(Date.now(), tz) + 36 * 3600000, tz) - 1;
     return Math.max(0, Math.floor((endOfToday - Date.now()) / 60000 / STEP_MIN) * STEP_MIN);
   }
   function ensureControls() {
@@ -364,7 +369,7 @@
       range.max = String(minutesLeftToday());
       if (offsetMin > Number(range.max)) offsetMin = Number(range.max);
       range.value = String(offsetMin);
-      label.textContent = offsetMin ? `Sun at ${S.formatClock(selectedMs(), undefined, { roundMin: STEP_MIN })}` : "Sun now";
+      label.textContent = offsetMin ? `Sun at ${S.formatClock(selectedMs(), tzNow(), { roundMin: STEP_MIN })}` : "Sun now";
       nowBtn.hidden = !offsetMin;
     };
     let trackTimer = null;

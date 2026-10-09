@@ -18,7 +18,7 @@ import urllib.request
 
 from common import city_data_dir
 
-BATCH = 60
+BATCH = 80
 SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co"
 
 
@@ -43,26 +43,31 @@ def seating_sql(rows):
 
 
 def profile_sql(rows, seat_by_id):
-    cols = ["place_id", "city", "horizon", "data_quality", "buildings_total", "buildings_lidar",
-            "buildings_osm_height", "buildings_levels", "buildings_default", "ray_length_m", "eye_height_m",
-            "osm_extract_date", "lidar_source", "algorithm_version"]
+    """Per-run constants (city, ray, eye, extract date, LiDAR source, version)
+    go in the SELECT once; each row carries only what varies."""
+    const_keys = ["city", "ray_length_m", "eye_height_m", "osm_extract_date", "algorithm_version"]
+    consts = {k: rows[0][k] for k in const_keys}
+    assert all(r[k] == consts[k] for r in rows for k in const_keys), "mixed runs in one batch"
+    lidar_names = {r["lidar_source"] for r in rows if r.get("lidar_source")}
+    assert len(lidar_names) <= 1
+    lidar_name = next(iter(lidar_names), None)
+    var = ["place_id", "horizon", "data_quality", "buildings_total", "buildings_lidar",
+           "buildings_osm_height", "buildings_levels", "buildings_default"]
     vals = []
     for r in rows:
         s = seat_by_id[r["place_id"]]
-        cells = []
-        for c in cols:
-            if c == "horizon":
-                cells.append("'{" + ",".join(str(int(x)) for x in r[c]) + "}'::smallint[]")
-            elif c == "osm_extract_date":
-                cells.append(q(r[c]) + "::timestamptz")
-            else:
-                cells.append(q(r.get(c)))
-        cells += [q(s["seating_lat"]), q(s["seating_lng"])]
-        vals.append("(" + ",".join(cells) + ")")
-    sel = ", ".join(f"v.{c}" for c in cols)
+        h = "'{" + ",".join(str(int(x)) for x in r["horizon"]) + "}'"
+        vals.append(f"({q(r['place_id'])},{h},{r['data_quality']},{r['buildings_total']},{r['buildings_lidar']},"
+                    f"{r['buildings_osm_height']},{r['buildings_levels']},{r['buildings_default']},"
+                    f"{s['seating_lat']},{s['seating_lng']})")
+    cols = var + ["city", "ray_length_m", "eye_height_m", "osm_extract_date", "lidar_source", "algorithm_version"]
+    sel = (", ".join(f"v.{c}" for c in var if c != "horizon").replace("v.place_id", "v.place_id, v.horizon::smallint[]")
+           + f", {q(consts['city'])}, {consts['ray_length_m']}, {consts['eye_height_m']}, "
+           f"{q(consts['osm_extract_date'])}::timestamptz, "
+           f"case when v.buildings_lidar > 0 then {q(lidar_name)} end, {q(consts['algorithm_version'])}")
     upd = ", ".join(f"{c} = excluded.{c}" for c in cols[1:]) + ", computed_at = now()"
     return (f"insert into public.venue_sun_profile ({', '.join(cols)})\n"
-            f"select {sel} from (values\n" + ",\n".join(vals) + f"\n) as v({', '.join(cols)}, lat, lng)\n"
+            f"select {sel} from (values\n" + ",\n".join(vals) + f"\n) as v({', '.join(var)}, lat, lng)\n"
             f"join public.venue_seating s on s.place_id = v.place_id\n"
             f"  and abs(s.seating_lat - v.lat) < 1e-6 and abs(s.seating_lng - v.lng) < 1e-6\n"
             f"on conflict (place_id) do update set {upd};\n")
