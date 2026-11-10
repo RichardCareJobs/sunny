@@ -218,26 +218,27 @@
   // ── Pins ──────────────────────────────────────────────────────────────────
   const PIN = "M18 46C18 46 3 28.5 3 17.5a15 15 0 1 1 30 0C33 28.5 18 46 18 46z";
   // Every sun pin is a coloured pin with a white disc and a glyph in the pin's colour:
-  // gold + sun (in sun), teal + parasol (in shade), blue + cloud (sun hidden by cloud),
+  // gold + sun (in sun), teal + sun behind buildings (in shade), blue + cloud (sun hidden by cloud),
   // Sunny orange + pint glass (no sun data for this venue yet, inside a sun-mapped city —
   // says "pub" and nothing about sun, unlike the default pin's sunburst).
   const DISC = '<circle cx="18" cy="17" r="10.5" fill="#fff"/>';
   const GLYPH = {
     sun: DISC + '<circle cx="18" cy="17" r="3.6" fill="#f58a00"/><path d="M18 9.5v2M18 22.5v2M10.5 17h2M23.5 17h2M12.7 11.7l1.4 1.4M21.9 20.9l1.4 1.4' +
       'M12.7 22.3l1.4-1.4M21.9 13.1l1.4-1.4" stroke="#f58a00" stroke-width="2" stroke-linecap="round" fill="none"/>',
-    shade: DISC + '<path d="M10.5 17a7.5 7.5 0 0 1 15 0z" fill="#0b7f8b"/>' +
-      '<path d="M18 17v5.2a1.6 1.6 0 0 0 3.2 0" stroke="#0b7f8b" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
+    shade: DISC + '<circle cx="14.4" cy="14.2" r="5" fill="#ffb400"/><path d="M17.8 9.6h6.8v14.8h-6.8zM11 19.2h6.8v5.2H11z" fill="#0b7f8b"/>',
     cloud: DISC + '<path d="M12.6 21.2h10.2a3.6 3.6 0 0 0 .3-7.2 4.8 4.8 0 0 0-9.1 1.3 3 3 0 0 0-1.4 5.9z" fill="#3f6fd1"/>',
     none: DISC + '<path d="M13.6 10.5h8.8l-1.1 13h-6.6z" fill="#e65f00"/><path d="M13.6 10.5h8.8l-.3 3.4h-8.2z" fill="#ffd2ad"/>',
   };
   const FILL = { sun: "#ffb400", shade: "#0f9aa8", cloud: "#5b8def", none: "#ff6a00" };
+  function pinSvg(state, w, h) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 36 47" aria-hidden="true"><path d="${PIN}" fill="${FILL[state]}" stroke="#fff" stroke-width="2"/>${GLYPH[state]}</svg>`;
+  }
   const icons = {};
   function iconFor(state) {
     if (!GLYPH[state] || !window.google?.maps) return null;
     if (!icons[state]) {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="47" viewBox="0 0 36 47"><path d="${PIN}" fill="${FILL[state]}" stroke="#fff" stroke-width="2"/>${GLYPH[state]}</svg>`;
       icons[state] = {
-        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(pinSvg(state, 36, 47))}`,
         scaledSize: new google.maps.Size(36, 47), anchor: new google.maps.Point(18, 47),
       };
     }
@@ -327,7 +328,7 @@
       const st = stateFor(v.id, ms);
       const tl = timelineFor(v.id, ms);
       const line = S.sunLine(tl, ms, p.tz, st.state);
-      const icon = { sun: "☀️", shade: "⛱️", cloud: "☁️", night: "🌙" }[st.state] || "";
+      const icon = { sun: "☀️", shade: "🌥️", cloud: "☁️", night: "🌙" }[st.state] || "";
       const tz = p.tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
       const otherDay = selectedAt && S.startOfLocalDay(ms, tz) !== S.startOfLocalDay(Date.now(), tz);
       const when = selectedAt ? ` <span class="venue-card__sun-when">${otherDay ? "tomorrow " : ""}at ${S.formatClock(ms, p.tz)}</span>` : "";
@@ -391,13 +392,20 @@
       .sun-chip[aria-pressed=true]{background:#111;border-color:#111;color:#fff}
       .sun-chip:focus-visible,.sun-tip__ok:focus-visible,.sun-soon__close:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
       .sun-chips__day{padding:0 12px 0 14px;background:rgba(17,17,17,.82);color:#fff;font-weight:600}
-      .sun-tip{position:relative;margin:2px 12px 0;max-width:340px;background:#111;color:#fff;border-radius:14px;padding:12px 14px;
-        box-shadow:0 8px 24px rgba(0,0,0,.28);font-size:14px;line-height:1.4}
-      .sun-tip::before{content:"";position:absolute;top:-6px;left:30px;width:12px;height:12px;background:#111;transform:rotate(45deg)}
-      .sun-tip__title{font-weight:800;display:block;margin-bottom:2px}
-      .sun-tip__row{display:flex;align-items:flex-end;gap:12px}
-      .sun-tip__text{flex:1;margin:0}
-      .sun-tip__ok{flex:none;height:44px;padding:0 16px;border-radius:999px;border:0;background:#fff;color:#111;font-family:inherit;font-size:14px;font-weight:700;line-height:1;cursor:pointer}
+      .sun-key{flex:none;position:sticky;left:0;z-index:1;width:44px;height:44px;box-sizing:border-box;border-radius:50%;border:1px solid #d9dde1;
+        background:#fff;color:#111;box-shadow:0 1px 5px rgba(0,0,0,.2);display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer}
+      .sun-key[aria-expanded=true]{background:#111;border-color:#111;color:#fff}
+      .sun-key:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
+      .sun-tip{position:relative;margin:2px 12px 0;max-width:340px;background:#fff;color:#111;border-radius:14px;padding:12px 14px;
+        box-shadow:0 8px 24px rgba(0,0,0,.28);font-size:14px;line-height:1.35}
+      .sun-tip::before{content:"";position:absolute;top:-6px;left:16px;width:12px;height:12px;background:#fff;transform:rotate(45deg)}
+      .sun-tip__title{font-weight:800;margin:0 0 8px;font-size:15px}
+      .sun-tip__key{list-style:none;margin:0 0 10px;padding:0;display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;font-weight:600}
+      .sun-tip__key li{display:flex;align-items:center;gap:8px}
+      .sun-tip__key svg{flex:none}
+      .sun-tip__row{display:flex;align-items:center;gap:12px}
+      .sun-tip__text{flex:1;margin:0;font-size:13px;color:#4b5563}
+      .sun-tip__ok{flex:none;height:44px;padding:0 16px;border-radius:999px;border:0;background:#111;color:#fff;font-family:inherit;font-size:14px;font-weight:700;line-height:1;cursor:pointer}
       .sun-soon{display:flex;align-items:center;gap:8px;margin:10px 12px 0;width:fit-content;max-width:calc(100% - 24px);box-sizing:border-box;
         background:#fff;border:1px solid #d9dde1;border-radius:14px;padding:4px 4px 4px 14px;box-shadow:0 1px 5px rgba(0,0,0,.2);font-size:14px;font-weight:600;line-height:1.3}
       .sun-soon svg{flex:none;color:#b45309}
@@ -421,9 +429,10 @@
     el.className = "sun-bar";
     el.innerHTML =
       `<div class="sun-chips" role="group" aria-label="Show sun and shade at" hidden></div>` +
-      `<div class="sun-tip" role="status" hidden><div class="sun-tip__row"><p class="sun-tip__text">` +
-        `<span class="sun-tip__title">New in Dublin: live sun mapping</span>` +
-        `Gold pins are in sun, teal in shade, blue under cloud. Pint pins have no sun data yet. Tap a time to look ahead. Estimates only.</p>` +
+      `<div class="sun-tip" id="sunKey" role="status" hidden><p class="sun-tip__title"></p><ul class="sun-tip__key">` +
+        [["sun", "In sun"], ["shade", "In shade"], ["cloud", "Sun behind cloud"], ["none", "No sun data yet"]]
+          .map(([st, label]) => `<li>${pinSvg(st, 22, 29)}<span>${label}</span></li>`).join("") +
+        `</ul><div class="sun-tip__row"><p class="sun-tip__text">Tap a time to look ahead. Estimates only.</p>` +
         `<button type="button" class="sun-tip__ok">Got it</button></div></div>` +
       `<div class="sun-soon" role="status" hidden>${SUN_SVG}<span>Live sun mapping coming soon for this location</span>` +
         `<button type="button" class="sun-soon__close" aria-label="Close"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" ` +
@@ -437,9 +446,20 @@
     let listSig = "";
     let soonTracked = false;
 
+    const KEY_BTN = `<button type="button" class="sun-key" aria-label="What the pins mean" aria-controls="sunKey" aria-expanded="false">` +
+      `<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">` +
+      `<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.2v.1"/></svg></button>`;
+    const markKey = () => chipsEl.querySelector(".sun-key")?.setAttribute("aria-expanded", tipEl.hidden ? "false" : "true");
+    const openTip = (firstTime) => {
+      tipEl.querySelector(".sun-tip__title").textContent = firstTime ? "New in Dublin: live sun mapping" : "What the pins mean";
+      tipEl.hidden = false;
+      markKey();
+      track(firstTime ? "sun_tip_shown" : "sun_legend_opened", { city });
+    };
     const closeTip = (how) => {
       if (tipEl.hidden) return;
       tipEl.hidden = true;
+      markKey();
       track("sun_tip_dismissed", { how });
     };
     const sync = () => {
@@ -453,22 +473,23 @@
         if (sig !== listSig) {
           listSig = sig;
           chipsEl.innerHTML =
-            (sunUp ? `<button type="button" class="sun-chip" data-t="now">${SUN_SVG}Now</button>`
+            KEY_BTN + (sunUp ? `<button type="button" class="sun-chip" data-t="now">${SUN_SVG}Now</button>`
               : `<span class="sun-chips__day">${isTomorrow ? "Tomorrow" : "Today"}</span>`) +
             hours.map((t) => `<button type="button" class="sun-chip" data-t="${t}">${hourLabel(t, c.tz)}</button>`).join("");
           chipsEl.scrollLeft = 0;
+          markKey();
         }
         chipsEl.querySelectorAll(".sun-chip").forEach((b) => {
           const on = b.dataset.t === "now" ? !selectedAt : Number(b.dataset.t) === selectedAt;
           b.setAttribute("aria-pressed", on ? "true" : "false");
         });
         if (chipsEl.hidden && !store(TIP_SEEN_KEY)) {
-          store(TIP_SEEN_KEY, "1"); // shown once per device, whether or not it's dismissed
-          tipEl.hidden = false;
-          track("sun_tip_shown", { city });
+          store(TIP_SEEN_KEY, "1"); // opens by itself once per device; the key button reopens it
+          openTip(true);
         }
       } else if (!tipEl.hidden) {
         tipEl.hidden = true;
+        markKey();
       }
       chipsEl.hidden = !c;
       soonEl.hidden = !(city === null && !store(SOON_DISMISSED_KEY));
@@ -484,6 +505,7 @@
     };
 
     chipsEl.addEventListener("click", (e) => {
+      if (e.target.closest(".sun-key")) { if (tipEl.hidden) openTip(false); else closeTip("key"); return; }
       const b = e.target.closest(".sun-chip");
       if (!b) return;
       const t = b.dataset.t === "now" ? null : Number(b.dataset.t);
