@@ -225,13 +225,17 @@
       }).join("") + "</g>",
     shade: '<circle cx="18" cy="17" r="7" fill="none" stroke="#e6ebf0" stroke-width="2"/><path d="M18 10a7 7 0 0 1 0 14z" fill="#e6ebf0"/>',
     cloud: '<path d="M11.5 22h13a4.5 4.5 0 0 0 .4-9 6 6 0 0 0-11.4 1.6A3.8 3.8 0 0 0 11.5 22z" fill="#fff"/>',
+    // No sun data for this venue yet (inside a sun-mapped city): a plain white pin, so it
+    // can't be mistaken for "in sun" the way the orange default pin would be.
+    none: '<circle cx="18" cy="17" r="4.5" fill="#7b8794"/>',
   };
-  const FILL = { sun: "#f29d00", shade: "#4f5d6b", cloud: "#8a96a3" };
+  const FILL = { sun: "#f29d00", shade: "#4f5d6b", cloud: "#8a96a3", none: "#ffffff" };
+  const STROKE = { none: "#7b8794" };
   const icons = {};
   function iconFor(state) {
     if (!GLYPH[state] || !window.google?.maps) return null;
     if (!icons[state]) {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="47" viewBox="0 0 36 47"><path d="${PIN}" fill="${FILL[state]}" stroke="#fff" stroke-width="2"/>${GLYPH[state]}</svg>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="47" viewBox="0 0 36 47"><path d="${PIN}" fill="${FILL[state]}" stroke="${STROKE[state] || "#fff"}" stroke-width="2"/>${GLYPH[state]}</svg>`;
       icons[state] = {
         url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
         scaledSize: new google.maps.Size(36, 47), anchor: new google.maps.Point(18, 47),
@@ -244,7 +248,12 @@
   function isSunIcon(icon) { return !!icon && Object.values(icons).includes(icon); }
   function applyMarker(id, marker, ms) {
     const st = stateFor(id, ms);
-    const icon = st ? iconFor(st.state) : null; // night / no profile: the default pin
+    let icon = st ? iconFor(st.state) : null; // night: the default pin
+    if (!st && profiles.get(id) === null && marker.__sunnyCity) {
+      // In a sun-mapped city but no data for this venue: neutral pin while the sun is up.
+      const c = CITIES[marker.__sunnyCity];
+      if (S.sunPosition(ms, c.origin[0], c.origin[1]).altitudeDeg > 0) icon = iconFor("none");
+    }
     const cur = marker.getIcon();
     if (!isSunIcon(cur)) marker.__sunnyBaseIcon = cur;
     if (icon) {
@@ -258,6 +267,7 @@
   function decorateMarker(marker, v) {
     if (!marker || !v) return;
     markers.set(v.id, marker);
+    marker.__sunnyCity = cityAt(v) || null;
     applyMarker(v.id, marker, selectedMs());
   }
 
@@ -413,7 +423,7 @@
       `<div class="sun-chips" role="group" aria-label="Show sun and shade at" hidden></div>` +
       `<div class="sun-tip" role="status" hidden><div class="sun-tip__row"><p class="sun-tip__text">` +
         `<span class="sun-tip__title">New in Dublin: live sun mapping</span>` +
-        `Pins show which pubs are in sun or shade. Tap a time to look ahead. Estimates only.</p>` +
+        `Pins show which pubs are in sun or shade. White pins have no sun data yet. Tap a time to look ahead. Estimates only.</p>` +
         `<button type="button" class="sun-tip__ok">Got it</button></div></div>` +
       `<div class="sun-soon" role="status" hidden>${SUN_SVG}<span>Live sun mapping coming soon for this location</span>` +
         `<button type="button" class="sun-soon__close" aria-label="Close"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" ` +
@@ -496,7 +506,7 @@
 
   function refresh({ pins = false, card = false } = {}) {
     const ms = selectedMs();
-    if (pins) markers.forEach((m, id) => { if (profiles.get(id)) applyMarker(id, m, ms); });
+    if (pins) markers.forEach((m, id) => { if (profiles.has(id)) applyMarker(id, m, ms); });
     if (card && cardRef && cardRef.el.isConnected && cardRef.el.dataset.venueId === String(cardRef.v.id)) renderCard(cardRef.el, cardRef.v);
   }
 
