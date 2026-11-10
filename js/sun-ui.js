@@ -217,25 +217,25 @@
 
   // ── Pins ──────────────────────────────────────────────────────────────────
   const PIN = "M18 46C18 46 3 28.5 3 17.5a15 15 0 1 1 30 0C33 28.5 18 46 18 46z";
+  // Every sun pin is a coloured pin with a white disc and a glyph in the pin's colour:
+  // gold + sun (in sun), teal + parasol (in shade), blue + cloud (sun hidden by cloud),
+  // Sunny orange + pint glass (no sun data for this venue yet, inside a sun-mapped city —
+  // says "pub" and nothing about sun, unlike the default pin's sunburst).
+  const DISC = '<circle cx="18" cy="17" r="10.5" fill="#fff"/>';
   const GLYPH = {
-    sun: '<circle cx="18" cy="17" r="6" fill="#fff6c2"/><g stroke="#fff6c2" stroke-width="2" stroke-linecap="round">' +
-      [0, 45, 90, 135, 180, 225, 270, 315].map((a) => {
-        const r = Math.PI * a / 180, x1 = 18 + 8.5 * Math.cos(r), y1 = 17 + 8.5 * Math.sin(r), x2 = 18 + 11 * Math.cos(r), y2 = 17 + 11 * Math.sin(r);
-        return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
-      }).join("") + "</g>",
-    shade: '<circle cx="18" cy="17" r="7" fill="none" stroke="#e6ebf0" stroke-width="2"/><path d="M18 10a7 7 0 0 1 0 14z" fill="#e6ebf0"/>',
-    cloud: '<path d="M11.5 22h13a4.5 4.5 0 0 0 .4-9 6 6 0 0 0-11.4 1.6A3.8 3.8 0 0 0 11.5 22z" fill="#fff"/>',
-    // No sun data for this venue yet (inside a sun-mapped city): a plain white pin, so it
-    // can't be mistaken for "in sun" the way the orange default pin would be.
-    none: '<circle cx="18" cy="17" r="4.5" fill="#7b8794"/>',
+    sun: DISC + '<circle cx="18" cy="17" r="3.6" fill="#f58a00"/><path d="M18 9.5v2M18 22.5v2M10.5 17h2M23.5 17h2M12.7 11.7l1.4 1.4M21.9 20.9l1.4 1.4' +
+      'M12.7 22.3l1.4-1.4M21.9 13.1l1.4-1.4" stroke="#f58a00" stroke-width="2" stroke-linecap="round" fill="none"/>',
+    shade: DISC + '<path d="M10.5 17a7.5 7.5 0 0 1 15 0z" fill="#0b7f8b"/>' +
+      '<path d="M18 17v5.2a1.6 1.6 0 0 0 3.2 0" stroke="#0b7f8b" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
+    cloud: DISC + '<path d="M12.6 21.2h10.2a3.6 3.6 0 0 0 .3-7.2 4.8 4.8 0 0 0-9.1 1.3 3 3 0 0 0-1.4 5.9z" fill="#3f6fd1"/>',
+    none: DISC + '<path d="M13.6 10.5h8.8l-1.1 13h-6.6z" fill="#e65f00"/><path d="M13.6 10.5h8.8l-.3 3.4h-8.2z" fill="#ffd2ad"/>',
   };
-  const FILL = { sun: "#f29d00", shade: "#4f5d6b", cloud: "#8a96a3", none: "#ffffff" };
-  const STROKE = { none: "#7b8794" };
+  const FILL = { sun: "#ffb400", shade: "#0f9aa8", cloud: "#5b8def", none: "#ff6a00" };
   const icons = {};
   function iconFor(state) {
     if (!GLYPH[state] || !window.google?.maps) return null;
     if (!icons[state]) {
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="47" viewBox="0 0 36 47"><path d="${PIN}" fill="${FILL[state]}" stroke="${STROKE[state] || "#fff"}" stroke-width="2"/>${GLYPH[state]}</svg>`;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="36" height="47" viewBox="0 0 36 47"><path d="${PIN}" fill="${FILL[state]}" stroke="#fff" stroke-width="2"/>${GLYPH[state]}</svg>`;
       icons[state] = {
         url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
         scaledSize: new google.maps.Size(36, 47), anchor: new google.maps.Point(18, 47),
@@ -327,7 +327,7 @@
       const st = stateFor(v.id, ms);
       const tl = timelineFor(v.id, ms);
       const line = S.sunLine(tl, ms, p.tz, st.state);
-      const icon = { sun: "☀️", shade: "🌥️", cloud: "☁️", night: "🌙" }[st.state] || "";
+      const icon = { sun: "☀️", shade: "⛱️", cloud: "☁️", night: "🌙" }[st.state] || "";
       const tz = p.tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
       const otherDay = selectedAt && S.startOfLocalDay(ms, tz) !== S.startOfLocalDay(Date.now(), tz);
       const when = selectedAt ? ` <span class="venue-card__sun-when">${otherDay ? "tomorrow " : ""}at ${S.formatClock(ms, p.tz)}</span>` : "";
@@ -410,7 +410,7 @@
       .venue-card__sun-attrib{font-size:.68rem;color:#666;line-height:1.3}
       .venue-card__sun-attrib a{color:inherit}
       .venue-card__sun{margin:.4rem 0 .2rem;padding:.5rem .6rem;border-radius:10px;background:#fff8e6}
-      .venue-card__sun[data-state=shade]{background:#eef1f4}.venue-card__sun[data-state=cloud]{background:#f1f3f5}
+      .venue-card__sun[data-state=shade]{background:#e6f6f7}.venue-card__sun[data-state=cloud]{background:#edf3fd}
       .venue-card__sun[data-state=night]{background:#eef0f7}
       .venue-card__sun-line{display:flex;align-items:center;gap:.4rem;font-weight:600;flex-wrap:wrap}
       .venue-card__sun-when{font-weight:400;color:#555}
@@ -423,7 +423,7 @@
       `<div class="sun-chips" role="group" aria-label="Show sun and shade at" hidden></div>` +
       `<div class="sun-tip" role="status" hidden><div class="sun-tip__row"><p class="sun-tip__text">` +
         `<span class="sun-tip__title">New in Dublin: live sun mapping</span>` +
-        `Pins show which pubs are in sun or shade. White pins have no sun data yet. Tap a time to look ahead. Estimates only.</p>` +
+        `Gold pins are in sun, teal in shade, blue under cloud. Pint pins have no sun data yet. Tap a time to look ahead. Estimates only.</p>` +
         `<button type="button" class="sun-tip__ok">Got it</button></div></div>` +
       `<div class="sun-soon" role="status" hidden>${SUN_SVG}<span>Live sun mapping coming soon for this location</span>` +
         `<button type="button" class="sun-soon__close" aria-label="Close"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" ` +
