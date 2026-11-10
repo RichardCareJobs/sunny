@@ -128,17 +128,17 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
   <script src="analytics.js"></script>
   <script src="js/search-core.js"></script>
 
-  <!-- Feature flag: live sun/shade (off in production until the accuracy report is approved).
-       Turn on with ?sun=1 (remembered on this device), off with ?sun=0. On by default on localhost. -->
+  <!-- Live sun/shade: on by default (hour chips show in Dublin; a "coming soon" message elsewhere).
+       Kill switch: ?sun=0 turns it off on this device (remembered); ?sun=1 turns it back on. -->
   <script>
     (function(){
-      var on=false;
+      var on=true;
       try{
         var q=new URLSearchParams(location.search).get('sun');
         if(q==='1') localStorage.setItem('sunny_flag_sun','1');
         if(q==='0') localStorage.setItem('sunny_flag_sun','0');
         var stored=localStorage.getItem('sunny_flag_sun');
-        on=stored==='1'||(stored!=='0'&&/^(localhost|127\.0\.0\.1)$/.test(location.hostname));
+        on=stored!=='0';
       }catch(e){}
       window.SUNNY_FEATURES=Object.assign(window.SUNNY_FEATURES||{},{sun:on});
       if(!on) return;

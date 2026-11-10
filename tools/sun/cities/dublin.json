@@ -4,6 +4,7 @@
   "bbox": [53.20, -6.50, 53.48, -6.00],
   "origin": [53.3438, -6.2546],
   "venue_city_match": ["dublin%", "Kimmage", "Barracks"],
+  "place_id_region": "Z0gR",
   "osm_extract": {
     "file": "Dublin.osm.pbf",
     "url": "https://download.bbbike.org/osm/bbbike/Dublin/Dublin.osm.pbf"

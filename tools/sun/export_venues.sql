@@ -15,6 +15,10 @@ select json_agg(v order by v.place_id) from (
       where e.place_id = d.place_id) as tags
   from venue_details d
   where d.city ilike 'dublin%' or d.city in ('Kimmage', 'Barracks')   -- see cities/dublin.json venue_city_match
+     -- Venues with no city label yet: keep those whose place ID carries the city's
+     -- region code (cities/dublin.json place_id_region). Only this coarse code is used,
+     -- as a filter; the name match against OpenStreetMap still decides what gets a profile.
+     or (d.city is null and substr(d.place_id, 13, 4) = 'Z0gR')
 ) v;
 
 -- Existing seating rows (so manual/venue points are reused, never overwritten):
