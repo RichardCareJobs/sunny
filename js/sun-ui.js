@@ -28,6 +28,9 @@
   const WEATHER_TTL_MS = 1000 * 60 * 30;
   const WEATHER_GRID_DEG = 0.05; // same grid as the viewport cache
   const STEP_MIN = 10;
+  // The "Sun now" time slider is temporarily hidden while the map UI is tidied up. It is still
+  // created (so the per-minute pin/card refresh keeps running); flip to true to show it again.
+  const SHOW_TIME_SLIDER = false;
   const ATTRIBUTION = 'Sun estimate © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>' +
     ' · LiDAR © Laefer et al., NYU (2015), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>' +
     ' · Weather by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a>';
@@ -357,6 +360,7 @@
     document.head.appendChild(style);
     const el = document.createElement("div");
     el.className = "sun-time";
+    el.hidden = !SHOW_TIME_SLIDER;
     el.innerHTML = `<div class="sun-time__row"><span aria-hidden="true">☀️</span><span class="sun-time__label">Sun now</span>` +
       `<button type="button" class="sun-time__now" hidden>Back to now</button></div>` +
       `<input type="range" min="0" step="${STEP_MIN}" value="0" aria-label="Show sun and shade at a later time today">` +

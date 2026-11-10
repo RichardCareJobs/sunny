@@ -9,6 +9,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 (function () {
   const DEFAULT_VIEW = { lat: -32.9267, lng: 151.7789, zoom: 12 };
 
+  // Map controls temporarily hidden while the map UI is tidied up. Flip to true to bring one back;
+  // all underlying logic (crawl builder, wishlist storage/sheet, hot spots code) is left intact.
+  const MAP_UI = { crawlFab:false, hotSpotsTray:false, savesFab:false };
+
   const VENUE_CACHE_KEY = "sunny-pubs-venues";
   const VENUE_PHOTO_CACHE_KEY = "sunny-pubs-venue-photos-v2";
   const FAVOURITES_STORAGE_KEY = "sunny:favourites:v1";
@@ -5186,6 +5190,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   }
 
   function scheduleSunsOutTray(venues){
+    if(!MAP_UI.hotSpotsTray) return;
     if(sunsOutRenderTimer) clearTimeout(sunsOutRenderTimer);
     const snapshot = Array.isArray(venues) ? venues.slice() : [];
     sunsOutRenderTimer = setTimeout(async ()=>{
@@ -7533,8 +7538,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     setupMap();
     setupSearch();
     renderMarkers();
-    ensureCrawlFab();
-    ensureSavesFab();
+    if(MAP_UI.crawlFab) ensureCrawlFab();
+    if(MAP_UI.savesFab) ensureSavesFab();
     ensureFavouritesFab();
     const pathMatch=window.location.pathname.match(/^\/c\/([^/]+)$/);
     if(pathMatch){
