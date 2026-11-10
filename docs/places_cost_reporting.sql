@@ -5,7 +5,10 @@
 with pricing as (
   select * from (values
     ('basic'::text, 0.032::numeric),
-    ('atmosphere'::text, 0.170::numeric)
+    ('atmosphere'::text, 0.170::numeric),
+    -- Search box (list price per call, before the monthly free allowance)
+    ('autocomplete_request'::text, 0.00283::numeric),
+    ('essentials'::text, 0.005::numeric)
   ) as p(billing_tier, price_usd)
 ),
 base as (
@@ -73,7 +76,10 @@ order by day desc;
 -- with pricing as (
 --   select * from (values
 --     ('basic'::text, 0.032::numeric),
---     ('atmosphere'::text, 0.170::numeric)
+--     ('atmosphere'::text, 0.170::numeric),
+    -- Search box (list price per call, before the monthly free allowance)
+    ('autocomplete_request'::text, 0.00283::numeric),
+    ('essentials'::text, 0.005::numeric)
 --   ) as p(billing_tier, price_usd)
 -- )
 -- select

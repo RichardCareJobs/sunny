@@ -108,6 +108,31 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     "car_wash","laundry","lodging","hotel","motel","hostel",
     "car_rental","travel_agency","insurance_agency","real_estate_agency"
   ]);
+  // Venue eligibility lists shared by the map loading flow (fetchPlacesForBounds) and search.
+  const VENUE_ALLOW_TYPES=["bar","pub","restaurant","night_club","wine_bar","sports_bar","cocktail_bar","brewery"];
+  const VENUE_EXCLUDE_TYPES=[
+    "fast_food_restaurant",
+    "convenience_store","gas_station","supermarket","grocery_or_supermarket",
+    "pharmacy","drugstore","department_store","shopping_mall",
+    "meal_delivery","meal_takeaway",
+    "bakery","liquor_store","store","car_wash","laundry",
+    "lodging","car_rental","travel_agency","insurance_agency",
+    "real_estate_agency","moving_company"
+  ];
+  const VENUE_NAME_EXCLUSIONS=[
+    "zambrero","mcdonald","kfc","subway","domino","pizza hut","hungry jack","guzman","gyg","taco bell",
+    "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo",
+    "red rooster","oporto","nando","chicken treat","el jannah",
+    "boost juice","chatime","gong cha","bubble tea",
+    "grill'd","betty's burgers","five guys","carl's jr","wendy's","burger king","in-n-out",
+    "sushi hub","sushi sushi","roll'd","mad mex","salsa's",
+    "donut king","krispy kreme","baskin","cold rock","gelato messina",
+    "starbucks","gloria jean","jamaica blue",
+    "bakers delight","brumby","pie face","ferguson plarre",
+    "kebab","charcoal chicken","fish & chip","fish and chip","fish n chip",
+    "pizza capers","crust pizza","la porchetta","eagle boys",
+    "oliver's real food","sumo salad","soul origin"
+  ];
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
@@ -2083,30 +2108,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const result=scoreVenueCandidate(place,place._discoverySource||"");
       venueScoreCache.set(pid,{ ...result, discoverySource:place._discoverySource||"" });
     });
-    const allowTypes=["bar","pub","restaurant","night_club","wine_bar","sports_bar","cocktail_bar","brewery",...(includeCafes?["cafe"]:[])];
-    const excludeTypes=[
-      "fast_food_restaurant",
-      "convenience_store","gas_station","supermarket","grocery_or_supermarket",
-      "pharmacy","drugstore","department_store","shopping_mall",
-      "meal_delivery","meal_takeaway",
-      "bakery","liquor_store","store","car_wash","laundry",
-      "lodging","car_rental","travel_agency","insurance_agency",
-      "real_estate_agency","moving_company"
-    ];
-    const nameExclusions=[
-      "zambrero","mcdonald","kfc","subway","domino","pizza hut","hungry jack","guzman","gyg","taco bell",
-      "7-eleven","7 eleven","bp","shell","ampol","caltex","mobil","service station","petrol","servo",
-      "red rooster","oporto","nando","chicken treat","el jannah",
-      "boost juice","chatime","gong cha","bubble tea",
-      "grill'd","betty's burgers","five guys","carl's jr","wendy's","burger king","in-n-out",
-      "sushi hub","sushi sushi","roll'd","mad mex","salsa's",
-      "donut king","krispy kreme","baskin","cold rock","gelato messina",
-      "starbucks","gloria jean","jamaica blue",
-      "bakers delight","brumby","pie face","ferguson plarre",
-      "kebab","charcoal chicken","fish & chip","fish and chip","fish n chip",
-      "pizza capers","crust pizza","la porchetta","eagle boys",
-      "oliver's real food","sumo salad","soul origin"
-    ];
+    const allowTypes=[...VENUE_ALLOW_TYPES,...(includeCafes?["cafe"]:[])];
+    const excludeTypes=VENUE_EXCLUDE_TYPES;
+    const nameExclusions=VENUE_NAME_EXCLUSIONS;
     const excludedSamples=[];
     const logExclusion=(place,reason)=>{
       if(!DEBUG_FILTERS||excludedSamples.length>=5) return;
@@ -4197,6 +4201,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     });
     map.addListener("click",()=>{
       hideVenueCard();
+      hideSearchCard();
       hideCrawlCard();
     });
     addLocateControl();
@@ -4659,6 +4664,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return;
     }
     const card=ensureDetailCard();
+    hideSearchCard();
     hideSunsOutTrayForCard();
     trackVenueCardOpened(card,v);
     openVenueId=v.id;
@@ -6824,6 +6830,690 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     },opts);
   }
 
+  // ── Search (suburbs, cities and venues) ──────────────────────────────────────
+  // One box in the header backed by Places Autocomplete (New), billed per request:
+  // no session tokens are sent, on purpose, because a search never ends in a
+  // Place Details Pro call. Pure logic (type filters, LRU) lives in js/search-core.js.
+  //
+  // Google calls made from here, each logged to places_api_calls:
+  //   search_autocomplete  / autocomplete_request         places:autocomplete
+  //   search_place_details / essentials                   location + viewport | formattedAddress
+  //   search_place_details / enterprise_plus_atmosphere   outdoor seating check (capped, deduped server-side)
+  const SearchCore=window.SunnySearch||null;
+  const SEARCH_DEBOUNCE_MS=350;
+  const SEARCH_MIN_CHARS=3;
+  const SEARCH_MAX_AUTOCOMPLETE_CALLS=40;   // per page load
+  const SEARCH_MAX_VERIFY_CALLS=5;          // Enterprise + Atmosphere checks per page load
+  const SEARCH_AUTOCOMPLETE_URL="https://places.googleapis.com/v1/places:autocomplete";
+  const SEARCH_AUTOCOMPLETE_FIELD_MASK="suggestions.placePrediction.placeId,suggestions.placePrediction.types,suggestions.placePrediction.structuredFormat";
+  const SEARCH_AC_CACHE_KEY="sunny-search-ac-v1";
+  const SEARCH_AC_CACHE_MAX=50;
+  const SEARCH_PLACE_CACHE_KEY="sunny-search-place-v1";
+  const SEARCH_PLACE_CACHE_MAX=50;
+  const SEARCH_CACHE_TTL_MS=1000*60*30;
+  const SEARCH_CACHE_CELL_DEG=1;
+  // Smallest masks that stay on Place Details Essentials. displayName and googleMapsUri
+  // are Pro fields, so the name comes from the prediction and the Maps link from the place_id.
+  const SEARCH_GEO_FIELDS=["location","viewport"];
+  const SEARCH_VENUE_FIELDS=["location","formattedAddress"];
+  // One Enterprise + Atmosphere call that also returns the position, so a verified
+  // venue never needs a second (Essentials) call. The Maps SDK names the REST field
+  // `outdoorSeating` as `hasOutdoorSeating` and rejects the REST spelling.
+  const SEARCH_VERIFY_FIELDS=["location","formattedAddress","hasOutdoorSeating","servesBeer","servesWine","servesCocktails"];
+  const SEARCH_CAP_MESSAGE="Showing Sunny venues only for now. Move the map to explore other areas.";
+
+  const searchAcCache=SearchCore ? SearchCore.lruLoad(SEARCH_AC_CACHE_KEY) : new Map();
+  const searchPlaceCache=SearchCore ? SearchCore.lruLoad(SEARCH_PLACE_CACHE_KEY) : new Map();
+  const searchProspectsRecorded=new Set();
+  let searchEls=null;
+  let searchTimer=null;
+  let searchController=null;
+  let searchSeq=0;
+  let searchAutocompleteCalls=0;
+  let searchVerifyCalls=0;
+  let searchItems=[];
+  let searchActiveIndex=-1;
+  let searchTempMarker=null;
+  let searchCard=null;
+
+  function setupSearch(){
+    if(searchEls||!SearchCore) return;
+    const mount=document.getElementById("searchMount")||document.querySelector(".toolbar .spacer");
+    if(!mount) return;
+    const root=document.createElement("div");
+    root.className="search";
+    root.innerHTML=`
+      <label class="search__label" for="searchInput">Search for a suburb, city or venue</label>
+      <input id="searchInput" class="search__input" type="search" inputmode="search" enterkeyhint="search"
+        placeholder="Search suburb, city or venue" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="searchListbox" aria-haspopup="listbox">
+      <button class="search__clear" type="button" aria-label="Clear search" hidden>×</button>
+      <div class="search__panel" hidden>
+        <div class="search__status" role="status" aria-live="polite"></div>
+        <div id="searchListbox" class="search__listbox" role="listbox" aria-label="Search results"></div>
+      </div>`;
+    mount.appendChild(root);
+    searchEls={
+      root,
+      input:root.querySelector(".search__input"),
+      clear:root.querySelector(".search__clear"),
+      panel:root.querySelector(".search__panel"),
+      status:root.querySelector(".search__status"),
+      listbox:root.querySelector(".search__listbox")
+    };
+    const { input, clear, listbox }=searchEls;
+    input.addEventListener("input",onSearchInput);
+    input.addEventListener("keydown",onSearchKeydown);
+    input.addEventListener("focus",()=>{
+      if(searchItems.length||searchEls.status.textContent) openSearchPanel();
+    });
+    clear.addEventListener("click",()=>{
+      resetSearchInput();
+      input.focus();
+    });
+    // Keep focus in the input while tapping a result, then select on click.
+    listbox.addEventListener("pointerdown",(event)=>{ if(event.target.closest("[role=option]")) event.preventDefault(); });
+    listbox.addEventListener("click",(event)=>{
+      const option=event.target.closest("[role=option]");
+      if(!option) return;
+      const item=searchItems[Number(option.dataset.index)];
+      if(item) selectSearchResult(item);
+    });
+    document.addEventListener("pointerdown",(event)=>{
+      if(searchEls.panel.hidden||root.contains(event.target)) return;
+      closeSearchPanel();
+    });
+  }
+
+  function resetSearchInput(){
+    if(!searchEls) return;
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }
+    if(searchController){ searchController.abort(); searchController=null; }
+    searchSeq++;
+    searchEls.input.value="";
+    searchEls.clear.hidden=true;
+    searchItems=[];
+    searchEls.listbox.innerHTML="";
+    setSearchStatus("");
+    closeSearchPanel();
+  }
+  function openSearchPanel(){
+    if(!searchEls) return;
+    searchEls.panel.hidden=false;
+    searchEls.input.setAttribute("aria-expanded","true");
+    document.body.classList.add("search-open");
+  }
+  function closeSearchPanel(){
+    if(!searchEls) return;
+    searchEls.panel.hidden=true;
+    searchEls.input.setAttribute("aria-expanded","false");
+    searchEls.input.removeAttribute("aria-activedescendant");
+    searchActiveIndex=-1;
+    searchEls.listbox.querySelectorAll("[aria-selected=true]").forEach(el=>el.setAttribute("aria-selected","false"));
+    document.body.classList.remove("search-open");
+  }
+  function setSearchStatus(message,state=""){
+    if(!searchEls) return;
+    searchEls.status.textContent=message||"";
+    searchEls.status.dataset.state=state;
+    searchEls.status.hidden=!message;
+  }
+  function setSearchActive(index){
+    if(!searchEls) return;
+    const options=searchEls.listbox.querySelectorAll("[role=option]");
+    if(!options.length){ searchActiveIndex=-1; return; }
+    const next=((index%options.length)+options.length)%options.length;
+    options.forEach((el,i)=>el.setAttribute("aria-selected",i===next?"true":"false"));
+    searchActiveIndex=next;
+    searchEls.input.setAttribute("aria-activedescendant",options[next].id);
+    options[next].scrollIntoView({ block:"nearest" });
+  }
+  function renderSearchResults(grouped,{ message="", state="" }={}){
+    if(!searchEls) return;
+    const places=grouped?.places||[];
+    const venues=grouped?.venues||[];
+    searchItems=[...places,...venues];
+    searchActiveIndex=-1;
+    searchEls.input.removeAttribute("aria-activedescendant");
+    const listbox=searchEls.listbox;
+    listbox.innerHTML="";
+    let index=0;
+    [["Places",places,"searchGroupPlaces"],["Venues",venues,"searchGroupVenues"]].forEach(([label,items,groupId])=>{
+      if(!items.length) return;
+      const group=document.createElement("div");
+      group.className="search__group";
+      group.setAttribute("role","group");
+      group.setAttribute("aria-labelledby",groupId);
+      const heading=document.createElement("div");
+      heading.className="search__group-label";
+      heading.id=groupId;
+      heading.textContent=label;
+      group.appendChild(heading);
+      items.forEach((item)=>{
+        const option=document.createElement("div");
+        option.className=`search__option search__option--${item.kind}`;
+        option.id=`searchOption${index}`;
+        option.dataset.index=String(index);
+        option.setAttribute("role","option");
+        option.setAttribute("aria-selected","false");
+        const main=document.createElement("span");
+        main.className="search__option-main";
+        main.textContent=item.mainText;
+        option.appendChild(main);
+        if(item.secondaryText){
+          const secondary=document.createElement("span");
+          secondary.className="search__option-secondary";
+          secondary.textContent=item.secondaryText;
+          option.appendChild(secondary);
+        }
+        group.appendChild(option);
+        index++;
+      });
+      listbox.appendChild(group);
+    });
+    if(!searchItems.length&&!message){
+      message="No matching suburbs, cities or venues.";
+      state="empty";
+    }
+    setSearchStatus(message,state);
+    openSearchPanel();
+  }
+
+  function onSearchInput(){
+    const raw=searchEls.input.value;
+    searchEls.clear.hidden=!raw;
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }
+    const query=SearchCore.normaliseQuery(raw);
+    if(query.length<SEARCH_MIN_CHARS){
+      if(searchController){ searchController.abort(); searchController=null; }
+      searchSeq++;
+      searchItems=[];
+      searchEls.listbox.innerHTML="";
+      setSearchStatus("");
+      closeSearchPanel();
+      return;
+    }
+    searchTimer=setTimeout(()=>{ searchTimer=null; runSearch(query); },SEARCH_DEBOUNCE_MS);
+  }
+  function onSearchKeydown(event){
+    const open=!searchEls.panel.hidden;
+    switch(event.key){
+      case "ArrowDown":
+      case "ArrowUp":{
+        if(!searchItems.length) return;
+        event.preventDefault();
+        if(!open) openSearchPanel();
+        const step=event.key==="ArrowDown" ? 1 : -1;
+        const start=searchActiveIndex<0 ? (step>0 ? -1 : 0) : searchActiveIndex;
+        setSearchActive(start+step);
+        return;
+      }
+      case "Home":
+        if(open&&searchItems.length){ event.preventDefault(); setSearchActive(0); }
+        return;
+      case "End":
+        if(open&&searchItems.length){ event.preventDefault(); setSearchActive(searchItems.length-1); }
+        return;
+      case "Enter":{
+        event.preventDefault();
+        if(open&&searchActiveIndex>=0&&searchItems[searchActiveIndex]){
+          selectSearchResult(searchItems[searchActiveIndex]);
+          return;
+        }
+        if(searchTimer){
+          // Don't make the person wait out the debounce after pressing Enter.
+          clearTimeout(searchTimer);
+          searchTimer=null;
+          const query=SearchCore.normaliseQuery(searchEls.input.value);
+          if(query.length>=SEARCH_MIN_CHARS) runSearch(query);
+          return;
+        }
+        if(open&&searchItems.length) selectSearchResult(searchItems[0]);
+        return;
+      }
+      case "Escape":
+        if(open){
+          event.preventDefault();
+          closeSearchPanel();
+        } else if(searchEls.input.value){
+          event.preventDefault();
+          resetSearchInput();
+        }
+        return;
+      default:
+    }
+  }
+
+  function getSearchCacheCell(){
+    const center=map?.getCenter?.();
+    if(!center) return "none";
+    return `${roundToGrid(center.lat(),SEARCH_CACHE_CELL_DEG)}:${roundToGrid(center.lng(),SEARCH_CACHE_CELL_DEG)}`;
+  }
+  // Bias (never restrict) predictions to what the map is showing.
+  function getSearchLocationBias(){
+    const bounds=map?.getBounds?.();
+    if(!bounds) return null;
+    const sw=bounds.getSouthWest();
+    const ne=bounds.getNorthEast();
+    const values=[sw.lat(),sw.lng(),ne.lat(),ne.lng()];
+    if(!values.every(Number.isFinite)||sw.lat()>=ne.lat()) return null;
+    return {
+      rectangle:{
+        low:{ latitude:Math.max(-90,sw.lat()), longitude:sw.lng() },
+        high:{ latitude:Math.min(90,ne.lat()), longitude:ne.lng() }
+      }
+    };
+  }
+  async function fetchSearchAutocomplete(query,signal){
+    const apiKey=getGoogleMapsApiKey();
+    if(!apiKey) throw new Error("SEARCH_NO_API_KEY");
+    const body={ input:query, languageCode:navigator.language||"en" };
+    const bias=getSearchLocationBias();
+    if(bias) body.locationBias=bias;
+    searchAutocompleteCalls++;
+    let resultCount=null;
+    try{
+      const response=await fetch(SEARCH_AUTOCOMPLETE_URL,{
+        method:"POST",
+        signal,
+        headers:{
+          "Content-Type":"application/json",
+          "X-Goog-Api-Key":apiKey,
+          "X-Goog-FieldMask":SEARCH_AUTOCOMPLETE_FIELD_MASK
+        },
+        body:JSON.stringify(body)
+      });
+      if(!response.ok) throw new Error(`SEARCH_AUTOCOMPLETE_HTTP_${response.status}`);
+      const data=await response.json();
+      const suggestions=Array.isArray(data?.suggestions) ? data.suggestions : [];
+      resultCount=suggestions.length;
+      return suggestions;
+    } finally {
+      // Logged for every request that left the browser, including ones cancelled
+      // mid-flight (result_count null), because Google may still bill those.
+      logPlacesApiCall({ callType:"search_autocomplete", billingTier:"autocomplete_request", resultCount });
+    }
+  }
+  // Fallback when Google is unavailable or the per-page cap is reached: Sunny's own venues by name.
+  async function searchVenueDetailsByName(query){
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return [];
+    try{
+      const { data, error }=await sb.from("venue_details")
+        .select("place_id,name,city,qualification_status,outdoor_seating")
+        .ilike("name",`%${SearchCore.escapeLike(query)}%`)
+        .limit(SearchCore.MAX_PER_GROUP*2);
+      if(error||!Array.isArray(data)) return [];
+      return data
+        .filter(row=>row?.name&&SearchCore.isListedVenueRow(row)&&!isGloballyExcludedVenue(row))
+        .slice(0,SearchCore.MAX_PER_GROUP)
+        .map(row=>({ kind:"venue", placeId:row.place_id, mainText:row.name, secondaryText:row.city||"", types:[], row }));
+    } catch {
+      return [];
+    }
+  }
+  async function runSearch(query){
+    if(!searchEls) return;
+    const seq=++searchSeq;
+    if(searchController){ searchController.abort(); searchController=null; }
+    trackEvent("search_performed",{ query_length:query.length });
+    const finish=(grouped,options)=>{
+      if(seq!==searchSeq) return;
+      renderSearchResults(grouped,options);
+      if(!grouped.places.length&&!grouped.venues.length) trackEvent("search_no_results",{ query_length:query.length });
+    };
+    const cacheKey=`${query}|${getSearchCacheCell()}`;
+    const cached=SearchCore.lruGet(searchAcCache,cacheKey,SEARCH_CACHE_TTL_MS);
+    if(cached){
+      finish(cached);
+      return;
+    }
+    if(searchAutocompleteCalls>=SEARCH_MAX_AUTOCOMPLETE_CALLS){
+      const venues=await searchVenueDetailsByName(query);
+      finish({ places:[], venues },{ message:SEARCH_CAP_MESSAGE, state:"info" });
+      return;
+    }
+    const controller=new AbortController();
+    searchController=controller;
+    if(!searchItems.length) setSearchStatus("Searching…","loading");
+    openSearchPanel();
+    try{
+      const suggestions=await fetchSearchAutocomplete(query,controller.signal);
+      if(seq!==searchSeq) return;
+      const grouped=SearchCore.groupPredictions(suggestions);
+      SearchCore.lruSet(searchAcCache,cacheKey,grouped);
+      SearchCore.lruSave(SEARCH_AC_CACHE_KEY,searchAcCache,SEARCH_AC_CACHE_MAX);
+      finish(grouped);
+    } catch(err){
+      if(controller.signal.aborted||seq!==searchSeq) return;
+      if(DEV_PLACES_LOGGING) console.warn("[Search] autocomplete failed:",err);
+      const venues=await searchVenueDetailsByName(query);
+      finish({ places:[], venues },{
+        message:venues.length ? "Search is limited right now. Showing Sunny venues only." : "Search isn’t available right now. Please try again.",
+        state:"error"
+      });
+    } finally {
+      if(searchController===controller) searchController=null;
+    }
+  }
+
+  // Place Details (New) through the Maps SDK, cached by place_id + field mask.
+  async function fetchSearchPlaceDetails(placeId,fields,billingTier){
+    const cacheKey=`${placeId}|${fields.join(",")}`;
+    const cached=SearchCore.lruGet(searchPlaceCache,cacheKey,SEARCH_CACHE_TTL_MS);
+    if(cached) return cached;
+    const { Place }=await google.maps.importLibrary("places");
+    const place=new Place({ id:placeId });
+    await place.fetchFields({ fields });
+    logPlacesApiCall({ callType:"search_place_details", billingTier, placeId });
+    const location=place.location;
+    const lat=typeof location?.lat==="function" ? location.lat() : location?.lat;
+    const lng=typeof location?.lng==="function" ? location.lng() : location?.lng;
+    if(!isValidCoord(lat,lng)) throw new Error("SEARCH_PLACE_NO_LOCATION");
+    const result={ lat, lng };
+    if(fields.includes("viewport")&&place.viewport){
+      const viewport=typeof place.viewport.toJSON==="function" ? place.viewport.toJSON() : place.viewport;
+      if(viewport&&[viewport.north,viewport.south,viewport.east,viewport.west].every(Number.isFinite)) result.viewport=viewport;
+    }
+    if(fields.includes("formattedAddress")) result.formattedAddress=place.formattedAddress||"";
+    if(fields.includes("hasOutdoorSeating")){
+      result.verified=true;
+      result.outdoorSeating=typeof place.hasOutdoorSeating==="boolean" ? place.hasOutdoorSeating : null;
+      result.servesBeer=typeof place.servesBeer==="boolean" ? place.servesBeer : null;
+      result.servesWine=typeof place.servesWine==="boolean" ? place.servesWine : null;
+      result.servesCocktails=typeof place.servesCocktails==="boolean" ? place.servesCocktails : null;
+    }
+    SearchCore.lruSet(searchPlaceCache,cacheKey,result);
+    SearchCore.lruSave(SEARCH_PLACE_CACHE_KEY,searchPlaceCache,SEARCH_PLACE_CACHE_MAX);
+    return result;
+  }
+
+  async function selectSearchResult(item){
+    if(!item||!map) return;
+    searchEls.input.value=item.mainText;
+    searchEls.clear.hidden=false;
+    if(searchTimer){ clearTimeout(searchTimer); searchTimer=null; }
+    closeSearchPanel();
+    searchEls.input.blur();
+    hideSearchCard();
+    try{
+      if(item.kind==="geo") await selectGeoResult(item);
+      else await selectVenueResult(item);
+    } catch(err){
+      if(DEV_PLACES_LOGGING) console.warn("[Search] select failed:",err);
+      showAppToast("Couldn’t open that result. Please try again.");
+    }
+  }
+  async function selectGeoResult(item){
+    const details=await fetchSearchPlaceDetails(item.placeId,SEARCH_GEO_FIELDS,"essentials");
+    hideVenueCard();
+    // Moving the map is all that's needed: the existing "idle" listener runs the
+    // normal venue-loading flow (and its cache) for the new area.
+    if(details.viewport) map.fitBounds(details.viewport);
+    else panToLocation(details.lat,details.lng,14);
+    trackEvent("search_result_selected",{ result_type:"geo" });
+  }
+
+  // The map's venue-type rules (see fetchPlacesForBounds), applied to a prediction.
+  function isEligibleSearchVenue(item){
+    const types=(item.types||[]).map(type=>String(type).toLowerCase());
+    const name=String(item.mainText||"").toLowerCase();
+    if(isGloballyExcludedVenue({ name })) return false;
+    const includeCafes=getIncludeCafes();
+    const allowTypes=[...VENUE_ALLOW_TYPES,...(includeCafes?["cafe"]:[])];
+    if(!types.some(type=>allowTypes.includes(type))) return false;
+    const isPubOrBar=types.includes("bar")||types.includes("pub")||types.includes("night_club");
+    const excludedHit=types.find(type=>VENUE_EXCLUDE_TYPES.includes(type));
+    if(excludedHit&&!(excludedHit==="lodging"&&isPubOrBar)) return false;
+    if(!isPubOrBar&&types.some(type=>EXCLUDED_PRIMARY_TYPES.has(type))) return false;
+    if(VENUE_NAME_EXCLUSIONS.some(term=>name.includes(term))) return false;
+    if(!includeCafes&&types.includes("cafe")&&!isPubOrBar) return false;
+    return true;
+  }
+  async function lookupVenueDetailsRow(placeId){
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return null;
+    try{
+      const { data, error }=await sb.from("venue_details")
+        .select("place_id,name,city,qualification_status,outdoor_seating")
+        .eq("place_id",placeId)
+        .maybeSingle();
+      return error ? null : (data||null);
+    } catch {
+      return null;
+    }
+  }
+  // Where a listed venue is, without Google when possible: the in-memory venue
+  // cache, then Sunny's own seating point (Dublin), then one Essentials call.
+  async function resolveListedVenuePosition(placeId){
+    const known=getVenueFromCacheByPlaceId(placeId);
+    if(known) return { lat:known.lat, lng:known.lng, formattedAddress:known.address||"" };
+    const sb=getVenueDetailsSupabase();
+    if(sb){
+      try{
+        const { data }=await sb.from("venue_seating").select("seating_lat,seating_lng").eq("place_id",placeId).maybeSingle();
+        if(data&&isValidCoord(data.seating_lat,data.seating_lng)) return { lat:data.seating_lat, lng:data.seating_lng, formattedAddress:"" };
+      } catch { /* fall through to Google */ }
+    }
+    return fetchSearchPlaceDetails(placeId,SEARCH_VENUE_FIELDS,"essentials");
+  }
+  function focusMapOnVenue(lat,lng){
+    map.panTo({ lat, lng });
+    if((map.getZoom?.()||0)<16) map.setZoom(16);
+  }
+  // Standard pin and normal card, the same way openVenueFromSave does it.
+  function openStandardVenue(item,position,{ name="", outdoorConfirmed=false }={}){
+    let venue=allVenues?.[item.placeId];
+    if(!venue||!isValidCoord(venue.lat,venue.lng)){
+      const types=item.types||[];
+      const venueName=name||item.mainText||"Unnamed";
+      const address=item.secondaryText||position.formattedAddress||"";
+      const tags={
+        name:venueName,
+        amenity:getAmenityFromTypes(types),
+        types:types.join(","),
+        vicinity:address,
+        formatted_address:position.formattedAddress||"",
+        outdoor_seating:outdoorConfirmed ? "yes" : ""
+      };
+      mergeVenues([{
+        id:item.placeId,
+        name:venueName,
+        lat:position.lat,
+        lng:position.lng,
+        address,
+        tags,
+        primaryCategory:types.length ? getPrimaryCategory(types) : "",
+        outdoorLikely:true,
+        openingHours:null,
+        hoursText:"",
+        hasOutdoor:hasOutdoorHints(tags),
+        photo:null,
+        photos:[],
+        source:"google"
+      }]);
+      venue=allVenues[item.placeId];
+    }
+    if(!venue) throw new Error("SEARCH_VENUE_NOT_MERGED");
+    hideVenueCard();
+    focusMapOnVenue(venue.lat,venue.lng);
+    renderMarkers();
+    openVenueId=venue.id;
+    showVenueCard(venue);
+  }
+  async function shouldVerifySearchedVenue(placeId){
+    if(searchVerifyCalls>=SEARCH_MAX_VERIFY_CALLS) return false;
+    const sb=getVenueDetailsSupabase();
+    if(!sb) return false;
+    try{
+      const { data, error }=await sb.rpc("should_verify_venue",{ p_place_id:placeId });
+      return !error&&data===true;
+    } catch {
+      return false;
+    }
+  }
+  async function selectVenueResult(item){
+    const placeId=item.placeId;
+    // 1. Supabase first: no Google call to find out whether Sunny lists this venue.
+    const row=item.row||await lookupVenueDetailsRow(placeId);
+    if(row&&SearchCore.isListedVenueRow(row)&&!isGloballyExcludedVenue({ name:row.name||item.mainText })){
+      const position=await resolveListedVenuePosition(placeId);
+      openStandardVenue(item,position,{ name:row.name||"", outdoorConfirmed:row.outdoor_seating===true });
+      trackEvent("search_result_selected",{ result_type:"listed_venue" });
+      return;
+    }
+    if(row){
+      await showUnlistedVenue(item,{ reason:"not_displayed" });
+      return;
+    }
+    // 2. Not in venue_details: does it meet Sunny's criteria (venue type + outdoor seating)?
+    if(!isEligibleSearchVenue(item)){
+      await showUnlistedVenue(item,{ reason:"type_not_eligible" });
+      return;
+    }
+    if(getOutdoorLikely({ name:item.mainText })){
+      // An outdoor keyword in the name is enough for the map, so it is enough here.
+      const position=await fetchSearchPlaceDetails(placeId,SEARCH_VENUE_FIELDS,"essentials");
+      openStandardVenue(item,position);
+      trackEvent("search_result_selected",{ result_type:"listed_venue" });
+      return;
+    }
+    const verifyCacheKey=`${placeId}|${SEARCH_VERIFY_FIELDS.join(",")}`;
+    const alreadyVerified=!!SearchCore.lruGet(searchPlaceCache,verifyCacheKey,SEARCH_CACHE_TTL_MS);
+    if(!alreadyVerified&&!(await shouldVerifySearchedVenue(placeId))){
+      // Checked recently by someone else, or the per-page cap is used up.
+      await showUnlistedVenue(item,{ reason:"outdoor_unverified" });
+      return;
+    }
+    if(!alreadyVerified) searchVerifyCalls++;
+    const checked=await fetchSearchPlaceDetails(placeId,SEARCH_VERIFY_FIELDS,"enterprise_plus_atmosphere");
+    const qualificationStatus=qualifyVenueFromEnrichment(checked);
+    if(qualificationStatus==="confirmed"){
+      // Saved before the card opens so the card's own enrichment finds it and makes no
+      // second call. fetched_at is set to the epoch so the card still fetches hours/photos.
+      await saveVenueQualificationToSupabase(placeId,{
+        name:item.mainText,
+        fetched_at:new Date(0).toISOString(),
+        qualification_status:qualificationStatus,
+        outdoor_seating:checked.outdoorSeating,
+        serves_beer:checked.servesBeer,
+        serves_wine:checked.servesWine,
+        serves_cocktails:checked.servesCocktails,
+        last_enriched_at:new Date().toISOString(),
+        enrichment_source:"places_api",
+        discovery_source:"search"
+      });
+      openStandardVenue(item,checked,{ outdoorConfirmed:true });
+      trackEvent("search_result_selected",{ result_type:"listed_venue", newly_verified:true });
+      return;
+    }
+    await showUnlistedVenue(item,{
+      reason:"outdoor_unverified",
+      position:checked,
+      googleCheck:alreadyVerified ? null : { outdoorSeating:checked.outdoorSeating }
+    });
+  }
+
+  function recordVenueProspect({ placeId, name, reason, googleCheck=null }){
+    if(!placeId||!name) return;
+    if(searchProspectsRecorded.has(placeId)&&!googleCheck) return;
+    searchProspectsRecorded.add(placeId);
+    try{
+      const sb=getVenueDetailsSupabase();
+      if(!sb) return;
+      sb.rpc("record_venue_prospect",{
+        p_place_id:placeId,
+        p_name:name,
+        p_source:"search",
+        p_reason:reason||"outdoor_unverified",
+        p_google_checked:!!googleCheck,
+        p_google_outdoor_seating:googleCheck ? (googleCheck.outdoorSeating??null) : null
+      }).then(()=>{},()=>{});
+    } catch { /* no-op */ }
+  }
+  function createSearchTempMarkerIcon(){
+    return {
+      path:"M0-48c-9.9 0-18 8.1-18 18 0 13.5 18 30 18 30s18-16.5 18-30c0-9.9-8.1-18-18-18z",
+      fillColor:"#9ca3af",
+      fillOpacity:1,
+      strokeColor:"#4b5563",
+      strokeWeight:1.5,
+      scale:0.8
+    };
+  }
+  function clearSearchTempMarker(){
+    if(searchTempMarker){
+      searchTempMarker.setMap(null);
+      searchTempMarker=null;
+    }
+  }
+  function ensureSearchCard(){
+    if(searchCard) return searchCard;
+    const container=document.createElement("div");
+    container.id="search-card";
+    container.className="venue-card venue-card--basic hidden";
+    container.innerHTML=`
+      <div class="venue-card__inner" role="region" aria-label="Venue from search">
+        <div class="venue-card__handle"></div>
+        <div class="venue-card__header">
+          <div class="venue-card__title">
+            <div class="venue-card__name"></div>
+            <div class="venue-card__address"></div>
+          </div>
+          <div class="venue-card__header-actions">
+            <button class="venue-card__close" type="button" aria-label="Close details">×</button>
+          </div>
+        </div>
+        <div class="venue-card__badges">
+          <span class="chip chip-muted">No known outdoor seating</span>
+        </div>
+        <div class="venue-card__note">Sunny doesn’t have outdoor seating details for this venue yet.</div>
+        <div class="venue-card__actions">
+          <a class="action" target="_blank" rel="noopener" data-action="google-maps">View on Google Maps</a>
+        </div>
+      </div>`;
+    document.body.appendChild(container);
+    searchCard={
+      container,
+      nameEl:container.querySelector(".venue-card__name"),
+      addressEl:container.querySelector(".venue-card__address"),
+      mapsLink:container.querySelector('[data-action="google-maps"]')
+    };
+    container.querySelector(".venue-card__close").addEventListener("click",()=>hideSearchCard());
+    return searchCard;
+  }
+  function hideSearchCard(){
+    clearSearchTempMarker();
+    if(!searchCard) return;
+    searchCard.container.classList.add("hidden");
+    searchCard.container.classList.remove("show");
+  }
+  // Grey temporary pin and a basic card for a venue Sunny doesn't list. It never goes
+  // through showVenueCard, so nothing is written to venue_details and no enrichment runs.
+  async function showUnlistedVenue(item,{ reason="outdoor_unverified", position=null, googleCheck=null }={}){
+    const details=position||await fetchSearchPlaceDetails(item.placeId,SEARCH_VENUE_FIELDS,"essentials");
+    hideVenueCard();
+    clearSearchTempMarker();
+    searchTempMarker=new google.maps.Marker({
+      position:{ lat:details.lat, lng:details.lng },
+      map,
+      icon:createSearchTempMarkerIcon(),
+      title:item.mainText,
+      zIndex:google.maps.Marker.MAX_ZINDEX+1
+    });
+    focusMapOnVenue(details.lat,details.lng);
+    const card=ensureSearchCard();
+    const address=details.formattedAddress||item.secondaryText||"";
+    card.nameEl.textContent=item.mainText;
+    card.addressEl.textContent=address;
+    card.addressEl.classList.toggle("hidden",!address);
+    card.mapsLink.href=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(item.mainText)}&query_place_id=${encodeURIComponent(item.placeId)}`;
+    card.container.classList.remove("hidden");
+    requestAnimationFrame(()=>card.container.classList.add("show"));
+    recordVenueProspect({ placeId:item.placeId, name:item.mainText, reason, googleCheck });
+    trackEvent("search_result_selected",{ result_type:"unlisted_venue" });
+  }
+
   async function boot(){
     pendingSharedCrawl=detectPendingSharedCrawl();
     requestUserLocationOnce();
@@ -6841,6 +7531,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     savesList=loadSaves();
     setSaves(savesList,{ persist:false });
     setupMap();
+    setupSearch();
     renderMarkers();
     ensureCrawlFab();
     ensureSavesFab();
