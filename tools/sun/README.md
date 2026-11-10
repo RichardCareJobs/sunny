@@ -55,6 +55,14 @@ only LiDAR product kept; it's committed so step 2a never needs re-running.
   "X Clontarf" use OSM place names to pick between same-named venues. Ties
   far apart go to `out/manual_fix_list.csv`. `--district-hint` additionally
   uses the venue's postal district label against OSM Eircode routing keys.
+* **Which venues are considered**: venues whose `city` label matches the city
+  (`venue_city_match`), plus venues with no city label whose place ID carries the
+  city's region code (`place_id_region`: characters 13–16 of the ID — `Z0gR` for
+  Dublin, shared by 492 of the 496 labelled Dublin venues and by no venue labelled
+  with another city). The code is only a coarse filter on which names to try; no
+  Google coordinates are read, stored or used, and a venue still needs a name match
+  in the city's OSM extract to get a profile. Check fuzzy matches for unlabelled
+  venues by eye before writing (three were excluded in the November 2026 run).
 * **Seating**: just outside (2.5 m) the footprint edge facing the nearest named
   street, at the point nearest the OSM venue; party walls are skipped.
   Enrichment tags move it to the rear edge (beer garden, courtyard, back
