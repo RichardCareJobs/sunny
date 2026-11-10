@@ -1,13 +1,15 @@
 /*
   Sunny — sun-ui.js  (behind the `sun` feature flag; loaded only when it's on)
 
-  Live sun / shade / cloud pins, a time slider for today, and a sun line on the
-  venue card. Uses only Sunny's own data (venue_sun_profile, venue_seating —
+  Live sun / shade / cloud pins, hour chips to look ahead, and a sun line on the
+  venue card. The chips show only where a city has sun data (CITIES below); everywhere
+  else gets a closable "coming soon" message. Uses only Sunny's own data (venue_sun_profile, venue_seating —
   derived from OpenStreetMap and the 2015 Dublin LiDAR) plus Open-Meteo weather.
   No Google Places calls; Google's map is only the base layer.
 
   Hooks called from app.js (all optional-chained, so app.js works without this):
-    SunnySunUI.onVenuesVisible(venues)   after the visible set is computed
+    SunnySunUI.onVenuesVisible(venues, center)  after the visible set is computed
+                                                (center: { lat, lng } of the map)
     SunnySunUI.decorateMarker(marker, v) after a marker is created/updated
     SunnySunUI.renderCard(cardEl, v)     when a venue card opens
 */
@@ -19,6 +21,10 @@
   const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs";
   const CITY_TZ = { Dublin: "Europe/Dublin", London: "Europe/London" };
+  // Cities with live sun mapping. bbox [south, west, north, east] and origin mirror tools/sun/cities/<city>.json.
+  const CITIES = { Dublin: { tz: "Europe/Dublin", bbox: [53.20, -6.50, 53.48, -6.00], origin: [53.3438, -6.2546] } };
+  const TIP_SEEN_KEY = "sunny_sun_tip_seen";
+  const SOON_DISMISSED_KEY = "sunny_sun_soon_dismissed";
   const PROFILE_CACHE_KEY = "sunny-sun-profile-v1";
   const PROFILE_CACHE_MAX = 600;
   const PROFILE_TTL_MS = 1000 * 60 * 60 * 12;
@@ -28,9 +34,6 @@
   const WEATHER_TTL_MS = 1000 * 60 * 30;
   const WEATHER_GRID_DEG = 0.05; // same grid as the viewport cache
   const STEP_MIN = 10;
-  // The "Sun now" time slider is temporarily hidden while the map UI is tidied up. It is still
-  // created (so the per-minute pin/card refresh keeps running); flip to true to show it again.
-  const SHOW_TIME_SLIDER = false;
   const ATTRIBUTION = 'Sun estimate © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>' +
     ' · LiDAR © Laefer et al., NYU (2015), <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>' +
     ' · Weather by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo.com</a>';
@@ -183,13 +186,13 @@
     return lruGet(weatherCache, cellKey(lat, lng), WEATHER_TTL_MS) ?? null;
   }
 
-  // ── Time (slider offset from now, today only) ─────────────────────────────
+  // ── Time (hour chips: now, or a chosen hour today / tomorrow) ─────────────
   // Times are shown in the venues' city time zone (not the device's), so a
   // visitor whose phone is on another zone still sees Dublin times.
-  let offsetMin = 0;
+  let selectedAt = null; // null = now, else the UTC ms of the chosen hour
   let displayTz;
-  function tzNow() { return displayTz || Intl.DateTimeFormat().resolvedOptions().timeZone; }
-  function selectedMs() { return Date.now() + offsetMin * 60000; }
+  function selectedMs() { return selectedAt ?? Date.now(); }
+  function offsetMin() { return selectedAt ? Math.round((selectedAt - Date.now()) / 60000) : 0; }
 
   // ── State per venue ───────────────────────────────────────────────────────
   const timelines = new Map(); // id -> { day, tl }
@@ -238,15 +241,18 @@
   }
 
   const markers = new Map(); // id -> marker
+  function isSunIcon(icon) { return !!icon && Object.values(icons).includes(icon); }
   function applyMarker(id, marker, ms) {
     const st = stateFor(id, ms);
-    const icon = st ? iconFor(st.state) : null; // night / no profile: leave the default pin
+    const icon = st ? iconFor(st.state) : null; // night / no profile: the default pin
+    const cur = marker.getIcon();
+    if (!isSunIcon(cur)) marker.__sunnyBaseIcon = cur;
     if (icon) {
-      if (marker.getIcon() !== icon) marker.setIcon(icon);
-      marker.__sunnySunState = st.state;
-    } else {
-      marker.__sunnySunState = st ? st.state : "none";
+      if (cur !== icon) marker.setIcon(icon);
+    } else if (isSunIcon(cur)) {
+      marker.setIcon(marker.__sunnyBaseIcon ?? null); // was sun/shade, now night: back to the default pin
     }
+    marker.__sunnySunState = st ? st.state : "none";
   }
 
   function decorateMarker(marker, v) {
@@ -267,17 +273,18 @@
         counts[s && counts[s] !== undefined ? s : "none"]++;
       });
       const shown = counts.sun + counts.shade + counts.cloud;
-      const sig = JSON.stringify(counts) + offsetMin;
+      const sig = JSON.stringify(counts) + (selectedAt || 0);
       if (!shown || sig === lastPinSig) return;
       lastPinSig = sig;
-      track("sun_pins_rendered", { ...counts, time_offset_min: offsetMin });
+      track("sun_pins_rendered", { ...counts, time_offset_min: offsetMin() });
     }, 1500);
   }
 
   let lastVisible = [];
-  async function onVenuesVisible(venues) {
+  async function onVenuesVisible(venues, center) {
     lastVisible = (venues || []).map((v) => v.id);
     ensureControls();
+    if (controls) controls.setPlace(center || centroid(venues));
     const fetched = await fetchProfiles(lastVisible);
     if (controls) controls.sync();
     const cells = new Map();
@@ -311,7 +318,9 @@
       const tl = timelineFor(v.id, ms);
       const line = S.sunLine(tl, ms, p.tz, st.state);
       const icon = { sun: "☀️", shade: "🌥️", cloud: "☁️", night: "🌙" }[st.state] || "";
-      const when = offsetMin ? ` <span class="venue-card__sun-when">at ${S.formatClock(ms, p.tz)}</span>` : "";
+      const tz = p.tz || Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const otherDay = selectedAt && S.startOfLocalDay(ms, tz) !== S.startOfLocalDay(Date.now(), tz);
+      const when = selectedAt ? ` <span class="venue-card__sun-when">${otherDay ? "tomorrow " : ""}at ${S.formatClock(ms, p.tz)}</span>` : "";
       box.innerHTML = `<div class="venue-card__sun-line"><span class="venue-card__sun-icon" aria-hidden="true">${icon}</span>` +
         `<span class="venue-card__sun-text"></span>${when}<span class="venue-card__sun-label"></span></div>` +
         `<div class="venue-card__sun-attrib">${ATTRIBUTION}</div>`;
@@ -321,7 +330,7 @@
       if (box.__trackedFor !== v.id) {
         box.__trackedFor = v.id;
         track("sun_line_view", { place_id: v.id, state: st.state, label: p.label,
-          data_quality: p.quality, seating_type: p.type, time_offset_min: offsetMin });
+          data_quality: p.quality, seating_type: p.type, time_offset_min: offsetMin() });
       }
     };
     if (profiles.has(v.id)) { go(); return; }
@@ -331,25 +340,65 @@
     }).then(() => { if (cardRef && cardRef.v.id === v.id) go(); });
   }
 
-  // ── Time slider ───────────────────────────────────────────────────────────
-  let controls = null;
-  function minutesLeftToday() {
-    const tz = tzNow();
-    const endOfToday = S.startOfLocalDay(S.startOfLocalDay(Date.now(), tz) + 36 * 3600000, tz) - 1;
-    return Math.max(0, Math.floor((endOfToday - Date.now()) / 60000 / STEP_MIN) * STEP_MIN);
+  // ── Time chips, one-off tip, "coming soon" message ─────────────────────────
+  function store(key, value) {
+    try {
+      if (value === undefined) return localStorage.getItem(key);
+      localStorage.setItem(key, value);
+    } catch { /* private mode */ }
+    return null;
   }
+  function centroid(venues) {
+    const pts = (venues || []).filter((v) => v && typeof v.lat === "number" && typeof v.lng === "number");
+    if (!pts.length) return null;
+    return { lat: pts.reduce((a, v) => a + v.lat, 0) / pts.length, lng: pts.reduce((a, v) => a + v.lng, 0) / pts.length };
+  }
+  function cityAt(place) {
+    if (!place) return undefined; // unknown: leave things as they are
+    return Object.keys(CITIES).find((name) => S.inBbox(place.lat, place.lng, CITIES[name].bbox)) || null;
+  }
+  function hourLabel(ms, tz) {
+    const h = S.zonedParts(ms, tz).h;
+    return `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "am" : "pm"}`;
+  }
+  const SUN_SVG = '<svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">' +
+    '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></svg>';
+
+  let controls = null;
   function ensureControls() {
     if (controls || !document.body) return;
     const style = document.createElement("style");
     style.textContent = `
-      .sun-time{position:fixed;left:12px;bottom:28px;z-index:900;background:#fff;color:#111;border-radius:12px;
-        box-shadow:0 2px 10px rgba(0,0,0,.18);padding:8px 12px 6px;width:min(320px,calc(100vw - 24px));font-size:.85rem}
-      .sun-time__row{display:flex;align-items:center;gap:.5rem}
-      .sun-time__label{font-weight:700;white-space:nowrap}
-      .sun-time__now{margin-left:auto;border:1px solid #ddd;background:#fafafa;border-radius:8px;padding:2px 8px;font-size:.8rem}
-      .sun-time input[type=range]{width:100%;accent-color:#f29d00}
-      .sun-time__attrib,.venue-card__sun-attrib{font-size:.68rem;color:#666;line-height:1.3}
-      .sun-time__attrib a,.venue-card__sun-attrib a{color:inherit}
+      .sun-bar{position:fixed;left:0;right:0;top:56px;z-index:900;pointer-events:none;
+        font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111}
+      .sun-bar>*{pointer-events:auto}
+      .sun-bar [hidden]{display:none!important}
+      .sun-chips{display:flex;align-items:center;gap:8px;padding:10px 12px 8px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+      .sun-chips::-webkit-scrollbar{display:none}
+      .sun-chip,.sun-chips__day{flex:none;height:44px;box-sizing:border-box;border-radius:999px;display:inline-flex;align-items:center;gap:6px;
+        padding:0 16px;font-family:inherit;font-size:15px;font-weight:700;line-height:1;white-space:nowrap}
+      .sun-chip{border:1px solid #d9dde1;background:#fff;color:#111;box-shadow:0 1px 5px rgba(0,0,0,.2);cursor:pointer;-webkit-tap-highlight-color:transparent}
+      .sun-chip[aria-pressed=true]{background:#111;border-color:#111;color:#fff}
+      .sun-chip:focus-visible,.sun-tip__ok:focus-visible,.sun-soon__close:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}
+      .sun-chips__day{padding:0 12px 0 14px;background:rgba(17,17,17,.82);color:#fff;font-weight:600}
+      .sun-tip{position:relative;margin:2px 12px 0;max-width:340px;background:#111;color:#fff;border-radius:14px;padding:12px 14px;
+        box-shadow:0 8px 24px rgba(0,0,0,.28);font-size:14px;line-height:1.4}
+      .sun-tip::before{content:"";position:absolute;top:-6px;left:30px;width:12px;height:12px;background:#111;transform:rotate(45deg)}
+      .sun-tip__title{font-weight:800;display:block;margin-bottom:2px}
+      .sun-tip__row{display:flex;align-items:flex-end;gap:12px}
+      .sun-tip__text{flex:1;margin:0}
+      .sun-tip__ok{flex:none;height:44px;padding:0 16px;border-radius:999px;border:0;background:#fff;color:#111;font-family:inherit;font-size:14px;font-weight:700;line-height:1;cursor:pointer}
+      .sun-soon{display:flex;align-items:center;gap:8px;margin:10px 12px 0;width:fit-content;max-width:calc(100% - 24px);box-sizing:border-box;
+        background:#fff;border:1px solid #d9dde1;border-radius:14px;padding:4px 4px 4px 14px;box-shadow:0 1px 5px rgba(0,0,0,.2);font-size:14px;font-weight:600;line-height:1.3}
+      .sun-soon svg{flex:none;color:#b45309}
+      .sun-soon__close{flex:none;width:44px;height:44px;border:0;background:transparent;color:#111;border-radius:999px;cursor:pointer;
+        display:inline-flex;align-items:center;justify-content:center;padding:0}
+      body.sun-bar-on .venue-status{top:calc(56px + 70px)}
+      body.sun-bar-on .live-crawl-banner{top:126px}
+      body.sun-bar-on #venue-count-toast{top:70px!important}
+      body.sun-bar-on #map .gm-style-mtc-bbw,body.sun-bar-on #map .gm-fullscreen-control{margin-top:70px!important}
+      .venue-card__sun-attrib{font-size:.68rem;color:#666;line-height:1.3}
+      .venue-card__sun-attrib a{color:inherit}
       .venue-card__sun{margin:.4rem 0 .2rem;padding:.5rem .6rem;border-radius:10px;background:#fff8e6}
       .venue-card__sun[data-state=shade]{background:#eef1f4}.venue-card__sun[data-state=cloud]{background:#f1f3f5}
       .venue-card__sun[data-state=night]{background:#eef0f7}
@@ -359,37 +408,89 @@
     `;
     document.head.appendChild(style);
     const el = document.createElement("div");
-    el.className = "sun-time";
-    el.hidden = !SHOW_TIME_SLIDER;
-    el.innerHTML = `<div class="sun-time__row"><span aria-hidden="true">☀️</span><span class="sun-time__label">Sun now</span>` +
-      `<button type="button" class="sun-time__now" hidden>Back to now</button></div>` +
-      `<input type="range" min="0" step="${STEP_MIN}" value="0" aria-label="Show sun and shade at a later time today">` +
-      `<div class="sun-time__attrib">${ATTRIBUTION}</div>`;
+    el.className = "sun-bar";
+    el.innerHTML =
+      `<div class="sun-chips" role="group" aria-label="Show sun and shade at" hidden></div>` +
+      `<div class="sun-tip" role="status" hidden><div class="sun-tip__row"><p class="sun-tip__text">` +
+        `<span class="sun-tip__title">New in Dublin: live sun mapping</span>` +
+        `Pins show which pubs are in sun or shade. Tap a time to look ahead. Estimates only.</p>` +
+        `<button type="button" class="sun-tip__ok">Got it</button></div></div>` +
+      `<div class="sun-soon" role="status" hidden>${SUN_SVG}<span>Live sun mapping coming soon for this location</span>` +
+        `<button type="button" class="sun-soon__close" aria-label="Close"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" ` +
+        `stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>`;
     document.body.appendChild(el);
-    const range = el.querySelector("input");
-    const label = el.querySelector(".sun-time__label");
-    const nowBtn = el.querySelector(".sun-time__now");
-    const sync = () => {
-      range.max = String(minutesLeftToday());
-      if (offsetMin > Number(range.max)) offsetMin = Number(range.max);
-      range.value = String(offsetMin);
-      label.textContent = offsetMin ? `Sun at ${S.formatClock(selectedMs(), tzNow(), { roundMin: STEP_MIN })}` : "Sun now";
-      nowBtn.hidden = !offsetMin;
+    const chipsEl = el.querySelector(".sun-chips");
+    const tipEl = el.querySelector(".sun-tip");
+    const soonEl = el.querySelector(".sun-soon");
+
+    let city; // undefined = not known yet, null = no sun mapping here, else a CITIES key
+    let listSig = "";
+    let soonTracked = false;
+
+    const closeTip = (how) => {
+      if (tipEl.hidden) return;
+      tipEl.hidden = true;
+      track("sun_tip_dismissed", { how });
     };
-    let trackTimer = null;
-    range.addEventListener("input", () => {
-      offsetMin = Number(range.value) || 0;
+    const sync = () => {
+      const c = city ? CITIES[city] : null;
+      if (c) {
+        const now = Date.now();
+        const sunUp = S.sunPosition(now, c.origin[0], c.origin[1]).altitudeDeg > 0;
+        const { hours, isTomorrow } = S.daylightHours(now, c.origin[0], c.origin[1], c.tz);
+        if (selectedAt && !hours.includes(selectedAt)) selectedAt = null; // the chosen hour has passed
+        const sig = [city, sunUp, isTomorrow, hours[0], hours.length].join("|");
+        if (sig !== listSig) {
+          listSig = sig;
+          chipsEl.innerHTML =
+            (sunUp ? `<button type="button" class="sun-chip" data-t="now">${SUN_SVG}Now</button>`
+              : `<span class="sun-chips__day">${isTomorrow ? "Tomorrow" : "Today"}</span>`) +
+            hours.map((t) => `<button type="button" class="sun-chip" data-t="${t}">${hourLabel(t, c.tz)}</button>`).join("");
+          chipsEl.scrollLeft = 0;
+        }
+        chipsEl.querySelectorAll(".sun-chip").forEach((b) => {
+          const on = b.dataset.t === "now" ? !selectedAt : Number(b.dataset.t) === selectedAt;
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+        });
+        if (chipsEl.hidden && !store(TIP_SEEN_KEY)) {
+          store(TIP_SEEN_KEY, "1"); // shown once per device, whether or not it's dismissed
+          tipEl.hidden = false;
+          track("sun_tip_shown", { city });
+        }
+      } else if (!tipEl.hidden) {
+        tipEl.hidden = true;
+      }
+      chipsEl.hidden = !c;
+      soonEl.hidden = !(city === null && !store(SOON_DISMISSED_KEY));
+      if (!soonEl.hidden && !soonTracked) { soonTracked = true; track("sun_soon_shown"); }
+      document.body.classList.toggle("sun-bar-on", !chipsEl.hidden || !soonEl.hidden);
+    };
+    const setPlace = (place) => {
+      const next = cityAt(place);
+      if (next === undefined || next === city) return;
+      city = next;
+      if (!city && selectedAt) { selectedAt = null; refresh({ pins: true, card: true }); }
+      sync();
+    };
+
+    chipsEl.addEventListener("click", (e) => {
+      const b = e.target.closest(".sun-chip");
+      if (!b) return;
+      const t = b.dataset.t === "now" ? null : Number(b.dataset.t);
+      selectedAt = t === selectedAt ? null : t; // tapping the chosen hour again goes back to now
+      closeTip("chip");
       sync();
       refresh({ pins: true, card: true });
-      clearTimeout(trackTimer);
-      trackTimer = setTimeout(() => track("sun_time_changed", { time_offset_min: offsetMin }), 1000);
+      track("sun_time_changed", { time_offset_min: offsetMin() });
     });
-    nowBtn.addEventListener("click", () => {
-      offsetMin = 0; sync(); refresh({ pins: true, card: true });
-      track("sun_time_changed", { time_offset_min: 0 });
+    tipEl.querySelector(".sun-tip__ok").addEventListener("click", () => closeTip("button"));
+    soonEl.querySelector(".sun-soon__close").addEventListener("click", () => {
+      store(SOON_DISMISSED_KEY, "1");
+      sync();
+      track("sun_soon_dismissed");
     });
     setInterval(() => { sync(); refresh({ pins: true, card: true }); }, 60000);
-    controls = { el, sync };
+    controls = { el, sync, setPlace };
     sync();
   }
 

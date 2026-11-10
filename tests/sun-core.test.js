@@ -184,3 +184,46 @@ test("performance: live check + 24 h timeline well under 50 ms per venue", () =>
   // Mid-range phones are roughly 4–6× slower than CI hardware; keep a big margin.
   assert.ok(perVenueMs < 5, `per venue ${perVenueMs.toFixed(3)} ms`);
 });
+
+// ── Areas and daylight hours (time chips) ───────────────────────────────────
+const DUBLIN_BBOX = [53.20, -6.50, 53.48, -6.00];
+const hourOf = (ms, tz) => S.zonedParts(ms, tz).h;
+
+test("inBbox: Dublin is in, London and Sydney are out, bad input is out", () => {
+  assert.equal(S.inBbox(DUBLIN.lat, DUBLIN.lng, DUBLIN_BBOX), true);
+  assert.equal(S.inBbox(51.5074, -0.1278, DUBLIN_BBOX), false);
+  assert.equal(S.inBbox(SYDNEY.lat, SYDNEY.lng, DUBLIN_BBOX), false);
+  assert.equal(S.inBbox(undefined, undefined, DUBLIN_BBOX), false);
+  assert.equal(S.inBbox(DUBLIN.lat, DUBLIN.lng, null), false);
+});
+
+test("daylightHours: a November afternoon gives the remaining hours today", () => {
+  const now = Date.parse("2026-11-10T13:20:00Z"); // 1:20pm in Dublin, sunset ~4:35pm
+  const r = S.daylightHours(now, DUBLIN.lat, DUBLIN.lng, DUBLIN.tz);
+  assert.equal(r.isTomorrow, false);
+  assert.deepEqual(r.hours.map((t) => hourOf(t, DUBLIN.tz)), [14, 15, 16]);
+  assert.ok(r.hours.every((t) => t > now && t % 3600000 === 0));
+});
+
+test("daylightHours: after sunset gives tomorrow's hours", () => {
+  const now = Date.parse("2026-11-10T19:00:00Z");
+  const r = S.daylightHours(now, DUBLIN.lat, DUBLIN.lng, DUBLIN.tz);
+  assert.equal(r.isTomorrow, true);
+  assert.deepEqual(r.hours.map((t) => hourOf(t, DUBLIN.tz)), [8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.equal(S.zonedParts(r.hours[0], DUBLIN.tz).d, 11);
+});
+
+test("daylightHours: before sunrise gives today's hours", () => {
+  const now = Date.parse("2026-11-10T05:00:00Z");
+  const r = S.daylightHours(now, DUBLIN.lat, DUBLIN.lng, DUBLIN.tz);
+  assert.equal(r.isTomorrow, false);
+  assert.equal(S.zonedParts(r.hours[0], DUBLIN.tz).d, 10);
+  assert.equal(hourOf(r.hours[0], DUBLIN.tz), 8);
+});
+
+test("daylightHours: midsummer hours are local (IST) and run late", () => {
+  const now = Date.parse("2026-06-21T11:30:00Z"); // 12:30pm in Dublin, sunset ~9:57pm
+  const r = S.daylightHours(now, DUBLIN.lat, DUBLIN.lng, DUBLIN.tz);
+  assert.equal(r.isTomorrow, false);
+  assert.deepEqual(r.hours.map((t) => hourOf(t, DUBLIN.tz)), [13, 14, 15, 16, 17, 18, 19, 20, 21]);
+});

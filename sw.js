@@ -1,10 +1,12 @@
 // Sunny Service Worker — cache only same-origin static assets
 // Bump this name when you want to flush old caches
-const CACHE_NAME = 'sunny-v8';
+const CACHE_NAME = 'sunny-v9';
 const CORE_ASSETS = [
   '/index.html',
   '/app.js',
   '/js/search-core.js',
+  '/js/sun-core.js',
+  '/js/sun-ui.js',
   '/style.css',
   '/manifest.webmanifest',
   '/icons/apple-touch-icon.png',

@@ -5244,7 +5244,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(reopenVenueId&&reopenVenueId===v.id) reopenVenue=v;
     });
     const visibleIds=new Set(visibleVenues.map((v)=>v.id));
-    window.SunnySunUI?.onVenuesVisible?.(visibleVenues);
+    window.SunnySunUI?.onVenuesVisible?.(visibleVenues,map.getCenter()?.toJSON?.());
 
     // Fire venue_view for each venue newly entering the viewport.
     // Fires again if the venue scrolls off-screen and comes back.

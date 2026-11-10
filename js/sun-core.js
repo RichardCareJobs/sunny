@@ -163,6 +163,32 @@
     return guess;
   }
 
+  // ── Areas and daylight hours (time chips) ─────────────────────────────────
+  // bbox: [south, west, north, east] in degrees, as in tools/sun/cities/*.json.
+  function inBbox(lat, lng, bbox) {
+    return !!bbox && typeof lat === "number" && typeof lng === "number"
+      && lat >= bbox[0] && lat <= bbox[2] && lng >= bbox[1] && lng <= bbox[3];
+  }
+
+  // Whole local hours (UTC ms) still to come with the sun above the horizon:
+  // the rest of today, or — when none are left — the next local day.
+  function daylightHours(date, lat, lng, timeZone) {
+    const nowMs = date instanceof Date ? date.getTime() : Number(date);
+    const HOUR = 3600000;
+    const collect = (dayStart) => {
+      const dayEnd = startOfLocalDay(dayStart + 36 * HOUR, timeZone);
+      const out = [];
+      for (let t = dayStart + HOUR; t < dayEnd; t += HOUR) {
+        if (t > nowMs && sunPosition(t, lat, lng).altitudeDeg > 0) out.push(t);
+      }
+      return out;
+    };
+    const today = startOfLocalDay(nowMs, timeZone);
+    const hours = collect(today);
+    if (hours.length) return { hours, isTomorrow: false };
+    return { hours: collect(startOfLocalDay(today + 36 * HOUR, timeZone)), isTomorrow: true };
+  }
+
   // ── Day timeline ──────────────────────────────────────────────────────────
   // Samples the local day at stepMin steps, refines each sun/shade transition
   // to ~1 minute by bisection, and returns sun windows as [startMs, endMs).
@@ -235,7 +261,7 @@
     sunPosition, refractionDeg,
     decodeHorizon, encodeHorizon, horizonAt,
     isInSun, sunState, isCloudy,
-    startOfLocalDay, zonedParts,
+    startOfLocalDay, zonedParts, inBbox, daylightHours,
     dayTimeline, nextChange, formatClock, sunLine,
   };
 });
