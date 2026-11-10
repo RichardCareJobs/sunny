@@ -218,14 +218,15 @@
   // ── Pins ──────────────────────────────────────────────────────────────────
   const PIN = "M18 46C18 46 3 28.5 3 17.5a15 15 0 1 1 30 0C33 28.5 18 46 18 46z";
   // Every sun pin is a coloured pin with a white disc and a glyph in the pin's colour:
-  // gold + sun (in sun), teal + sun behind buildings (in shade), blue + cloud (sun hidden by cloud),
+  // gold + sun (in sun), teal + tree with the sun peeking from behind (in shade), blue + cloud (sun hidden by cloud),
   // Sunny orange + pint glass (no sun data for this venue yet, inside a sun-mapped city —
   // says "pub" and nothing about sun, unlike the default pin's sunburst).
   const DISC = '<circle cx="18" cy="17" r="10.5" fill="#fff"/>';
   const GLYPH = {
     sun: DISC + '<circle cx="18" cy="17" r="3.6" fill="#f58a00"/><path d="M18 9.5v2M18 22.5v2M10.5 17h2M23.5 17h2M12.7 11.7l1.4 1.4M21.9 20.9l1.4 1.4' +
       'M12.7 22.3l1.4-1.4M21.9 13.1l1.4-1.4" stroke="#f58a00" stroke-width="2" stroke-linecap="round" fill="none"/>',
-    shade: DISC + '<circle cx="14.4" cy="14.2" r="5" fill="#ffb400"/><path d="M17.8 9.6h6.8v14.8h-6.8zM11 19.2h6.8v5.2H11z" fill="#0b7f8b"/>',
+    shade: DISC + '<circle cx="20.2" cy="12.5" r="4.4" fill="#ffb400"/><circle cx="17.5" cy="15.2" r="6.4" fill="#0b7f8b"/>' +
+      '<circle cx="13.4" cy="17.4" r="3.3" fill="#0b7f8b"/><circle cx="21.4" cy="17.8" r="3.1" fill="#0b7f8b"/><path d="M16.6 20h1.9v5.2h-1.9z" fill="#0b7f8b"/>',
     cloud: DISC + '<path d="M12.6 21.2h10.2a3.6 3.6 0 0 0 .3-7.2 4.8 4.8 0 0 0-9.1 1.3 3 3 0 0 0-1.4 5.9z" fill="#3f6fd1"/>',
     none: DISC + '<path d="M13.6 10.5h8.8l-1.1 13h-6.6z" fill="#e65f00"/><path d="M13.6 10.5h8.8l-.3 3.4h-8.2z" fill="#ffd2ad"/>',
   };
