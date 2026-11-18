@@ -2709,7 +2709,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const sb=getVenueDetailsSupabase();
         if(!sb) return null;
         const { data, error }=await sb.from("venue_details")
-          .select("qualification_status,last_enriched_at")
+          .select("qualification_status,last_enriched_at,outdoor_seating,serves_beer,serves_wine,serves_cocktails")
           .eq("place_id",placeId)
           .maybeSingle();
         return error ? null : (data||null);
@@ -2721,19 +2721,18 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         logPlacesApiCall({ callType:"place_details", billingTier:"enterprise_plus_atmosphere", placeId });
         return place;
       },
-      async saveRow(placeId, place, qualificationStatus, { scoreData }){
+      async saveRow(placeId, fields, { scoreData }){
         const { score=0, bucket="", discoverySource="" }=scoreData||{};
         // qualification_status comes only from qualifyVenueFromEnrichment() — never from
         // scoreVenueCandidate(). candidate_bucket (from scoring) is stored separately and
         // does not gate future enrichment; venues scored "excluded" are never passed to
         // this function by runBackgroundEnrichment, but remain eligible if the user taps
         // them or if they resurface in a future search with a changed discoverySource.
+        // fields: a storable qualification_status (never rejected_*, which the
+        // database refuses from the public key) plus placeFacts(): true/false only
+        // when Places said so explicitly, otherwise null.
         await saveVenueQualificationToSupabase(placeId,{
-          qualification_status: qualificationStatus,
-          outdoor_seating: typeof place.outdoorSeating==="boolean" ? place.outdoorSeating : null,
-          serves_beer: typeof place.servesBeer==="boolean" ? place.servesBeer : null,
-          serves_wine: typeof place.servesWine==="boolean" ? place.servesWine : null,
-          serves_cocktails: typeof place.servesCocktails==="boolean" ? place.servesCocktails : null,
+          ...fields,
           last_enriched_at: new Date().toISOString(),
           enrichment_source: "places_api",
           candidate_score: score||null,
@@ -7406,10 +7405,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         name:item.mainText,
         fetched_at:new Date(0).toISOString(),
         qualification_status:qualificationStatus,
-        outdoor_seating:checked.outdoorSeating,
-        serves_beer:checked.servesBeer,
-        serves_wine:checked.servesWine,
-        serves_cocktails:checked.servesCocktails,
+        ...Qualification.placeFacts(checked),
         last_enriched_at:new Date().toISOString(),
         enrichment_source:"places_api",
         discovery_source:"search"
