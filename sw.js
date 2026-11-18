@@ -1,10 +1,11 @@
 // Sunny Service Worker — cache only same-origin static assets
 // Bump this name when you want to flush old caches
-const CACHE_NAME = 'sunny-v10';
+const CACHE_NAME = 'sunny-v11';
 const CORE_ASSETS = [
   '/index.html',
   '/app.js',
   '/js/search-core.js',
+  '/js/qualification-core.js',
   '/js/sun-core.js',
   '/js/sun-ui.js',
   '/style.css',
