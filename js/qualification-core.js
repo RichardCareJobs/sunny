@@ -8,6 +8,10 @@
   Rule: a row whose qualification_status starts with "rejected_" is locked.
   The client never calls Places for it and never overwrites it, however old
   it is. Only an editorial/admin action (SQL or the service role) changes it.
+  The database enforces the same rule (migration 20261118200000): the public
+  key can neither change a rejected_ status nor set one. So a negative Places
+  result is stored as unknown_after_enrichment plus the facts behind it, and
+  those facts are what keep it from being re-checked for 30 days.
 */
 (function (root, factory) {
   const api = factory();
@@ -22,6 +26,33 @@
     return String(status || "").indexOf("rejected_") === 0;
   }
 
+  // Only an explicit boolean from Places is stored; a missing field is null,
+  // never false (outdoor_seating=false hides a venue from search).
+  function placeFacts(place) {
+    const pick = (v) => (typeof v === "boolean" ? v : null);
+    return {
+      outdoor_seating: pick(place?.outdoorSeating),
+      serves_beer: pick(place?.servesBeer),
+      serves_wine: pick(place?.servesWine),
+      serves_cocktails: pick(place?.servesCocktails),
+    };
+  }
+
+  // The status the public key may write: rejections are left to editorial/service role.
+  function storableStatus(status) {
+    return isEditoriallyLocked(status) ? "unknown_after_enrichment" : String(status || "");
+  }
+
+  // The status implied by facts already stored on a venue_details row.
+  function qualifyFromRow(row) {
+    return qualifyFromPlace({
+      outdoorSeating: row?.outdoor_seating,
+      servesBeer: row?.serves_beer,
+      servesWine: row?.serves_wine,
+      servesCocktails: row?.serves_cocktails,
+    });
+  }
+
   function qualifyFromPlace(place) {
     const outdoorKnown = typeof place?.outdoorSeating === "boolean";
     const alcoholFields = [place?.servesBeer, place?.servesWine, place?.servesCocktails];
@@ -34,10 +65,11 @@
   }
 
   // Dependencies (all may be async):
-  //   readRow(placeId)            -> { qualification_status, last_enriched_at } | null
+  //   readRow(placeId)            -> { qualification_status, last_enriched_at,
+  //                                    outdoor_seating, serves_beer, serves_wine, serves_cocktails } | null
   //                                  (throw or return null when unknown)
   //   fetchPlace(placeId)         -> Places result with outdoorSeating / serves* fields
-  //   saveRow(placeId, place, qualificationStatus, context)
+  //   saveRow(placeId, fields, context)   fields = { qualification_status (storable), ...placeFacts }
   //   onCacheHit(placeId, status, context)            optional
   //   onEnriched(placeId, place, status, context)     optional
   //   now()                       -> ms timestamp (defaults to Date.now)
@@ -66,12 +98,17 @@
         onCacheHit(placeId, status, context);
         return { qualificationStatus: status, cacheHit: true, locked: true };
       }
-      if (status === "confirmed" && row.last_enriched_at) {
-        const age = now() - new Date(row.last_enriched_at).getTime();
-        if (age <= ttlMs) {
-          onCacheHit(placeId, status, context);
-          return { qualificationStatus: status, cacheHit: true };
-        }
+      const fresh = !!(row && row.last_enriched_at) &&
+        now() - new Date(row.last_enriched_at).getTime() <= ttlMs;
+      if (fresh && status === "confirmed") {
+        onCacheHit(placeId, status, context);
+        return { qualificationStatus: status, cacheHit: true };
+      }
+      // A recent negative Places result, stored as facts (see header).
+      const fromFacts = row ? qualifyFromRow(row) : "";
+      if (fresh && isEditoriallyLocked(fromFacts)) {
+        onCacheHit(placeId, fromFacts, context);
+        return { qualificationStatus: fromFacts, cacheHit: true };
       }
 
       try {
@@ -85,7 +122,7 @@
           onCacheHit(placeId, latestStatus, context);
           return { qualificationStatus: latestStatus, cacheHit: false, locked: true };
         }
-        await saveRow(placeId, place, qualificationStatus, context);
+        await saveRow(placeId, { qualification_status: storableStatus(qualificationStatus), ...placeFacts(place) }, context);
         onEnriched(placeId, place, qualificationStatus, context);
         return { qualificationStatus, cacheHit: false };
       } catch (e) {
@@ -94,5 +131,8 @@
     };
   }
 
-  return { DEFAULT_TTL_MS, isEditoriallyLocked, qualifyFromPlace, createQualificationEnricher };
+  return {
+    DEFAULT_TTL_MS, isEditoriallyLocked, placeFacts, storableStatus,
+    qualifyFromPlace, qualifyFromRow, createQualificationEnricher,
+  };
 });
