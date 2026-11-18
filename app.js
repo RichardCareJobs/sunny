@@ -2650,15 +2650,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return { score, bucket };
   }
 
+  // Shared with the tests: js/qualification-core.js. A "rejected_" row is locked
+  // there — never refreshed from Places and never overwritten by the client.
+  const Qualification=window.SunnyQualification;
   function qualifyVenueFromEnrichment(place){
-    const outdoorKnown=typeof place?.outdoorSeating==="boolean";
-    const alcoholFields=[place?.servesBeer,place?.servesWine,place?.servesCocktails];
-    const servesAlcohol=alcoholFields.some(v=>v===true);
-    const alcoholKnown=alcoholFields.some(v=>typeof v==="boolean");
-    if(place?.outdoorSeating===true&&servesAlcohol) return "confirmed";
-    if(outdoorKnown&&place.outdoorSeating===false) return "rejected_no_outdoor";
-    if(alcoholKnown&&!servesAlcohol) return "rejected_no_alcohol";
-    return "unknown_after_enrichment";
+    return Qualification.qualifyFromPlace(place);
   }
 
   // Writes to the `events` table (enrichment quality audit — scores, buckets, outcomes,
@@ -2704,77 +2700,87 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } catch{ /* non-fatal */ }
   }
 
-  async function enrichPlaceQualification(placeId, enrichmentType, enrichmentReason, scoreData){
-    if(!placeId) return null;
-    const { score=0, bucket="", discoverySource="" }=scoreData||{};
-    const sb=getVenueDetailsSupabase();
-    if(sb){
-      try{
-        const { data }=await sb.from("venue_details")
+  let qualificationEnricher=null;
+  function getQualificationEnricher(){
+    if(qualificationEnricher) return qualificationEnricher;
+    qualificationEnricher=Qualification.createQualificationEnricher({
+      ttlMs: QUALIFICATION_CACHE_TTL_MS,
+      async readRow(placeId){
+        const sb=getVenueDetailsSupabase();
+        if(!sb) return null;
+        const { data, error }=await sb.from("venue_details")
           .select("qualification_status,last_enriched_at")
           .eq("place_id",placeId)
           .maybeSingle();
-        if(data?.last_enriched_at){
-          const age=Date.now()-new Date(data.last_enriched_at).getTime();
-          const qualStatus=data.qualification_status||"";
-          if(age<=QUALIFICATION_CACHE_TTL_MS&&(qualStatus==="confirmed"||qualStatus.startsWith("rejected_"))){
-            logEnrichmentEvent({
-              placeId,discoverySource,candidateScore:score,candidateBucket:bucket,
-              wasEnriched:false,enrichmentReason,enrichmentType,
-              qualificationStatus:qualStatus,apiCallType:"",fieldMaskUsed:"",
-              cacheHit:true,cacheMiss:false
-            });
-            if(allVenues[placeId]) allVenues[placeId].qualificationStatus=qualStatus;
-            return { qualificationStatus:qualStatus, cacheHit:true };
-          }
+        return error ? null : (data||null);
+      },
+      async fetchPlace(placeId){
+        const { Place }=await google.maps.importLibrary("places");
+        const place=new Place({ id: placeId });
+        await place.fetchFields({ fields: PLACE_QUALIFICATION_FIELDS });
+        logPlacesApiCall({ callType:"place_details", billingTier:"enterprise_plus_atmosphere", placeId });
+        return place;
+      },
+      async saveRow(placeId, place, qualificationStatus, { scoreData }){
+        const { score=0, bucket="", discoverySource="" }=scoreData||{};
+        // qualification_status comes only from qualifyVenueFromEnrichment() — never from
+        // scoreVenueCandidate(). candidate_bucket (from scoring) is stored separately and
+        // does not gate future enrichment; venues scored "excluded" are never passed to
+        // this function by runBackgroundEnrichment, but remain eligible if the user taps
+        // them or if they resurface in a future search with a changed discoverySource.
+        await saveVenueQualificationToSupabase(placeId,{
+          qualification_status: qualificationStatus,
+          outdoor_seating: typeof place.outdoorSeating==="boolean" ? place.outdoorSeating : null,
+          serves_beer: typeof place.servesBeer==="boolean" ? place.servesBeer : null,
+          serves_wine: typeof place.servesWine==="boolean" ? place.servesWine : null,
+          serves_cocktails: typeof place.servesCocktails==="boolean" ? place.servesCocktails : null,
+          last_enriched_at: new Date().toISOString(),
+          enrichment_source: "places_api",
+          candidate_score: score||null,
+          candidate_bucket: bucket||null,
+          discovery_source: discoverySource||null
+        });
+      },
+      onCacheHit(placeId, qualStatus, { enrichmentType, enrichmentReason, scoreData }){
+        const { score=0, bucket="", discoverySource="" }=scoreData||{};
+        logEnrichmentEvent({
+          placeId,discoverySource,candidateScore:score,candidateBucket:bucket,
+          wasEnriched:false,enrichmentReason,enrichmentType,
+          qualificationStatus:qualStatus,apiCallType:"",fieldMaskUsed:"",
+          cacheHit:true,cacheMiss:false
+        });
+        if(allVenues[placeId]) allVenues[placeId].qualificationStatus=qualStatus;
+      },
+      onEnriched(placeId, place, qualificationStatus, { enrichmentType, enrichmentReason, scoreData }){
+        const { score=0, bucket="", discoverySource="" }=scoreData||{};
+        const venue=allVenues[placeId];
+        if(venue){
+          venue.qualificationStatus=qualificationStatus;
+          if(typeof place.outdoorSeating==="boolean") venue.outdoorSeating=place.outdoorSeating;
+          if(typeof place.servesBeer==="boolean") venue.servesBeer=place.servesBeer;
+          if(typeof place.servesWine==="boolean") venue.servesWine=place.servesWine;
+          if(typeof place.servesCocktails==="boolean") venue.servesCocktails=place.servesCocktails;
+          allVenues[placeId]={ ...allVenues[placeId], ...venue };
         }
-      } catch{ /* fall through to API */ }
-    }
-    try{
-      const { Place }=await google.maps.importLibrary("places");
-      const place=new Place({ id: placeId });
-      await place.fetchFields({ fields: PLACE_QUALIFICATION_FIELDS });
-      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise_plus_atmosphere", placeId });
-      const qualificationStatus=qualifyVenueFromEnrichment(place);
-      const outdoorSeating=typeof place.outdoorSeating==="boolean" ? place.outdoorSeating : null;
-      const servesBeer=typeof place.servesBeer==="boolean" ? place.servesBeer : null;
-      const servesWine=typeof place.servesWine==="boolean" ? place.servesWine : null;
-      const servesCocktails=typeof place.servesCocktails==="boolean" ? place.servesCocktails : null;
-      // qualification_status comes only from qualifyVenueFromEnrichment() — never from
-      // scoreVenueCandidate(). candidate_bucket (from scoring) is stored separately and
-      // does not gate future enrichment; venues scored "excluded" are never passed to
-      // this function by runBackgroundEnrichment, but remain eligible if the user taps
-      // them or if they resurface in a future search with a changed discoverySource.
-      await saveVenueQualificationToSupabase(placeId,{
-        qualification_status: qualificationStatus,
-        outdoor_seating: outdoorSeating,
-        serves_beer: servesBeer,
-        serves_wine: servesWine,
-        serves_cocktails: servesCocktails,
-        last_enriched_at: new Date().toISOString(),
-        enrichment_source: "places_api",
-        candidate_score: score||null,
-        candidate_bucket: bucket||null,
-        discovery_source: discoverySource||null
-      });
-      const venue=allVenues[placeId];
-      if(venue){
-        venue.qualificationStatus=qualificationStatus;
-        if(outdoorSeating!==null) venue.outdoorSeating=outdoorSeating;
-        if(servesBeer!==null) venue.servesBeer=servesBeer;
-        if(servesWine!==null) venue.servesWine=servesWine;
-        if(servesCocktails!==null) venue.servesCocktails=servesCocktails;
-        allVenues[placeId]={ ...allVenues[placeId], ...venue };
+        logEnrichmentEvent({
+          placeId,displayName:allVenues[placeId]?.name||"",
+          discoverySource,candidateScore:score,candidateBucket:bucket,
+          wasEnriched:true,enrichmentReason,enrichmentType,
+          qualificationStatus,apiCallType:"place_details",
+          fieldMaskUsed:PLACE_QUALIFICATION_FIELDS.join(","),
+          cacheHit:false,cacheMiss:true
+        });
       }
-      logEnrichmentEvent({
-        placeId,displayName:allVenues[placeId]?.name||"",
-        discoverySource,candidateScore:score,candidateBucket:bucket,
-        wasEnriched:true,enrichmentReason,enrichmentType,
-        qualificationStatus,apiCallType:"place_details",
-        fieldMaskUsed:PLACE_QUALIFICATION_FIELDS.join(","),
-        cacheHit:false,cacheMiss:true
-      });
-      return { qualificationStatus, cacheHit:false };
+    });
+    return qualificationEnricher;
+  }
+
+  // Cache-first: a "rejected_" row is always returned as-is with no Places call;
+  // a "confirmed" row is reused while fresh; anything else is checked with Places.
+  async function enrichPlaceQualification(placeId, enrichmentType, enrichmentReason, scoreData){
+    if(!placeId) return null;
+    try{
+      return await getQualificationEnricher()(placeId,enrichmentType,enrichmentReason,scoreData);
     } catch(e){
       if(DEV_PLACES_LOGGING) console.warn("[Enrichment] enrichPlaceQualification failed:",placeId,e);
       return null;
