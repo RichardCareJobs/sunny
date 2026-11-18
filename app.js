@@ -137,6 +137,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     "pizza capers","crust pizza","la porchetta","eagle boys",
     "oliver's real food","sumo salad","soul origin"
   ];
+  // Venue labels and licensed-club rules (js/venue-category.js). Null only if that script failed to load.
+  const VenueCategory = window.SunnyVenueCategory || null;
   const DEBUG_PLACES = false;
   const DEBUG_FILTERS = false;
   const DEBUG_PERF = false;
@@ -1585,10 +1587,54 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
   // Google Places
   function getPrimaryCategory(types=[]){
+    if(VenueCategory) return VenueCategory.getPrimaryCategory(types);
     if(types.includes("bar")||types.includes("pub")||types.includes("night_club")) return "Pub/Bar";
     if(types.includes("cafe")) return "Cafe";
     if(types.includes("restaurant")) return "Restaurant";
     return "Other";
+  }
+  // { isClub, reason, strength }. clubLane: the place came from the club text search.
+  function classifyClubPlace(place,{ clubLane=false }={}){
+    if(!VenueCategory||!place) return { isClub:false, reason:"unavailable", strength:null };
+    return VenueCategory.classifyClub({
+      name: place.displayName||place.name||"",
+      types: place.types||[],
+      primaryType: place.primaryType||"",
+      categories: place.categories
+    },{ clubLane });
+  }
+  function isClubPlace(place){
+    return classifyClubPlace(place).isClub;
+  }
+  // Card label: "Club" for licensed clubs, otherwise from the Google types.
+  function getVenueCategory({ name="", types=[], primaryType="", categories }={}){
+    if(VenueCategory) return VenueCategory.getVenueCategory({ name, types, primaryType, categories });
+    return getPrimaryCategory(types);
+  }
+  // Applied to each merged search result: marks club-lane results and relabels clubs
+  // that arrived through the ordinary bar/pub passes. Returns true when relabelled.
+  function applyClubLabel(place,fromClubLane){
+    if(!place) return false;
+    if(fromClubLane){
+      place.clubLane=true;
+      place.primaryCategoryOverride="Club";
+      return false;
+    }
+    if(place.primaryCategoryOverride!=="Club"&&isClubPlace(place)){
+      place.primaryCategoryOverride="Club";
+      return true;
+    }
+    return false;
+  }
+  // The club lane's single text query. window.SUNNY_CLUB_QUERY (dev only) swaps it for
+  // another query to compare results; it is still exactly one call.
+  function getClubTextQueries(){
+    const override=typeof window!=="undefined"&&typeof window.SUNNY_CLUB_QUERY==="string" ? window.SUNNY_CLUB_QUERY.trim() : "";
+    if(override) return [override];
+    return VenueCategory ? VenueCategory.CLUB_TEXT_QUERIES.slice(0,1) : ["sports club"];
+  }
+  function isClubLaneResult(place){
+    return classifyClubPlace(place,{ clubLane:true }).isClub;
   }
   function getOutdoorLikely(place){
     if(!place) return false;
@@ -1621,7 +1667,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const name=place.displayName||place.name||"Unnamed";
     const types=place.types||[];
     const amenity=getAmenityFromTypes(types);
-    const primaryCategory=place.primaryCategoryOverride||getPrimaryCategory(types);
+    const primaryCategory=place.primaryCategoryOverride||getVenueCategory({ name, types, primaryType: place.primaryType||"" });
     const photoData=resolvePlacePhotoData(place,{ width: 480, mode: "thumbnail" });
     const shortAddress=place.shortFormattedAddress||place.vicinity||"";
     const fullAddress=place.formattedAddress||place.formatted_address||"";
@@ -1882,7 +1928,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return { isPubBar:false, reason: types.length ? `types:${types.join(",")}` : "no-types" };
   }
   function isPubBarPlace(place){
-    if(place?.clubLane) return true;
+    if(place?.clubLane||place?.primaryCategoryOverride==="Club") return true;
     return classifyPlace(place).isPubBar;
   }
   function isCafePlace(place){
@@ -2010,12 +2056,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       })
     );
 
-    const clubQueries=["sports club"];
-    const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
-    const clubSanityCheck=(place)=>{
-      const name=(place?.displayName||place?.name||"").toLowerCase();
-      return clubNameHints.some(hint=>name.includes(hint));
-    };
+    const clubQueries=getClubTextQueries();
     const clubExclusions=[];
     const logClubExclusion=(place,reason)=>{
       if(!DEBUG_PLACES) return;
@@ -2025,9 +2066,10 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const clubPromises=clubQueries.map(query=>
       fetchPlacesByText({ request: textBaseRequest, query, searchId, signal }).then(results=>{
         const saneResults=results.filter(place=>{
-          const keep=clubSanityCheck(place);
-          if(!keep) logClubExclusion(place,"excluded: club sanity");
-          return keep;
+          const verdict=classifyClubPlace(place,{ clubLane:true });
+          if(DEBUG_PLACES) console.log(`[Clubs] ${verdict.isClub?"accepted":"rejected"} "${place?.displayName||place?.name||"Unknown"}" (${verdict.reason})`);
+          if(!verdict.isClub) logClubExclusion(place,`excluded: club sanity (${verdict.reason})`);
+          return verdict.isClub;
         });
         if(DEBUG_PLACES){
           clubLaneCounts.push({ query, total: results.length, sane: saneResults.length });
@@ -2081,6 +2123,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const merged=[];
     const seen=new Set();
     const mergedById=new Map();
+    let clubRelabelled=0;
     const totalCount=responses.reduce((sum,entry)=>sum+entry.results.length,0);
     responses.forEach(entry=>{
       entry.results.forEach(place=>{
@@ -2089,23 +2132,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           seen.add(pid);
           place._discoverySource=entry.label||"";
           if(entry.outdoor) place.outdoorLikely=true;
-          if(entry.clubLane){
-            place.clubLane=true;
-            place.primaryCategoryOverride="Club";
-          }
+          if(applyClubLabel(place,!!entry.clubLane)) clubRelabelled++;
           merged.push(place);
           mergedById.set(pid,place);
         } else if(place&&pid&&entry.outdoor){
           const existing=mergedById.get(pid);
           if(existing) existing.outdoorLikely=true;
-          if(existing&&entry.clubLane){
-            existing.clubLane=true;
-            existing.primaryCategoryOverride="Club";
-          }
+          if(existing&&entry.clubLane) applyClubLabel(existing,true);
         }
       });
     });
-    if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}`);
+    if(DEBUG_PLACES) console.log(`[Places] merged ${totalCount} results, deduped ${merged.length}, relabelled as Club ${clubRelabelled}`);
     merged.forEach(place=>{
       const pid=place?.id||place?.place_id;
       if(!pid) return;
@@ -2132,7 +2169,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const hit=types.find(type=>excludeTypes.includes(type));
       if(!hit) return true;
       // Pub hotels: "lodging" is ancillary when the venue is also a pub/bar
-      if(hit==="lodging"&&(types.includes("pub")||types.includes("bar")||types.includes("night_club"))) return true;
+      if(hit==="lodging"&&(types.includes("pub")||types.includes("bar")||types.includes("night_club")||place?.primaryCategoryOverride==="Club")) return true;
       logExclusion(place,`excluded: ${hit}`);
       if(place?.clubLane) logClubExclusion(place,`excluded: ${hit}`);
       return false;
@@ -2297,16 +2334,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const results=await fetchPlacesByTypeForCrawl({ request: distanceRequest, type: pass.type, keyword: pass.keyword, requestId });
       responses.push({ results, outdoor: true, label: pass.label });
     }
-    const clubQueries=["sports club"];
-    const clubNameHints=["bowling club","bowls club","bowlo","sports club","workers club","rsl","leagues"];
-    const clubSanityCheck=(place)=>{
-      const name=(place?.displayName||place?.name||"").toLowerCase();
-      return clubNameHints.some(hint=>name.includes(hint));
-    };
+    const clubQueries=getClubTextQueries();
     for(const query of clubQueries){
       if(requestId!==crawlBuildRequestId) return [];
       const results=await fetchPlacesByTextForCrawl({ request: textBaseRequest, query, requestId });
-      const saneResults=results.filter(place=>clubSanityCheck(place));
+      const saneResults=results.filter(isClubLaneResult);
       responses.push({ results: saneResults, outdoor: true, label: `club+${query}`, clubLane: true });
     }
     const primaryCount=responses
@@ -2322,25 +2354,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const merged=[];
     const seen=new Set();
     const mergedById=new Map();
+    let clubRelabelled=0;
     responses.forEach(entry=>{
       entry.results.forEach(place=>{
         const pid=place?.id||place?.place_id;
         if(place&&pid&&!seen.has(pid)){
           seen.add(pid);
           if(entry.outdoor) place.outdoorLikely=true;
-          if(entry.clubLane){
-            place.clubLane=true;
-            place.primaryCategoryOverride="Club";
-          }
+          if(applyClubLabel(place,!!entry.clubLane)) clubRelabelled++;
           merged.push(place);
           mergedById.set(pid,place);
         } else if(place&&pid&&entry.outdoor){
           const existing=mergedById.get(pid);
           if(existing) existing.outdoorLikely=true;
-          if(existing&&entry.clubLane){
-            existing.clubLane=true;
-            existing.primaryCategoryOverride="Club";
-          }
+          if(existing&&entry.clubLane) applyClubLabel(existing,true);
         }
       });
     });
@@ -2377,7 +2404,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const hit=types.find(type=>excludeTypes.includes(type));
       if(!hit) return true;
       // Pub hotels: "lodging" is ancillary when the venue is also a pub/bar
-      if(hit==="lodging"&&(types.includes("pub")||types.includes("bar")||types.includes("night_club"))) return true;
+      if(hit==="lodging"&&(types.includes("pub")||types.includes("bar")||types.includes("night_club")||place?.primaryCategoryOverride==="Club")) return true;
       return false;
     });
     const primaryTypeFiltered=excludeFiltered.filter(place=>{
@@ -4689,7 +4716,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     fetchVenueDetails(v);
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
-    const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
+    const storedTypes=String(tags.types||"").split(",").filter(Boolean);
+    const kind=(v.primaryCategory!=="Club"&&isClubPlace({ name:v.name, types:storedTypes })) ? "Club" : (v.primaryCategory||toTitle(tags.amenity||tags.tourism||""));
     const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
     const address=v.address||formatAddress(tags);
     const hasValidCoords=Number.isFinite(v.lat)&&Number.isFinite(v.lng);
@@ -7272,13 +7300,17 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(isGloballyExcludedVenue({ name })) return false;
     const includeCafes=getIncludeCafes();
     const allowTypes=[...VENUE_ALLOW_TYPES,...(includeCafes?["cafe"]:[])];
-    if(!types.some(type=>allowTypes.includes(type))) return false;
+    // Licensed clubs named as such (RSL, leagues, bowling, diggers, wests …) often carry
+    // only sports_club-style types, so a name match stands in for the allowed type.
+    const clubVerdict=classifyClubPlace({ name:item.mainText||"", types });
+    const namedClub=clubVerdict.isClub&&(clubVerdict.strength==="strong"||clubVerdict.strength==="weak");
+    if(!namedClub&&!types.some(type=>allowTypes.includes(type))) return false;
     const isPubOrBar=types.includes("bar")||types.includes("pub")||types.includes("night_club");
     const excludedHit=types.find(type=>VENUE_EXCLUDE_TYPES.includes(type));
-    if(excludedHit&&!(excludedHit==="lodging"&&isPubOrBar)) return false;
-    if(!isPubOrBar&&types.some(type=>EXCLUDED_PRIMARY_TYPES.has(type))) return false;
+    if(excludedHit&&!(excludedHit==="lodging"&&(isPubOrBar||clubVerdict.isClub))) return false;
+    if(!isPubOrBar&&!namedClub&&types.some(type=>EXCLUDED_PRIMARY_TYPES.has(type))) return false;
     if(VENUE_NAME_EXCLUSIONS.some(term=>name.includes(term))) return false;
-    if(!includeCafes&&types.includes("cafe")&&!isPubOrBar) return false;
+    if(!includeCafes&&types.includes("cafe")&&!isPubOrBar&&!namedClub) return false;
     return true;
   }
   async function lookupVenueDetailsRow(placeId){
@@ -7334,7 +7366,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         lng:position.lng,
         address,
         tags,
-        primaryCategory:types.length ? getPrimaryCategory(types) : "",
+        primaryCategory:(types.length||isClubPlace({ name:venueName, types })) ? getVenueCategory({ name:venueName, types }) : "",
         outdoorLikely:true,
         openingHours:null,
         hoursText:"",
