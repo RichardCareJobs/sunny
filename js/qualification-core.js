@@ -12,6 +12,11 @@
   key can neither change a rejected_ status nor set one. So a negative Places
   result is stored as unknown_after_enrichment plus the facts behind it, and
   those facts are what keep it from being re-checked for 30 days.
+
+  A Places check that came back with no facts at all (Google simply doesn't
+  know) is also left alone for 30 days: asking again on every card open costs
+  an Enterprise + Atmosphere call and gets the same empty answer. Rows from
+  other sources (e.g. the Apify import) are still checked with Places.
 */
 (function (root, factory) {
   const api = factory();
@@ -73,7 +78,8 @@
   //   onCacheHit(placeId, status, context)            optional
   //   onEnriched(placeId, place, status, context)     optional
   //   now()                       -> ms timestamp (defaults to Date.now)
-  //   ttlMs                       -> freshness window for "confirmed" rows
+  //   ttlMs                       -> freshness window for "confirmed" rows and for
+  //                                  Places-checked unknown rows
   // enrich() resolves to { qualificationStatus, cacheHit, locked? } or null on failure.
   function createQualificationEnricher(deps) {
     const readRow = deps.readRow;
@@ -88,8 +94,19 @@
       try { return (await readRow(placeId)) || null; } catch (e) { return null; }
     }
 
-    return async function enrich(placeId, enrichmentType, enrichmentReason, scoreData) {
-      if (!placeId) return null;
+    // One lookup per venue at a time: the card re-renders while details load, and
+    // background enrichment can ask about the same venue concurrently.
+    const inFlight = new Map();
+    return function enrich(placeId, enrichmentType, enrichmentReason, scoreData) {
+      if (!placeId) return Promise.resolve(null);
+      if (inFlight.has(placeId)) return inFlight.get(placeId);
+      const pending = enrichOnce(placeId, enrichmentType, enrichmentReason, scoreData)
+        .finally(() => inFlight.delete(placeId));
+      inFlight.set(placeId, pending);
+      return pending;
+    };
+
+    async function enrichOnce(placeId, enrichmentType, enrichmentReason, scoreData) {
       const context = { enrichmentType, enrichmentReason, scoreData: scoreData || {} };
       const row = await safeRead(placeId);
       const status = (row && row.qualification_status) || "";
@@ -110,6 +127,11 @@
         onCacheHit(placeId, fromFacts, context);
         return { qualificationStatus: fromFacts, cacheHit: true };
       }
+      // A recent Places check that had nothing to say (see header).
+      if (fresh && status === "unknown_after_enrichment" && row.enrichment_source === "places_api") {
+        onCacheHit(placeId, status, context);
+        return { qualificationStatus: status, cacheHit: true };
+      }
 
       try {
         const place = await fetchPlace(placeId);
@@ -128,7 +150,7 @@
       } catch (e) {
         return null;
       }
-    };
+    }
   }
 
   return {

@@ -95,8 +95,16 @@ create table if not exists places_api_calls (
   place_id text,
   result_count integer,
   session_code text,
-  created_at timestamptz default now()
+  created_at timestamptz default now(),
+  -- Diagnostics (supabase/migrations/20261121120000_places_api_calls_diagnostics.sql)
+  reason text,
+  pass_label text,
+  tile_key text,
+  zoom smallint,
+  discarded boolean,
+  unique_new integer
 );
+create index if not exists idx_places_api_calls_created_at on places_api_calls (created_at);
 
 alter table places_api_calls enable row level security;
 create policy "Allow anon insert" on places_api_calls for insert to anon with check (true);
