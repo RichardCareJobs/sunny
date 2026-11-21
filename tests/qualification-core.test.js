@@ -172,10 +172,39 @@ test("a stale unknown row with negative facts is checked with Places again", asy
   assert.equal(calls.save, 1);
 });
 
-test("a fresh unknown row with no facts is still checked with Places", async () => {
+test("a fresh unknown row with no facts from another source is still checked with Places", async () => {
   const { enrich, calls } = harness({ qualification_status: "unknown_after_enrichment", last_enriched_at: daysAgo(3) });
   await enrich("p1", "user_initiated", "venue_card_opened", {});
   assert.equal(calls.fetch, 1);
+  const imported = harness({ qualification_status: "unknown_after_enrichment", last_enriched_at: daysAgo(3), enrichment_source: "apify_google_maps" });
+  await imported.enrich("p1", "user_initiated", "venue_card_opened", {});
+  assert.equal(imported.calls.fetch, 1);
+});
+
+test("a fresh Places-checked unknown row with no facts is a cache hit (no repeat Enterprise call)", async () => {
+  const { enrich, calls } = harness({ qualification_status: "unknown_after_enrichment", last_enriched_at: daysAgo(3), enrichment_source: "places_api" });
+  const result = await enrich("p1", "user_initiated", "venue_card_opened", {});
+  assert.deepEqual(result, { qualificationStatus: "unknown_after_enrichment", cacheHit: true });
+  assert.equal(calls.fetch, 0);
+  assert.equal(calls.save, 0);
+});
+
+test("a stale Places-checked unknown row is checked again", async () => {
+  const { enrich, calls } = harness({ qualification_status: "unknown_after_enrichment", last_enriched_at: daysAgo(31), enrichment_source: "places_api" });
+  await enrich("p1", "user_initiated", "venue_card_opened", {});
+  assert.equal(calls.fetch, 1);
+});
+
+test("concurrent lookups for the same venue share one Places call", async () => {
+  const { enrich, calls } = harness({ qualification_status: "confirmed", last_enriched_at: daysAgo(45) });
+  const [a, b] = await Promise.all([
+    enrich("p1", "user_initiated", "venue_card_opened", {}),
+    enrich("p1", "background", "medium_confidence_background", {}),
+  ]);
+  assert.equal(a, b);
+  assert.equal(calls.fetch, 1);
+  await enrich("p1", "user_initiated", "venue_card_opened", {});
+  assert.equal(calls.fetch, 2, "a later lookup isn't blocked once the first finishes");
 });
 
 test("placeFacts: explicit false is stored as false", () => {

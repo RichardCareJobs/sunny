@@ -19,8 +19,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const SUNNY_SAVES_STORAGE_KEY = "sunny_saves_v1";
   const VIEWPORT_CACHE_SESSION_KEY = "sunny-viewport-cache-v1";
   const VIEWPORT_CACHE_TTL_MS = 1000 * 60 * 30;
-  const VIEWPORT_CACHE_STALE_MS = 1000 * 60 * 120;
   const VIEWPORT_CACHE_GRID_DEG = 0.05;
+  const SEARCH_AREA_CACHE_KEY = "sunny-search-areas-v1";
+  const PLACES_SEARCH_BUDGET_KEY = "sunny-places-search-budget-v1";
+  const PLACES_DETAILS_BUDGET_KEY = "sunny-places-details-budget-v1";
+  // Card opens that miss the Supabase cache. Generous for people, tight for scripts.
+  const PLACES_DETAILS_BUDGET_LIMITS = [{ windowMs: 10 * 60 * 1000, max: 40 }, { windowMs: 24 * 60 * 60 * 1000, max: 150 }];
+  // A full map search is 4 calls (5 with the "pub" fallback).
+  const SEARCH_BUNDLE_CALLS = 4;
   const VENUE_DETAILS_CACHE_TTL_MS = 28 * 24 * 60 * 60 * 1000;
   const SUPABASE_URL = "https://ivylljoqjswkuyrpevmg.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2eWxsam9xanN3a3V5cnBldm1nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM4OTk4NzksImV4cCI6MjA4OTQ3NTg3OX0.nyRzoYBdJeMg2CR45WRR7bDMkHSi524z_dLfASIBczs";
@@ -33,23 +39,73 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     return venueDetailsSupabase;
   }
 
-  function logPlacesApiCall({ callType, billingTier, placeId, resultCount }) {
+  // Every billed Google Places request should land in places_api_calls so the Supabase numbers
+  // reconcile with the Google invoice. Calls are queued (the Supabase script loads async and the
+  // first map search often finishes before it is ready), then flushed in small batches.
+  const PLACES_LOG_FLUSH_MS = 2000;
+  const PLACES_LOG_MAX_BATCH = 25;
+  const PLACES_LOG_MAX_QUEUE = 500;
+  const PLACES_LOG_DIAGNOSTIC_FIELDS = ["reason","pass_label","tile_key","zoom","discarded","unique_new"];
+  const placesLogQueue = [];
+  let placesLogTimer = null;
+  let placesLogDiagnosticsSupported = true;
+  function getPlacesLogSessionId() {
     try {
-      const sb = getVenueDetailsSupabase();
-      if (!sb) return;
-      const sessionId = sessionStorage.getItem("sunny_session_id");
+      if (window.SunnyAnalytics?.initSessionId) return window.SunnyAnalytics.initSessionId();
+      return sessionStorage.getItem("sunny_session_id");
+    } catch { return null; }
+  }
+  function schedulePlacesLogFlush(delay = PLACES_LOG_FLUSH_MS) {
+    if (placesLogTimer) return;
+    placesLogTimer = setTimeout(() => { placesLogTimer = null; flushPlacesApiLog(); }, delay);
+  }
+  function flushPlacesApiLog() {
+    if (!placesLogQueue.length) return;
+    const sb = getVenueDetailsSupabase();
+    if (!sb) { schedulePlacesLogFlush(); return; }
+    const batch = placesLogQueue.splice(0, PLACES_LOG_MAX_BATCH);
+    const rows = placesLogDiagnosticsSupported
+      ? batch
+      : batch.map(row => { const copy = { ...row }; PLACES_LOG_DIAGNOSTIC_FIELDS.forEach(k => delete copy[k]); return copy; });
+    Promise.resolve(sb.from("places_api_calls").insert(rows)).then(({ error } = {}) => {
+      // Diagnostic columns not deployed yet (PostgREST "column not found"): resend the batch
+      // without them so the basic call log keeps working.
+      if (error && placesLogDiagnosticsSupported && (error.code === "PGRST204" || /column/i.test(error.message || ""))) {
+        placesLogDiagnosticsSupported = false;
+        placesLogQueue.unshift(...batch);
+      }
+    }).catch(() => {}).finally(() => {
+      if (placesLogQueue.length) schedulePlacesLogFlush(0);
+    });
+  }
+  function logPlacesApiCall({ callType, billingTier, placeId, resultCount, reason, passLabel, tileKey, zoom, discarded, uniqueNew }) {
+    try {
+      const sessionId = getPlacesLogSessionId();
       if (!sessionId) return;
-      const sessionCode = window.SunnyLiveCrawl?.getSessionCode?.() ?? null;
-      sb.from("places_api_calls").insert({
+      if (placesLogQueue.length >= PLACES_LOG_MAX_QUEUE) placesLogQueue.shift();
+      placesLogQueue.push({
         session_id: sessionId,
         call_type: callType,
         billing_tier: billingTier,
         place_id: placeId ?? null,
         result_count: resultCount ?? null,
-        session_code: sessionCode,
-      }).then(() => {}).catch(() => {});
+        session_code: window.SunnyLiveCrawl?.getSessionCode?.() ?? null,
+        created_at: new Date().toISOString(),
+        reason: reason ?? null,
+        pass_label: passLabel ?? null,
+        tile_key: tileKey ?? null,
+        zoom: typeof zoom === "number" ? Math.round(zoom) : null,
+        discarded: typeof discarded === "boolean" ? discarded : null,
+        unique_new: typeof uniqueNew === "number" ? uniqueNew : null,
+      });
+      if (placesLogQueue.length >= PLACES_LOG_MAX_BATCH) flushPlacesApiLog();
+      else schedulePlacesLogFlush();
     } catch { /* no-op */ }
   }
+  try {
+    // Don't lose the tail of the queue when the tab is backgrounded or closed.
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushPlacesApiLog(); });
+  } catch { /* no-op */ }
 
   const PRIMARY_PUB_TYPES = ["bar", "pub"];
   const SECONDARY_PUB_TYPES = ["night_club"];
@@ -178,7 +234,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   const MAX_LOCATION_WAIT_MS = 15000;
   const DESIRED_LOCATION_ACCURACY_METERS = 250;
 
-  const MOVE_DEBOUNCE_MS = 800;
+  const MOVE_DEBOUNCE_MS = 1000;
   const MARKER_BATCH_SIZE = 50;
   const MARKER_STALE_REMOVE_MS = 1000 * 60 * 12;
   const ALLVENUES_MAX_SIZE = 500;
@@ -253,7 +309,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let isCrawlBuildInProgress = false;
   let activeSearchId = 0;
   let activeRequestId = 0;
-  let activeRequestController = null;
   let includeNoOutdoorVenues = loadIncludeNoOutdoorPreference();
   let initialLocationView = loadInitialLocationView();
 
@@ -261,7 +316,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   let markerIcon = null;
   let markerScaledSize = null;
   let markerAnchorPoint = null;
-  const viewportCache = new Map();
+  const searchAreaCache = new Map();
+  const searchesInFlight = new Map();
   const crawlVenueCache = new Map();
 
   // Helpers
@@ -634,45 +690,97 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const lng=roundToGrid(center.lng,VIEWPORT_CACHE_GRID_DEG);
     return `crawl:${lat.toFixed(3)}:${lng.toFixed(3)}:r${radius}:${getFilterHash()}:includeNoOutdoor:${shouldIncludeNoOutdoorVenues()?1:0}`;
   }
-  function getViewportCacheEntry(key){
-    return viewportCache.get(key) || null;
-  }
-  function setViewportCacheEntry(key,data){
-    viewportCache.set(key,{ data, ts: Date.now() });
-    saveViewportCacheToSession();
-  }
-  function saveViewportCacheToSession(){
+  // ── Search-area cache ──────────────────────────────────────────────────────
+  // Remembers every completed map search (where it was, how far it provably covered, and the
+  // venues it found) in localStorage for 7 days, so panning back, reloading or returning
+  // later doesn't pay Google again. Coverage rules live in js/tile-core.js (SunnyTiles).
+  function getTiles(){ return window.SunnyTiles||null; }
+  function loadSearchAreaCache(){
+    const Tiles=getTiles();
+    if(!Tiles) return;
     try{
-      const now=Date.now();
-      const entries=[];
-      for(const [k,v] of viewportCache.entries()){
-        if(now-v.ts<=VIEWPORT_CACHE_STALE_MS) entries.push([k,v]);
-      }
-      sessionStorage.setItem(VIEWPORT_CACHE_SESSION_KEY,JSON.stringify(entries));
+      const raw=localStorage.getItem(SEARCH_AREA_CACHE_KEY);
+      const list=raw ? JSON.parse(raw) : [];
+      Tiles.pruneEntries(Array.isArray(list)?list:[]).forEach(entry=>searchAreaCache.set(entry.key,entry));
     }catch{}
+    // Retire the old per-tab cache.
+    try{ sessionStorage.removeItem(VIEWPORT_CACHE_SESSION_KEY); }catch{}
   }
-  function loadViewportCacheFromSession(){
-    try{
-      const raw=sessionStorage.getItem(VIEWPORT_CACHE_SESSION_KEY);
-      if(!raw) return;
-      const entries=JSON.parse(raw);
-      if(!Array.isArray(entries)) return;
-      const now=Date.now();
-      for(const [k,v] of entries){
-        if(k&&v&&v.ts&&(now-v.ts)<=VIEWPORT_CACHE_STALE_MS) viewportCache.set(k,v);
-      }
-    }catch{}
+  function saveSearchAreaCache(){
+    const Tiles=getTiles();
+    if(!Tiles) return;
+    let list=Tiles.pruneEntries(searchAreaCache);
+    // Shrink until it fits if localStorage is nearly full.
+    while(list.length){
+      try{ localStorage.setItem(SEARCH_AREA_CACHE_KEY,JSON.stringify(list)); return; }
+      catch{ list=list.slice(0,Math.floor(list.length/2)); }
+    }
+    try{ localStorage.removeItem(SEARCH_AREA_CACHE_KEY); }catch{}
+  }
+  function compactVenueForCache(venue){
+    // Photos come from the per-venue photo cache / details fetch; don't duplicate them here.
+    const { photo, photos, openingHours, ...rest }=venue||{};
+    return rest;
+  }
+  function getSearchView(bounds){
+    const center=bounds.getCenter();
+    const ne=bounds.getNorthEast();
+    const Tiles=getTiles();
+    const lat=center.lat(), lng=center.lng();
+    const filterHash=getFilterHash();
+    const radiusM=Tiles ? Tiles.viewRadiusM({ lat, lng },{ lat: ne.lat(), lng: ne.lng() }) : 0;
+    return {
+      lat, lng, radiusM, filterHash,
+      zoom: map?.getZoom?.(),
+      key: Tiles ? Tiles.cellKey(lat,lng,filterHash) : getViewportCacheKey()
+    };
+  }
+  function findSearchAreaCoverage(view){
+    const Tiles=getTiles();
+    if(!Tiles) return null;
+    return Tiles.findCoveringEntry(searchAreaCache,view);
+  }
+  function storeSearchArea(view,venues,nearbyDistancesM){
+    const Tiles=getTiles();
+    if(!Tiles||!view?.key) return null;
+    const entry={
+      key: view.key,
+      lat: view.lat,
+      lng: view.lng,
+      coverRadiusM: Math.round(Tiles.coverRadiusM(nearbyDistancesM)),
+      filterHash: view.filterHash,
+      ts: Date.now(),
+      venues: (venues||[]).map(compactVenueForCache)
+    };
+    searchAreaCache.set(entry.key,entry);
+    saveSearchAreaCache();
+    return entry;
+  }
+  // ── Call budget (light bot / runaway-loop guard) ─────────────────────────────
+  let placesSearchBudget=null;
+  let placesDetailsBudget=null;
+  function makeStoredBudget(storageKey,limits){
+    const Tiles=getTiles();
+    if(!Tiles) return null;
+    return Tiles.createCallBudget({
+      limits,
+      load: ()=>JSON.parse(localStorage.getItem(storageKey)||"[]"),
+      save: stamps=>localStorage.setItem(storageKey,JSON.stringify(stamps))
+    });
+  }
+  function getPlacesSearchBudget(){
+    if(!placesSearchBudget) placesSearchBudget=makeStoredBudget(PLACES_SEARCH_BUDGET_KEY,getTiles()?.DEFAULT_BUDGET_LIMITS);
+    return placesSearchBudget;
+  }
+  function getPlacesDetailsBudget(){
+    if(!placesDetailsBudget) placesDetailsBudget=makeStoredBudget(PLACES_DETAILS_BUDGET_KEY,PLACES_DETAILS_BUDGET_LIMITS);
+    return placesDetailsBudget;
   }
   function getCrawlVenueCacheEntry(key){
     return crawlVenueCache.get(key) || null;
   }
   function setCrawlVenueCacheEntry(key,data){
     crawlVenueCache.set(key,{ data, ts: Date.now() });
-  }
-  function throwIfAborted(signal){
-    if(signal?.aborted){
-      throw new DOMException("Aborted","AbortError");
-    }
   }
   function getMarkerClustererClass(){
     return window.markerClusterer?.MarkerClusterer || window.MarkerClusterer || null;
@@ -1219,11 +1327,23 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(/rating coming soon/i.test(el.textContent||"")) el.remove();
     });
   }
-  function resolveLocation(){
+  function resolveLocation({ centering=false }={}){
     if(locationResolved) return;
     locationResolved=true;
     if(pendingSearch){
       pendingSearch=false;
+      if(centering&&map){
+        // The map is about to pan to the user's location, and that pan's "idle" runs the
+        // first search there. Searching the default view first would pay for a 4–5 call
+        // Places bundle the user never sees. Fallback in case the pan doesn't fire idle.
+        hasInitialMapLoad=false;
+        setTimeout(()=>{
+          if(hasInitialMapLoad) return;
+          hasInitialMapLoad=true;
+          loadVisibleTiles({ immediate: true });
+        },2500);
+        return;
+      }
       hasInitialMapLoad=true;
       loadVisibleTiles({ immediate: true });
     }
@@ -1314,7 +1434,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     clearLocationWatch();
     userLocation={lat:latitude,lng:longitude};
     updateUserLocationMarker(latitude,longitude,accuracy);
-    resolveLocation();
+    resolveLocation({ centering: shouldCenter&&!!map&&(!hasCenteredOnUser||forceCenter) });
     if(shouldCenter) centerOnUserIfAvailable(15,{force:forceCenter});
     if(onComplete) onComplete();
     return true;
@@ -1762,6 +1882,50 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   function getThumbnailUrl(photo,maxWidth=400){
     return derivePhotoUrl(photo?.source||photo,maxWidth);
   }
+  // Every Place Photo media request is billed (Place Details Photos SKU), including repeat
+  // loads of the same photo when a card re-renders. resolvePhotoSrc asks Google once per photo
+  // per page for a short-lived photoUri (skipHttpRedirect=true) and reuses it for the card hero,
+  // the full-screen viewer and any re-render, so each photo costs at most one billed request.
+  const PHOTO_DISPLAY_WIDTH=800;
+  const photoSrcCache=new Map();
+  function photoSrcCacheKey(photo,width){
+    const src=photo?.source||photo;
+    const id=src?.name||src?.photo_reference||photo?.id||"";
+    return id ? `${id}|${width}` : "";
+  }
+  function resolvePhotoSrc(photo,{ width=PHOTO_DISPLAY_WIDTH, placeId=null, reason="card_open" }={}){
+    const key=photoSrcCacheKey(photo,width);
+    if(key&&photoSrcCache.has(key)) return photoSrcCache.get(key);
+    const src=photo?.source||photo;
+    const pending=(async()=>{
+      const apiKey=getGoogleMapsApiKey();
+      if(src?.name&&apiKey&&typeof fetch==="function"){
+        let billed=false;
+        try{
+          const res=await fetch(`https://places.googleapis.com/v1/${src.name}/media?maxWidthPx=${width}&skipHttpRedirect=true&key=${encodeURIComponent(apiKey)}`);
+          billed=true;
+          logPlacesApiCall({ callType:"photo", billingTier:"photo", placeId, reason, resultCount: res.ok?1:0 });
+          if(res.ok){
+            const json=await res.json();
+            if(json?.photoUri) return json.photoUri;
+          }
+        } catch(e){
+          if(DEV_PLACES_LOGGING) console.warn("[PlacesPhoto] photoUri lookup failed:",e);
+        }
+        // The lookup reached Google but returned nothing usable; don't pay twice for the same photo.
+        if(billed) return "";
+      }
+      const url=derivePhotoUrl(src,width);
+      if(url) logPlacesApiCall({ callType:"photo", billingTier:"photo", placeId, reason, resultCount:1 });
+      return url;
+    })();
+    if(key){
+      photoSrcCache.set(key,pending);
+      // A failed lookup shouldn't stick for the whole page; let a later open retry.
+      pending.then(url=>{ if(!url) photoSrcCache.delete(key); },()=>photoSrcCache.delete(key));
+    }
+    return pending;
+  }
   function getLargeUrl(photo,maxWidth=1200){
     return derivePhotoUrl(photo?.source||photo,maxWidth);
   }
@@ -1899,15 +2063,27 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(others.length<=maxOthers) return places;
     return [...pubs,...others.slice(0,Math.max(0,maxOthers))];
   }
-  async function fetchPlacesByType({ request, types, type, keyword, searchId, signal }){
-    if(signal?.aborted) return [];
-    if(searchId!==activeSearchId) return [];
+  // logContext.pending (an array) defers the log row so fetchPlacesForBounds can add each
+  // pass's unique_new count once all passes are back; otherwise the call is logged now.
+  function deferOrLogPlacesCall(logContext,row){
+    const { pending, ...context }=logContext||{};
+    const full={ ...context, ...row };
+    if(Array.isArray(pending)) pending.push(full);
+    else logPlacesApiCall(full);
+  }
+  // Map-search passes. Results are always returned, even if the user has moved the map on
+  // since the request started: Google has already billed the call, so the caller caches the
+  // result for that area instead of throwing it away. `logContext` carries the diagnostic
+  // fields for places_api_calls (reason, tile_key, zoom).
+  async function fetchPlacesByType({ request, types, type, keyword, searchId, passLabel, logContext={} }){
+    const includedTypes=types||[type];
+    const callType=keyword ? "text_search" : "nearby_search";
+    let places=null;
     try{
       const { Place }=await google.maps.importLibrary("places");
       const center=request.location;
       const radius=request.radius||PLACES_QUERY_RADIUS_MAX_M;
-      const includedTypes=types||[type];
-      let places;
+      getPlacesSearchBudget()?.spend(1);
       if(keyword){
         const result=await Place.searchByText({
           textQuery: keyword,
@@ -1918,7 +2094,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
       } else {
         const result=await Place.searchNearby({
           fields: PLACE_SEARCH_FIELDS,
@@ -1929,37 +2104,50 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"nearby_search", billingTier:"pro", resultCount:places.length });
       }
-      if(signal?.aborted||searchId!==activeSearchId) return [];
       logPlacesRequest(`searchNearby:${includedTypes.join(",")}${keyword?`+${keyword}`:""}`,{ types:includedTypes, keyword },places);
       return places;
     } catch(e){
       if(DEV_PLACES_LOGGING) console.warn(`[Places] fetchPlacesByType failed (${includedTypes.join(",")}):`,e);
       return [];
+    } finally {
+      deferOrLogPlacesCall(logContext,{
+        callType: places ? callType : `${callType}_error`,
+        billingTier:"pro",
+        resultCount: places ? places.length : null,
+        passLabel,
+        discarded: searchId!==activeSearchId
+      });
     }
   }
-  async function fetchPlacesByText({ request, query, searchId, signal }){
-    if(signal?.aborted) return [];
-    if(searchId!==activeSearchId) return [];
+  async function fetchPlacesByText({ request, query, searchId, passLabel, logContext={} }){
+    let places=null;
     try{
       const { Place }=await google.maps.importLibrary("places");
       const center=request.location;
       const radius=request.radius||PLACES_QUERY_RADIUS_MAX_M;
-      const { places=[] }=await Place.searchByText({
+      getPlacesSearchBudget()?.spend(1);
+      const result=await Place.searchByText({
         textQuery: query,
         fields: PLACE_SEARCH_FIELDS,
         locationBias:{ center, radius },
         maxResultCount: 20,
         language:"en-AU"
       });
-      logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
-      if(signal?.aborted||searchId!==activeSearchId) return [];
+      places=result.places||[];
       logPlacesRequest(`searchByText:${query}`,{ query },places);
       return places;
     } catch(e){
       if(DEV_PLACES_LOGGING) console.warn(`[Places] fetchPlacesByText failed (${query}):`,e);
       return [];
+    } finally {
+      deferOrLogPlacesCall(logContext,{
+        callType: places ? "text_search" : "text_search_error",
+        billingTier:"pro",
+        resultCount: places ? places.length : null,
+        passLabel,
+        discarded: searchId!==activeSearchId
+      });
     }
   }
   function calculateRadiusFromBounds(bounds){
@@ -1981,7 +2169,31 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       return INCLUDE_CAFES_DEFAULT;
     }
   }
-  async function fetchPlacesForBounds(bounds,searchId,signal){
+  // meta (optional, filled in): nearbyDistancesM — distance of each Nearby result from the
+  // search centre, used to work out how much of the map this search provably covered.
+  async function fetchPlacesForBounds(bounds,searchId,{ logContext={}, meta={} }={}){
+    const pendingLogs=[];
+    try{
+      return await fetchPlacesForBoundsInner(bounds,searchId,{ logContext:{ ...logContext, pending: pendingLogs }, meta });
+    } finally {
+      // Log every pass, with how many venues it found that no other pass did (unique_new).
+      const uniqueByPass=meta.uniqueByPass||{};
+      pendingLogs.forEach(row=>{
+        const uniqueNew=uniqueByPass[row.passLabel];
+        logPlacesApiCall({ ...row, uniqueNew: typeof uniqueNew==="number" ? uniqueNew : null });
+      });
+    }
+  }
+  function countUniquePerPass(passes){
+    const counts={};
+    passes.forEach((pass,index)=>{
+      const others=new Set();
+      passes.forEach((other,j)=>{ if(j!==index) other.ids.forEach(id=>others.add(id)); });
+      counts[pass.label]=pass.ids.filter(id=>!others.has(id)).length;
+    });
+    return counts;
+  }
+  async function fetchPlacesForBoundsInner(bounds,searchId,{ logContext, meta }){
     const center=bounds.getCenter();
     const radius=PLACES_QUERY_RADIUS_MAX_M;
     const centerLocation={lat:center.lat(),lng:center.lng()};
@@ -1991,10 +2203,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const responses=[];
 
     // Run all independent search passes in parallel for faster loading
-    throwIfAborted(signal);
-
     const allNearbyTypes=[...PRIMARY_PUB_TYPES,...SECONDARY_PUB_TYPES];
-    const nearbyCall=fetchPlacesByType({ request: distanceRequest, types: allNearbyTypes, searchId, signal });
+    const nearbyCall=fetchPlacesByType({ request: distanceRequest, types: allNearbyTypes, searchId, passLabel:"nearby", logContext });
 
     const outdoorPasses=[
       { type: "bar", keyword: "beer garden", label: "bar+beer garden" },
@@ -2004,7 +2214,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       outdoorPasses.push({ type: "cafe", keyword: "alfresco", label: "cafe+alfresco" });
     }
     const outdoorPromises=outdoorPasses.map(pass=>
-      fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId, signal }).then(results=>{
+      fetchPlacesByType({ request: distanceRequest, type: pass.type, keyword: pass.keyword, searchId, passLabel: pass.label, logContext }).then(results=>{
         if(DEBUG_PLACES) console.log(`[Places] ${pass.label} results: ${results.length}`);
         return { results, outdoor: true, label: pass.label };
       })
@@ -2023,7 +2233,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     const clubLaneCounts=[];
     const clubPromises=clubQueries.map(query=>
-      fetchPlacesByText({ request: textBaseRequest, query, searchId, signal }).then(results=>{
+      fetchPlacesByText({ request: textBaseRequest, query, searchId, passLabel:`club+${query}`, logContext }).then(results=>{
         const saneResults=results.filter(place=>{
           const keep=clubSanityCheck(place);
           if(!keep) logClubExclusion(place,"excluded: club sanity");
@@ -2042,7 +2252,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       ...outdoorPromises,
       ...clubPromises
     ]);
-    throwIfAborted(signal);
+    meta.nearbyDistancesM=nearbyPlaces.map(place=>{
+      const loc=place?.location;
+      const lat=typeof loc?.lat==="function" ? loc.lat() : loc?.lat;
+      const lng=typeof loc?.lng==="function" ? loc.lng() : loc?.lng;
+      return (typeof lat==="number"&&typeof lng==="number") ? haversine(centerLocation.lat,centerLocation.lng,lat,lng)*1000 : null;
+    }).filter(d=>typeof d==="number");
 
     // Split the single nearby response into primary and secondary passes
     const primaryPlaces=nearbyPlaces.filter(p=>(p.types||[]).some(t=>PRIMARY_PUB_TYPES.includes(t)));
@@ -2063,16 +2278,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(primaryCount<MIN_PRIMARY_RESULTS){
       const expansionRadius=Math.min(PLACES_QUERY_RADIUS_MAX_M,radius+RADIUS_EXPANSION_STEP_M);
       const expansionRequest={ ...textBaseRequest, radius: expansionRadius };
-      throwIfAborted(signal);
       const fallbackResults=await Promise.all([
-        fetchPlacesByText({ request: expansionRequest, query: "pub", searchId, signal }).then(results=>{
+        fetchPlacesByText({ request: expansionRequest, query: "pub", searchId, passLabel:"fallback-text-pub", logContext }).then(results=>{
           if(DEBUG_PLACES) console.log(`[Places] fallback pub results: ${results.length}`);
           return { results, outdoor: false, label: "fallback-text-pub" };
         })
       ]);
-      throwIfAborted(signal);
       responses.push(...fallbackResults);
     }
+    const idsOf=list=>(list||[]).map(place=>place?.id||place?.place_id).filter(Boolean);
+    meta.uniqueByPass=countUniquePerPass([
+      { label:"nearby", ids: idsOf(nearbyPlaces) },
+      ...responses.filter(entry=>entry.pass!=="primary"&&entry.pass!=="secondary-pub").map(entry=>({ label: entry.label, ids: idsOf(entry.results) }))
+    ]);
     if(DEBUG_PLACES){
       clubLaneCounts.forEach(entry=>{
         console.log(`[Clubs] ${entry.query} results: ${entry.total} (after sanity ${entry.sane})`);
@@ -2222,7 +2440,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
+        logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length, reason:"crawl" });
       } else {
         const result=await Place.searchNearby({
           fields: PLACE_SEARCH_FIELDS,
@@ -2233,7 +2451,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           language:"en-AU"
         });
         places=result.places||[];
-        logPlacesApiCall({ callType:"nearby_search", billingTier:"pro", resultCount:places.length });
+        logPlacesApiCall({ callType:"nearby_search", billingTier:"pro", resultCount:places.length, reason:"crawl" });
       }
       if(requestId!==crawlBuildRequestId) return [];
       return places;
@@ -2256,7 +2474,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         maxResultCount: 20,
         language:"en-AU"
       });
-      logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length });
+      logPlacesApiCall({ callType:"text_search", billingTier:"pro", resultCount:places.length, reason:"crawl" });
       if(requestId!==crawlBuildRequestId) return [];
       return places;
     } catch(e){
@@ -2535,11 +2753,19 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const cached=await getCachedVenueDetails(venue.id);
       if(cached){ applyVenueDetailsFromCache(venue,cached); return; }
     } catch(e){ /* fall through to Google */ }
+    const detailsBudget=getPlacesDetailsBudget();
+    if(detailsBudget&&!detailsBudget.canSpend(1)){
+      // Over the per-browser cap: show the card without hours/photos rather than pay again.
+      if(existing) existing.detailsFetching=false;
+      venue.detailsFetching=false;
+      return;
+    }
     try{
       const { Place }=await google.maps.importLibrary("places");
       const place=new Place({ id: venue.id });
+      detailsBudget?.spend(1);
       await place.fetchFields({ fields:[...PLACE_DETAIL_FIELDS,"utcOffsetMinutes"] });
-      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId:venue.id });
+      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId:venue.id, reason:"card_open" });
       if(existing) existing.detailsFetching=false;
       venue.detailsFetching=false;
       // Prefer hours from the freshly-fetched Place object (regularOpeningHours is now
@@ -2709,7 +2935,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const sb=getVenueDetailsSupabase();
         if(!sb) return null;
         const { data, error }=await sb.from("venue_details")
-          .select("qualification_status,last_enriched_at,outdoor_seating,serves_beer,serves_wine,serves_cocktails")
+          .select("qualification_status,last_enriched_at,enrichment_source,outdoor_seating,serves_beer,serves_wine,serves_cocktails")
           .eq("place_id",placeId)
           .maybeSingle();
         return error ? null : (data||null);
@@ -2718,7 +2944,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         const { Place }=await google.maps.importLibrary("places");
         const place=new Place({ id: placeId });
         await place.fetchFields({ fields: PLACE_QUALIFICATION_FIELDS });
-        logPlacesApiCall({ callType:"place_details", billingTier:"enterprise_plus_atmosphere", placeId });
+        logPlacesApiCall({ callType:"place_details", billingTier:"enterprise_plus_atmosphere", placeId, reason:"qualification" });
         return place;
       },
       async saveRow(placeId, fields, { scoreData }){
@@ -3848,7 +4074,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           "photos","utcOffsetMinutes"
         ]
       });
-      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId:placeId });
+      logPlacesApiCall({ callType:"place_details", billingTier:"enterprise", placeId:placeId, reason:"saved_venue" });
       const normalized=normalizePlace(place);
       if(!normalized||!normalized.name||!isValidCoord(normalized.lat,normalized.lng)){
         throw new Error("PLACE_DETAILS_INVALID");
@@ -4226,10 +4452,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!map) return;
     const requestId=++activeRequestId;
     activeSearchId=requestId;
-    if(activeRequestController) activeRequestController.abort();
-    const requestController=new AbortController();
-    activeRequestController=requestController;
-    const { signal }=requestController;
     const perfStart=performance.now();
     const fetchReason=immediate ? "initial" : "map_move";
     perfLog("load start",{ requestId, immediate });
@@ -4243,55 +4465,80 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!immediate && Object.keys(allVenues).length){
       renderMarkers({ cacheStatus: "existing" });
     }
-    const cacheKey=getViewportCacheKey();
-    const cachedEntry=cacheKey ? getViewportCacheEntry(cacheKey) : null;
-    const cacheAge=cachedEntry ? Date.now()-cachedEntry.ts : null;
-    const cacheFresh=cachedEntry && cacheAge<=VIEWPORT_CACHE_TTL_MS;
-    const cacheStale=cachedEntry && cacheAge>VIEWPORT_CACHE_TTL_MS && cacheAge<=VIEWPORT_CACHE_STALE_MS;
-    if(cacheFresh && Array.isArray(cachedEntry.data)){
-      if(requestId!==activeRequestId) return;
-      const cachedFiltered=filterGloballyExcludedVenues(cachedEntry.data,"cache");
-      if(cachedFiltered.length){
-        mergeVenues(cachedFiltered);
-        renderMarkers({ perfStart, cacheStatus: "hit" });
-        hideVenueStatus();
-      } else {
-        showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
-      }
+    const view=getSearchView(b);
+    const renderCovered=(entry,cacheStatus)=>{
+      const cachedFiltered=filterGloballyExcludedVenues(entry.venues||[],"cache");
+      if(cachedFiltered.length) mergeVenues(cachedFiltered);
+      renderMarkers({ perfStart, cacheStatus });
+      if(cachedFiltered.length||getVenuesInViewSnapshot().length) hideVenueStatus();
+      else showVenueStatus("empty","No sunny venues found here — try zooming out or moving the map.");
       trackEvent("venues_fetch_completed",{
         fetch_time_ms: Math.round(performance.now()-perfStart),
         results_count: cachedFiltered.length,
         cache_hit: true,
         reason: fetchReason
       });
-      perfLog("cache hit",{ requestId, ageMs: cacheAge });
+      perfLog("cache hit",{ requestId, key: entry.key, ageMs: Date.now()-entry.ts });
+    };
+
+    // 1. Already searched (this cell, or an earlier search that provably covers the view).
+    const covering=findSearchAreaCoverage(view);
+    if(covering){
+      renderCovered(covering,"hit");
       return;
     }
-    if(cacheStale && Array.isArray(cachedEntry.data)){
-      const cachedFiltered=filterGloballyExcludedVenues(cachedEntry.data,"cache");
-      if(cachedFiltered.length){
-        mergeVenues(cachedFiltered);
-        renderMarkers({ cacheStatus: "stale" });
-        hideVenueStatus();
-      } else {
-        showVenueStatus("loading","Loading venues…");
-      }
-      perfLog("cache stale",{ requestId, ageMs: cacheAge });
-    } else if(!cacheStale) {
+    // 2. Same area is being searched right now (e.g. a second idle while the first is loading).
+    const inFlight=searchesInFlight.get(view.key);
+    if(inFlight){
       showVenueStatus("loading","Loading venues…");
+      const entry=await inFlight.catch(()=>null);
+      if(requestId!==activeRequestId) return;
+      if(entry) renderCovered(entry,"inflight");
+      else hideVenueStatus();
+      return;
     }
-    try{
-      const places=await fetchPlacesForBounds(b,requestId,signal);
-      if(requestId!==activeRequestId){
-        perfLog("stale load ignored",{ requestId });
-        return;
-      }
+    // 3. Zoomed out too far to search usefully: show what we already know.
+    const Tiles=getTiles();
+    if(Tiles&&!Tiles.shouldSearchAtZoom(view.zoom)){
+      renderMarkers({ perfStart, cacheStatus: "zoom-gated" });
+      showVenueStatus("empty","Zoom in to find more sunny spots.");
+      return;
+    }
+    // 4. Per-browser call budget (stops runaway loops and scripted abuse).
+    const budget=getPlacesSearchBudget();
+    if(budget&&!budget.canSpend(SEARCH_BUNDLE_CALLS)){
+      renderMarkers({ perfStart, cacheStatus: "budget" });
+      showVenueStatus("empty","You’ve explored a lot of the map! New areas will load again in a few minutes.");
+      trackEvent("places_budget_exceeded",{ reason: fetchReason });
+      return;
+    }
+
+    showVenueStatus("loading","Loading venues…");
+    const meta={};
+    const search=(async()=>{
+      const places=await fetchPlacesForBounds(b,requestId,{
+        logContext:{ reason: fetchReason, tileKey: view.key, zoom: view.zoom },
+        meta
+      });
       const normalized=places.map(normalizePlace).filter(Boolean);
       const filtered=filterGloballyExcludedVenues(normalized,"fetch");
-      if(cacheKey) setViewportCacheEntry(cacheKey,filtered);
+      // Cache even if the user has moved on: these calls are already paid for.
+      storeSearchArea(view,filtered,meta.nearbyDistancesM);
+      return { key: view.key, ts: Date.now(), venues: filtered, filtered };
+    })();
+    searchesInFlight.set(view.key,search);
+    try{
+      const result=await search;
+      if(requestId!==activeRequestId){
+        // Not shown, but the results are cached, so returning here costs nothing.
+        mergeVenues(result.filtered);
+        perfLog("superseded load cached",{ requestId });
+        return;
+      }
+      const filtered=result.filtered;
       if(filtered.length){
         mergeVenues(filtered);
-        renderMarkers({ perfStart, cacheStatus: cacheStale ? "stale-refresh" : "miss" });
+        renderMarkers({ perfStart, cacheStatus: "miss" });
         hideVenueStatus();
         runBackgroundEnrichment(filtered,requestId,{ maxThisLoad: MAX_BACKGROUND_ENRICHMENTS_PER_LOAD }).catch(()=>{});
       } else {
@@ -4303,10 +4550,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         reason: fetchReason
       });
     } catch(e){
-      if(signal.aborted){
-        perfLog("load aborted",{ requestId });
-        return;
-      }
       if(requestId!==activeRequestId) return;
       showVenueStatus("error","Couldn’t load venues. Please try again.");
       trackEvent("venues_fetch_completed",{
@@ -4315,6 +4558,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         reason: fetchReason
       });
       console.error("Places error:",e);
+    } finally {
+      if(searchesInFlight.get(view.key)===search) searchesInFlight.delete(view.key);
     }
   }
 
@@ -4554,12 +4799,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const nextBtn=container.querySelector(".image-viewer__arrow--next");
     let photos=[];
     let index=0;
+    let placeId=null;
+    let renderToken=0;
     let touchStartX=0;
-    const render=()=>{
+    const render=async()=>{
       const total=photos.length;
       if(!total) return;
+      const token=++renderToken;
+      prevBtn.disabled=total<2;
+      nextBtn.disabled=total<2;
       const current=photos[index]||photos[0];
-      const url=getLargeUrl(current,1200)||getThumbnailUrl(current,400);
+      // Same width as the card hero, so opening the hero photo reuses its photoUri (no new
+      // billed request). Other photos are only fetched when the user swipes to them.
+      const url=await resolvePhotoSrc(current,{ width: PHOTO_DISPLAY_WIDTH, placeId, reason:"photo_viewer" });
+      if(token!==renderToken) return;
       if(url){
         imageEl.src=url;
         imageEl.classList.remove("hidden");
@@ -4569,8 +4822,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         imageEl.classList.add("hidden");
         placeholderEl.classList.remove("hidden");
       }
-      prevBtn.disabled=total<2;
-      nextBtn.disabled=total<2;
     };
     const close=()=>{
       container.classList.add("hidden");
@@ -4606,7 +4857,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       if(event.key==="ArrowRight") move(1);
     };
     document.addEventListener("keydown",onKeyDown);
-    imageViewerModal={ open(nextPhotos=[],initialIndex=0){ photos=Array.isArray(nextPhotos)?nextPhotos:[]; index=Math.max(0,Math.min(initialIndex,photos.length-1)); if(!photos.length) return; render(); container.classList.remove("hidden"); container.classList.add("show"); }, close };
+    imageViewerModal={ open(nextPhotos=[],initialIndex=0,{ placeId:nextPlaceId=null }={}){ photos=Array.isArray(nextPhotos)?nextPhotos:[]; placeId=nextPlaceId; index=Math.max(0,Math.min(initialIndex,photos.length-1)); if(!photos.length) return; render(); container.classList.remove("hidden"); container.classList.add("show"); }, close };
     return imageViewerModal;
   }
   function renderVenueThumbnails(card,venue){
@@ -4614,39 +4865,50 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(!strip) return;
     const cachedPhotos=venue?.id&&Array.isArray(venuePhotoCache?.[venue.id]?.photos)?venuePhotoCache[venue.id].photos:[];
     const photos=Array.isArray(venue?.photos)&&venue.photos.length?venue.photos:cachedPhotos;
-    strip.innerHTML="";
     if(!photos.length){
+      strip.innerHTML="";
+      delete strip.dataset.heroKey;
       strip.classList.add("hidden");
       return;
     }
-    const maxVisible=3;
-    const visible=photos.slice(0,maxVisible);
-    const hiddenCount=Math.max(0,photos.length-maxVisible);
-    visible.forEach((photo,index)=>{
-      const button=document.createElement("button");
-      button.type="button";
-      button.className="venue-thumb";
-      button.setAttribute("aria-label",`Open photo ${index+1} of ${photos.length}`);
-      const img=document.createElement("img");
-      img.className="venue-thumb__img";
-      img.loading="lazy";
-      img.decoding="async";
-      img.alt=`${venue?.name||"Venue"} photo ${index+1}`;
-      const url=getThumbnailUrl(photo,400);
+    // One hero photo per card (each photo load is billed). The rest load only if the user
+    // opens the viewer and swipes to them.
+    const hero=photos[0];
+    const heroKey=`${venue?.id||""}|${photoSrcCacheKey(hero,PHOTO_DISPLAY_WIDTH)}|${photos.length}`;
+    // The card re-renders when details arrive and on marker refreshes; keep the existing hero
+    // rather than rebuilding it.
+    if(strip.dataset.heroKey===heroKey&&strip.childElementCount){
+      strip.classList.remove("hidden");
+      return;
+    }
+    strip.dataset.heroKey=heroKey;
+    strip.innerHTML="";
+    strip.classList.add("venue-card__photo-strip--hero");
+    const moreCount=photos.length-1;
+    const button=document.createElement("button");
+    button.type="button";
+    button.className="venue-thumb venue-thumb--hero";
+    button.setAttribute("aria-label",photos.length>1?`Open photos (${photos.length})`:"Open photo");
+    const img=document.createElement("img");
+    img.className="venue-thumb__img";
+    img.decoding="async";
+    img.alt=`${venue?.name||"Venue"} photo`;
+    img.onerror=()=>button.classList.add("is-fallback");
+    button.appendChild(img);
+    if(moreCount>0){
+      const overlay=document.createElement("span");
+      overlay.className="venue-thumb__more";
+      overlay.textContent=`+${moreCount}`;
+      button.appendChild(overlay);
+    }
+    button.addEventListener("click",()=>ensureImageViewerModal().open(photos,0,{ placeId: venue?.id||null }));
+    strip.appendChild(button);
+    strip.classList.remove("hidden");
+    resolvePhotoSrc(hero,{ width: PHOTO_DISPLAY_WIDTH, placeId: venue?.id||null, reason:"card_open" }).then(url=>{
+      if(strip.dataset.heroKey!==heroKey) return;
       if(url) img.src=url;
       else button.classList.add("is-fallback");
-      img.onerror=()=>button.classList.add("is-fallback");
-      button.appendChild(img);
-      if(hiddenCount>0&&index===visible.length-1){
-        const overlay=document.createElement("span");
-        overlay.className="venue-thumb__more";
-        overlay.textContent=`+${hiddenCount}`;
-        button.appendChild(overlay);
-      }
-      button.addEventListener("click",()=>ensureImageViewerModal().open(photos,index));
-      strip.appendChild(button);
     });
-    strip.classList.remove("hidden");
   }
 
   function hideVenueCard(){
@@ -6050,7 +6312,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
           try{
             const place=s.placePrediction.toPlace();
             await place.fetchFields({ fields:["location","viewport","formattedAddress","displayName","addressComponents"] });
-            logPlacesApiCall({ callType:"place_details", billingTier:"basic", placeId:s.placePrediction.placeId });
+            logPlacesApiCall({ callType:"place_details", billingTier:"pro", placeId:s.placePrediction.placeId, reason:"crawl" });
             if(!place.location) return null;
             return {
               label: place.formattedAddress||place.displayName||s.placePrediction.text?.text||"",
@@ -6238,7 +6500,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
             const { Place }=await google.maps.importLibrary("places");
             const place=new Place({ id: override.placeId });
             await place.fetchFields({ fields:["location","viewport","formattedAddress","displayName"] });
-            logPlacesApiCall({ callType:"place_details", billingTier:"basic", placeId:override.placeId });
+            logPlacesApiCall({ callType:"place_details", billingTier:"pro", placeId:override.placeId, reason:"crawl" });
             if(place.location){
               details={
                 lat: place.location.lat(),
@@ -7141,7 +7403,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     } finally {
       // Logged for every request that left the browser, including ones cancelled
       // mid-flight (result_count null), because Google may still bill those.
-      logPlacesApiCall({ callType:"search_autocomplete", billingTier:"autocomplete_request", resultCount });
+      logPlacesApiCall({ callType:"search_autocomplete", billingTier:"autocomplete_request", resultCount, reason:"search_box" });
     }
   }
   // Fallback when Google is unavailable or the per-page cap is reached: Sunny's own venues by name.
@@ -7215,7 +7477,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const { Place }=await google.maps.importLibrary("places");
     const place=new Place({ id:placeId });
     await place.fetchFields({ fields });
-    logPlacesApiCall({ callType:"search_place_details", billingTier, placeId });
+    logPlacesApiCall({ callType:"search_place_details", billingTier, placeId, reason:"search_box" });
     const location=place.location;
     const lat=typeof location?.lat==="function" ? location.lat() : location?.lat;
     const lng=typeof location?.lng==="function" ? location.lng() : location?.lng;
@@ -7524,7 +7786,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   async function boot(){
     pendingSharedCrawl=detectPendingSharedCrawl();
     requestUserLocationOnce();
-    loadViewportCacheFromSession();
+    loadSearchAreaCache();
     const cached=loadLocal(VENUE_CACHE_KEY);
     if(cached&&typeof cached==="object"){
       const filtered=filterGloballyExcludedVenues(Object.values(cached),"local cache");
