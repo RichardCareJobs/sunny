@@ -1,6 +1,6 @@
 -- Diagnostic columns for places_api_calls, so we can see *why* each billed Google Places
 -- request happened and which of the per-map-search passes are worth paying for.
--- Additive only: nullable columns and one index. No policy or grant changes; the public
+-- Additive only: nullable columns. No policy or grant changes; the public
 -- key can still only insert (see supabase-setup.sql).
 --
 -- The client (app.js logPlacesApiCall) sends these fields when present and automatically
@@ -27,5 +27,5 @@ alter table public.places_api_calls
   add column if not exists discarded boolean,
   add column if not exists unique_new integer;
 
-create index if not exists idx_places_api_calls_created_at
-  on public.places_api_calls (created_at);
+-- No new index: production already has places_api_calls_created_at_idx (created_at),
+-- plus session_id and (call_type, billing_tier) indexes, which cover the reports.

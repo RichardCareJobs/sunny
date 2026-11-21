@@ -104,7 +104,7 @@ create table if not exists places_api_calls (
   discarded boolean,
   unique_new integer
 );
-create index if not exists idx_places_api_calls_created_at on places_api_calls (created_at);
+create index if not exists places_api_calls_created_at_idx on places_api_calls (created_at);
 
 alter table places_api_calls enable row level security;
 create policy "Allow anon insert" on places_api_calls for insert to anon with check (true);
