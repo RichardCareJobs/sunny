@@ -5,6 +5,7 @@
 
   let _supabase = null;
   let _sessionPromise = null;
+  let _sessionReady = false;
 
   function getSupabase() {
     if (_supabase) return _supabase;
@@ -76,26 +77,69 @@
       utm_medium: utm.utm_medium,
       utm_campaign: utm.utm_campaign,
       cookie_consent: typeof consent === "boolean" ? consent : null,
-    }, { onConflict: "id", ignoreDuplicates: true }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
+    }, { onConflict: "id", ignoreDuplicates: true }).then(() => { _sessionReady = true; }).catch(err => { console.warn("[Sunny Analytics] session insert failed:", err?.message || err); });
 
     return _sessionPromise;
   }
 
-  function trackSupabaseEvent(eventName, params) {
+  function buildEventRow(sessionId, eventName, params) {
+    const { place_id, ...metadata } = params;
+    return {
+      session_id: sessionId,
+      event_type: eventName,
+      place_id: place_id || null,
+      metadata: Object.keys(metadata).length ? metadata : null,
+      created_at: new Date().toISOString(),
+    };
+  }
+
+  function insertEventViaClient(sb, row) {
+    sb.from("events").insert(row).then(() => {}).catch(err => { console.warn("[Sunny Analytics] event insert failed:", err?.message || err); });
+  }
+
+  // Same POST to the events table that supabase-js makes, but with keepalive so the
+  // request survives the page being hidden or closed (e.g. a tap that opens Maps/Uber).
+  // sendBeacon can't set the apikey header PostgREST needs, so fetch keepalive is used.
+  function sendEventKeepalive(row) {
+    if (typeof window.fetch !== "function") return false;
+    try {
+      window.fetch(`${SUPABASE_URL}/rest/v1/events`, {
+        method: "POST",
+        keepalive: true,
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(row),
+      }).catch(err => { console.warn("[Sunny Analytics] keepalive event failed:", err?.message || err); });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function trackSupabaseEvent(eventName, params, transport) {
     try {
       const sb = getSupabase();
-      if (!sb) return;
       const sessionId = initSessionId();
-      const { place_id, ...metadata } = params;
-      ensureSupabaseSession(sessionId).then(() => {
-        sb.from("events").insert({
-          session_id: sessionId,
-          event_type: eventName,
-          place_id: place_id || null,
-          metadata: Object.keys(metadata).length ? metadata : null,
-          created_at: new Date().toISOString(),
-        }).then(() => {}).catch(err => { console.warn("[Sunny Analytics] event insert failed:", err?.message || err); });
-      });
+      const row = buildEventRow(sessionId, eventName, params);
+      if (transport === "beacon") {
+        // events.session_id references sessions(id): send right now (still inside the
+        // click handler) when the session row exists, otherwise as soon as it does.
+        if (_sessionReady) {
+          if (!sendEventKeepalive(row) && sb) insertEventViaClient(sb, row);
+          return;
+        }
+        if (!sb) return;
+        ensureSupabaseSession(sessionId).then(() => {
+          if (!sendEventKeepalive(row)) insertEventViaClient(sb, row);
+        });
+        return;
+      }
+      if (!sb) return;
+      ensureSupabaseSession(sessionId).then(() => insertEventViaClient(sb, row));
     } catch { /* no-op */ }
   }
 
@@ -106,12 +150,14 @@
     return false;
   }
 
-  function track(eventName, params = {}) {
+  // options.transport: "beacon" sends the Supabase event with fetch keepalive so it
+  // isn't lost when the tap opens another app.
+  function track(eventName, params = {}, options = {}) {
     try {
       if (!eventName) return;
 
       // Server-side tracking — runs regardless of cookie consent
-      trackSupabaseEvent(eventName, params);
+      trackSupabaseEvent(eventName, params, options && options.transport);
 
       // GTM tracking — only with consent
       if (!hasAnalyticsConsent()) return;
