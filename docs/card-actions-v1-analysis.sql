@@ -1,6 +1,6 @@
 -- Sunny · experiment card_actions_v1 · analysis queries (Supabase / Postgres)
--- GO-LIVE (UTC): <<FILL IN AT DEPLOY, e.g. 2026-12-01 00:00:00+00>>
--- Replace the timestamp in the `params` CTE of each query before running.
+-- GO-LIVE (UTC): 2026-11-27 19:04:00+00 (PR #232 merged; Pages deploys within a minute or two)
+-- The `params` CTEs below already use this go-live time; `end_at` defaults to now().
 -- Unit of analysis = session (events.session_id). Internal and forced traffic excluded.
 --
 -- Modes (metadata.near): true = close by (under 2 km, Directions recommended),
@@ -13,7 +13,7 @@
 -- 1. PRIMARY: share of card-opening sessions that tapped any action, per variant, + z-test
 --    (all modes together)
 ------------------------------------------------------------------------------------------
-with params as (select timestamptz '2026-12-01 00:00:00+00' as start_at, now() as end_at),
+with params as (select timestamptz '2026-11-27 19:04:00+00' as start_at, now() as end_at),
 exp as (
   select e.*
   from events e, params p
@@ -61,7 +61,7 @@ order by pv.variant;
 --     an action on a card in that mode. A session that opened cards in two modes counts
 --     once in each, so these rows don't add up to query 1.
 ------------------------------------------------------------------------------------------
-with params as (select timestamptz '2026-12-01 00:00:00+00' as start_at, now() as end_at),
+with params as (select timestamptz '2026-11-27 19:04:00+00' as start_at, now() as end_at),
 exp as (
   select e.*,
          case when e.metadata->'near' is null or jsonb_typeof(e.metadata->'near') = 'null' then 'no location'
@@ -94,7 +94,7 @@ order by 2, 1;
 ------------------------------------------------------------------------------------------
 -- 2. SECONDARY: taps per card open, by variant × mode (close by / further away / no location)
 ------------------------------------------------------------------------------------------
-with params as (select timestamptz '2026-12-01 00:00:00+00' as start_at, now() as end_at),
+with params as (select timestamptz '2026-11-27 19:04:00+00' as start_at, now() as end_at),
 exp as (
   select e.*,
          case when e.metadata->'near' is null or jsonb_typeof(e.metadata->'near') = 'null' then 'no location'
@@ -130,7 +130,7 @@ order by 2, 1;
 --    Without location the rows variant shows two equal rows: row_primary is just the
 --    first (Directions) row and primary = false for both.
 ------------------------------------------------------------------------------------------
-with params as (select timestamptz '2026-12-01 00:00:00+00' as start_at, now() as end_at)
+with params as (select timestamptz '2026-11-27 19:04:00+00' as start_at, now() as end_at)
 select e.metadata->>'exp_variant' as variant,
        case when e.metadata->'near' is null or jsonb_typeof(e.metadata->'near') = 'null' then 'no location'
             when (e.metadata->>'near')::boolean then 'close by'
@@ -151,7 +151,7 @@ order by 1, 2, 5 desc;
 ------------------------------------------------------------------------------------------
 -- 4. HEALTH CHECK (run daily in week 1): split balance, tagging coverage, mode mix, internal volume
 ------------------------------------------------------------------------------------------
-with params as (select timestamptz '2026-12-01 00:00:00+00' as start_at)
+with params as (select timestamptz '2026-11-27 19:04:00+00' as start_at)
 select date_trunc('day', e.created_at at time zone 'Australia/Sydney') as day_syd,
        count(*) filter (where e.metadata->>'exp_variant' = 'rows')   as opens_rows,
        count(*) filter (where e.metadata->>'exp_variant' = 'button') as opens_button,
