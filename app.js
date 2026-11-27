@@ -1208,7 +1208,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const distance=haversineMeters(userLocation.lat,userLocation.lng,venue.lat,venue.lng);
     return Number.isFinite(distance) ? Math.round(distance) : null;
   }
-  function trackVenueCardOpened(card,venue){
+  function trackVenueCardOpened(card,venue,cta){
     if(!card||!venue) return;
     const isAlreadyOpen=!card.container.classList.contains("hidden") && card.container.dataset.venueId===venue.id;
     if(isAlreadyOpen) return;
@@ -1220,9 +1220,29 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const distanceMeters=getVenueDistanceMeters(venue);
     if(Number.isFinite(distanceMeters)) payload.distance_m=distanceMeters;
     if(typeof venue.openNow==="boolean") payload.is_open=venue.openNow;
-    trackEvent("venue_card_opened",payload);
+    const exp=window.SunnyCardActions;
+    const expMeta=exp&&typeof exp.expMeta==="function"
+      ? exp.expMeta(exp.modeFromCta(cta||getVenueCtaFor(venue)))
+      : {};
+    trackEvent("venue_card_opened",{ ...payload, ...expMeta });
   }
-  function trackVenueAction(action,venue){
+  function getVenueCtaFor(venue){
+    return window.SunnyVenueCta?.getVenueCta
+      ? window.SunnyVenueCta.getVenueCta(getVenueStraightLineKm(venue))
+      : { mode:"none", line:null, primary:null, distanceKm:null, walkMin:null };
+  }
+  // Experiment card_actions_v1 keys (exp_id, exp_variant, exp_forced, exp_sticky,
+  // internal, near). Uses the mode the card was rendered in when it's showing this
+  // venue, otherwise works it out the same way showVenueCard does. {} when the
+  // experiment is off or js/card-actions-core.js didn't load.
+  function getCardExpMeta(card,venue){
+    const exp=window.SunnyCardActions;
+    if(!exp||typeof exp.expMeta!=="function") return {};
+    const state=card&&card.currentVenue===venue&&card.ctaState;
+    const mode=state&&state.mode ? state.mode : exp.modeFromCta(getVenueCtaFor(venue));
+    return exp.expMeta(mode);
+  }
+  function trackVenueAction(action,venue,extra){
     if(!venue||!action) return;
     const payload={
       venue_id: String(venue.id || ""),
@@ -1236,7 +1256,14 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
       const state=(detailCard&&detailCard.currentVenue===venue&&detailCard.ctaState)||{ primary:null, distanceKm:null };
       payload.primary=state.primary===action;
       payload.distance_km=Number.isFinite(state.distanceKm)?state.distanceKm:null;
+      // Taps in the experiment's action section: which element, and whether it was
+      // the highlighted row / the big button.
+      if(extra&&extra.slot){
+        payload.slot=extra.slot;
+        payload.primary=!!extra.primary;
+      }
     }
+    Object.assign(payload,getCardExpMeta(detailCard,venue));
     // These taps open another app, so send with keepalive before the link opens.
     trackEvent("venue_action_clicked",payload,{ transport:"beacon" });
   }
@@ -4633,9 +4660,12 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
         </div>
         <div class="venue-card__actions">
           <!-- Wishlist toggle removed from the UI; backend save/wishlist logic is kept intact so it can be re-enabled. -->
+          <!-- Experiment card_actions_v1 (js/card-actions-core.js) renders the action section here. -->
+          <div class="venue-card__sca hidden"></div>
+          <!-- Fallback buttons: only shown if js/card-actions-core.js didn't load. -->
           <a class="action cta cta--directions" target="_blank" rel="noopener" data-action="directions">Get Directions</a>
           <a class="action cta cta--uber" target="_blank" rel="noopener" data-action="uber">Book an Uber</a>
-          <a class="action muted" target="_blank" rel="noopener" data-action="website">Website</a>
+          <a class="action muted venue-card__website" target="_blank" rel="noopener" data-action="website">Website</a>
         </div>
         <div class="venue-card__fab" aria-haspopup="true">
           <button class="venue-card__fab-toggle" type="button" aria-label="More actions" aria-expanded="false">+</button>
@@ -4789,6 +4819,31 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(detailCard.actions.uber){
       detailCard.actions.uber.addEventListener("click",()=>{
         if(detailCard.currentVenue) trackVenueAction("uber",detailCard.currentVenue);
+      });
+    }
+    detailCard.scaEl=container.querySelector(".venue-card__sca");
+    if(detailCard.scaEl){
+      // One listener for the experiment's action section (rows/button variants).
+      detailCard.scaEl.addEventListener("click",(event)=>{
+        const venue=detailCard.currentVenue;
+        if(!venue) return;
+        const target=event.target instanceof Element ? event.target : null;
+        if(!target) return;
+        const actionEl=target.closest("[data-sca-action]");
+        if(actionEl){
+          trackVenueAction(actionEl.getAttribute("data-sca-action"),venue,{
+            slot:actionEl.getAttribute("data-sca-slot"),
+            primary:actionEl.getAttribute("data-sca-primary")==="1"
+          });
+          return;
+        }
+        // The trip line does nothing; this tells us whether people mistake it for a button.
+        if(target.closest("[data-sca-trip]")){
+          trackEvent("trip_line_tapped",{
+            venue_id:String(venue.id||""),
+            ...getCardExpMeta(detailCard,venue)
+          });
+        }
       });
     }
     if(detailCard.actions.website){
@@ -4981,6 +5036,40 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.container.dataset.cta=primary||"equal";
     card.ctaState={ primary:primary||null, distanceKm:cta&&Number.isFinite(cta.distanceKm)?cta.distanceKm:null };
   }
+  // Experiment card_actions_v1: render the assigned variant (rows/button) for the
+  // close-by / further-away / no-location mode. Uses the same close-by rule
+  // (cta.primary), walk minutes, distance and hrefs as before; only the
+  // presentation differs. Falls back to applyVenueCardCta if the module is missing.
+  function renderVenueCardActions(card,cta,placeLabel){
+    const exp=window.SunnyCardActions;
+    const directions=card.actions.directions;
+    const uber=card.actions.uber;
+    if(!exp||typeof exp.render!=="function"||!card.scaEl||!directions||!uber){
+      if(card.scaEl) card.scaEl.classList.add("hidden");
+      card.container.classList.remove("venue-card--sca");
+      applyVenueCardCta(card,cta);
+      return;
+    }
+    const mode=exp.modeFromCta(cta);
+    const variant=exp.getAssignment().variant;
+    card.scaEl.innerHTML=exp.render({
+      variant,
+      mode,
+      walkMin:cta&&cta.walkMin,
+      distanceKm:cta&&cta.distanceKm,
+      placeLabel,
+      directionsUrl:directions.getAttribute("href")||"",
+      uberUrl:uber.getAttribute("href")||""
+    });
+    card.scaEl.classList.remove("hidden");
+    card.container.classList.add("venue-card--sca");
+    card.container.dataset.cta=cta&&cta.primary||"equal";
+    card.ctaState={
+      primary:cta&&cta.primary||null,
+      distanceKm:cta&&Number.isFinite(cta.distanceKm)?cta.distanceKm:null,
+      mode
+    };
+  }
   function showVenueCard(v){
     if(isGloballyExcludedVenue(v)){
       hideVenueCard();
@@ -4989,7 +5078,8 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     const card=ensureDetailCard();
     hideSearchCard();
     hideSunsOutTrayForCard();
-    trackVenueCardOpened(card,v);
+    const cta=getVenueCtaFor(v);
+    trackVenueCardOpened(card,v,cta);
     openVenueId=v.id;
     card.currentVenue=v;
     // User explicitly opened this venue — trigger qualification enrichment unconditionally
@@ -5003,9 +5093,6 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
     const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
-    const cta=window.SunnyVenueCta?.getVenueCta
-      ? window.SunnyVenueCta.getVenueCta(getVenueStraightLineKm(v))
-      : { mode:"none", line:null, primary:null, distanceKm:null, walkMin:null };
     const address=v.address||formatAddress(tags);
     const hasValidCoords=Number.isFinite(v.lat)&&Number.isFinite(v.lng);
     const sun=hasValidCoords?sunBadge(v.lat,v.lng):null;
@@ -5079,7 +5166,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     card.actions.directions.href=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}`;
     card.actions.uber.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}`;
-    applyVenueCardCta(card,cta);
+    renderVenueCardActions(card,cta,kind);
     if(website){
       card.actions.website.classList.remove("hidden");
       card.actions.website.href=website;
