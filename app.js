@@ -206,9 +206,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
   window.SUNNY_PROVIDER = MAP_PROVIDER;
 
   const analytics = window.SunnyAnalytics || null;
-  function trackEvent(eventName, params = {}){
+  function trackEvent(eventName, params = {}, options = {}){
     if(!analytics || typeof analytics.track!=="function") return;
-    analytics.track(eventName, params);
+    analytics.track(eventName, params, options);
   }
 
   let map;
@@ -1232,7 +1232,20 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     };
     const distanceMeters=getVenueDistanceMeters(venue);
     if(Number.isFinite(distanceMeters)) payload.distance_m=distanceMeters;
-    trackEvent("venue_action_clicked",payload);
+    if(action==="directions"||action==="uber"){
+      const state=(detailCard&&detailCard.currentVenue===venue&&detailCard.ctaState)||{ primary:null, distanceKm:null };
+      payload.primary=state.primary===action;
+      payload.distance_km=Number.isFinite(state.distanceKm)?state.distanceKm:null;
+    }
+    // These taps open another app, so send with keepalive before the link opens.
+    trackEvent("venue_action_clicked",payload,{ transport:"beacon" });
+  }
+  // Straight-line km from the user to the venue, or null when location isn't shared.
+  function getVenueStraightLineKm(venue){
+    if(!venue||!userLocation) return null;
+    if(!isValidCoord(userLocation.lat,userLocation.lng)||!isValidCoord(venue.lat,venue.lng)) return null;
+    const km=haversine(userLocation.lat,userLocation.lng,venue.lat,venue.lng);
+    return Number.isFinite(km) ? km : null;
   }
   function clearLocationWatch(){
     if(locationWatchId!==null){ navigator.geolocation.clearWatch(locationWatchId); locationWatchId=null; }
@@ -4595,6 +4608,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
                 </div>
               </div>
             </div>
+            <div class="venue-card__distance hidden"></div>
             <div class="venue-card__meta"></div>
             <div class="venue-card__address"></div>
           </div>
@@ -4734,8 +4748,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     detailCard={
       container,
       nameEl:container.querySelector(".venue-card__name"),
+      distanceEl:container.querySelector(".venue-card__distance"),
       metaEl:container.querySelector(".venue-card__meta"),
       addressEl:container.querySelector(".venue-card__address"),
+      actionsEl:container.querySelector(".venue-card__actions"),
+      ctaState:{ primary:null, distanceKm:null },
       openChip:container.querySelector(".chip-open"),
       hoursEl:container.querySelector(".venue-card__hours"),
       hoursNextEl:container.querySelector(".venue-card__hours-next"),
@@ -4931,6 +4948,39 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     else if(tone==="info") el.classList.add("chip-info");
     else el.classList.add("chip-muted");
   }
+  // One main button based on distance (js/venue-cta-core.js): under 2 km Directions
+  // ("Walk · 12 min") is main and Uber a small link; 2 km+ the other way round;
+  // no location keeps the two equal buttons. Hrefs are set by the caller and untouched.
+  function applyVenueCardCta(card,cta){
+    const directions=card.actions.directions;
+    const uber=card.actions.uber;
+    if(!directions||!uber) return;
+    const primary=cta&&cta.primary;
+    [directions,uber].forEach(el=>el.classList.remove("cta--primary","cta--link"));
+    if(primary==="directions"){
+      directions.classList.add("cta--primary");
+      directions.textContent=`Walk · ${cta.walkMin} min`;
+      uber.classList.add("cta--link");
+      uber.textContent="Book an Uber";
+    } else if(primary==="uber"){
+      uber.classList.add("cta--primary");
+      uber.textContent="Book an Uber";
+      directions.classList.add("cta--link");
+      directions.textContent="Get directions";
+    } else {
+      directions.textContent="Get Directions";
+      uber.textContent="Book an Uber";
+    }
+    // Main button first in the DOM so visual and focus order match.
+    const actionsEl=card.actionsEl||directions.parentNode;
+    if(actionsEl){
+      const [first,second]=primary==="uber" ? [uber,directions] : [directions,uber];
+      actionsEl.insertBefore(second,actionsEl.firstChild);
+      actionsEl.insertBefore(first,second);
+    }
+    card.container.dataset.cta=primary||"equal";
+    card.ctaState={ primary:primary||null, distanceKm:cta&&Number.isFinite(cta.distanceKm)?cta.distanceKm:null };
+  }
   function showVenueCard(v){
     if(isGloballyExcludedVenue(v)){
       hideVenueCard();
@@ -4953,7 +5003,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     if(card.setFabOpen) card.setFabOpen(false);
     const tags=v.tags||{};
     const kind=v.primaryCategory||toTitle(tags.amenity||tags.tourism||"");
-    const distance=userLocation?formatDistanceKm(haversine(userLocation.lat,userLocation.lng,v.lat,v.lng)):null;
+    const cta=window.SunnyVenueCta?.getVenueCta
+      ? window.SunnyVenueCta.getVenueCta(getVenueStraightLineKm(v))
+      : { mode:"none", line:null, primary:null, distanceKm:null, walkMin:null };
     const address=v.address||formatAddress(tags);
     const hasValidCoords=Number.isFinite(v.lat)&&Number.isFinite(v.lng);
     const sun=hasValidCoords?sunBadge(v.lat,v.lng):null;
@@ -4964,7 +5016,11 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     card.nameEl.textContent=v.name||"Outdoor venue";
     updateVenueCardFavouriteButton(v.id);
     updateVenueCardSaveButton(v);
-    card.metaEl.textContent=[kind,distance].filter(Boolean).join(" · ")||"";
+    if(card.distanceEl){
+      card.distanceEl.textContent=cta.line||"";
+      card.distanceEl.classList.toggle("hidden",!cta.line);
+    }
+    card.metaEl.textContent=kind||"";
     if(address){
       card.addressEl.textContent=address;
       card.addressEl.classList.remove("hidden");
@@ -5021,10 +5077,9 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
 
     renderVenueThumbnails(card,v);
 
-    card.actions.directions.textContent="Get Directions";
     card.actions.directions.href=`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${v.lat},${v.lng}`)}`;
-    card.actions.uber.textContent="Book an Uber";
     card.actions.uber.href=`https://m.uber.com/ul/?action=setPickup&dropoff[latitude]=${v.lat}&dropoff[longitude]=${v.lng}&dropoff[nickname]=${encodeURIComponent(v.name)}`;
+    applyVenueCardCta(card,cta);
     if(website){
       card.actions.website.classList.remove("hidden");
       card.actions.website.href=website;

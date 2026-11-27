@@ -5,6 +5,7 @@ const CORE_ASSETS = [
   '/index.html',
   '/app.js',
   '/js/search-core.js',
+  '/js/venue-cta-core.js',
   '/js/qualification-core.js',
   '/js/tile-core.js',
   '/js/sun-core.js',
