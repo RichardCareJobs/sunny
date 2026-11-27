@@ -241,6 +241,97 @@ a.tiny { font-size:.85rem; color:#fff; text-decoration:none; }
   text-decoration:underline; text-underline-offset:3px;
 }
 .venue-card__actions .cta.cta--link:hover { filter:none; box-shadow:none; color:#111; }
+
+/* ---------- Experiment card_actions_v1: action section (js/card-actions-core.js) ----------
+   Shared flat trip line (.sca-trip) + either .sca-rows (variant "rows") or
+   .sca-button-group (variant "button"). Visual source: experiment reference.html. */
+#venue-card.venue-card--sca .venue-card__actions { flex-direction:column; align-items:stretch; flex-wrap:nowrap; gap:.25rem; }
+/* Not pinned: at 360px the rows section is ~220px, over a third of the card, so
+   both variants scroll with the card (safe-area padding kept). */
+#venue-card.venue-card--sca .venue-card__actions { position:static; box-shadow:none; }
+.venue-card--sca .venue-card__actions > .cta { display:none; }
+.venue-card__sca.hidden { display:none; }
+/* Website: the same small text link below the section in both variants */
+.venue-card--sca .venue-card__actions .venue-card__website {
+  flex:0 0 auto; align-self:center;
+  display:inline-flex; align-items:center; justify-content:center;
+  min-height:44px; padding:0 .75rem;
+  border:0; background:none; box-shadow:none;
+  color:#5F6368; font-size:14px; font-weight:500;
+  text-decoration:underline; text-underline-offset:3px;
+}
+.venue-card--sca .venue-card__actions .venue-card__website.hidden { display:none; }
+
+.venue-card__sca .sca {
+  --sca-orange: #EA6A0A;      /* fills; white text on it only at >=18px bold */
+  --sca-orange-text: #B84E05; /* orange text on white (5:1) */
+  --sca-tint: #FFF3E8;
+  --sca-ink: #1F1F1F;
+  --sca-muted: #5F6368;
+  --sca-line: #E3E3E3;
+  --sca-dots: #D6D3CF;
+  --sca-you: #1A73E8;
+  display:flex; flex-direction:column; gap:12px;
+  font-family:inherit;
+}
+.venue-card__sca .sca svg { flex-shrink:0; }
+
+/* Shared flat trip line (informational, NOT a button) */
+.venue-card__sca .sca-trip {
+  display:flex; align-items:center; gap:10px;
+  font-size:14px; line-height:1.3; color:var(--sca-muted);
+  -webkit-user-select:none; user-select:none;
+}
+.venue-card__sca .sca-trip__end,
+.venue-card__sca .sca-trip__mid { display:flex; align-items:center; gap:5px; white-space:nowrap; }
+.venue-card__sca .sca-trip__end--place { color:var(--sca-orange); }
+.venue-card__sca .sca-trip__place { color:var(--sca-muted); }
+.venue-card__sca .sca-trip__you { width:10px; height:10px; border-radius:50%; background:var(--sca-you); }
+.venue-card__sca .sca-trip__dots { flex:1; min-width:12px; border-top:2px dotted var(--sca-dots); }
+
+/* Variant: rows (B2) */
+.venue-card__sca .sca-rows { display:flex; flex-direction:column; gap:10px; }
+.venue-card__sca .sca-row {
+  display:flex; align-items:center; gap:14px;
+  min-height:68px; padding:10px 14px; box-sizing:border-box;
+  border-radius:16px; background:#fff; border:1.5px solid var(--sca-line);
+  text-decoration:none; color:var(--sca-ink);
+  -webkit-tap-highlight-color:transparent;
+}
+.venue-card__sca .sca-row:active { transform:scale(0.99); }
+.venue-card__sca .sca-row:focus-visible { outline:3px solid var(--sca-orange-text); outline-offset:2px; }
+.venue-card__sca .sca-row--primary { background:var(--sca-tint); border:2px solid var(--sca-orange); }
+.venue-card__sca .sca-row__icon {
+  width:44px; height:44px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--sca-tint); color:var(--sca-orange); flex-shrink:0;
+}
+.venue-card__sca .sca-row--primary .sca-row__icon { background:var(--sca-orange); color:#fff; }
+.venue-card__sca .sca-row__text { display:flex; flex-direction:column; gap:2px; flex:1; min-width:0; }
+.venue-card__sca .sca-row__title { font-size:17px; font-weight:700; color:var(--sca-ink); }
+.venue-card__sca .sca-row__sub { font-size:14px; color:var(--sca-muted); }
+.venue-card__sca .sca-row__trail { display:flex; color:var(--sca-orange-text); }
+
+/* Variant: button (D2) */
+.venue-card__sca .sca-button-group { display:flex; flex-direction:column; gap:12px; }
+.venue-card__sca .sca-btn {
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  height:56px; border-radius:16px;
+  background:var(--sca-orange); color:#fff;
+  font-size:19px; font-weight:700; text-decoration:none;
+  box-shadow:0 6px 16px rgba(234,106,10,.28);
+  -webkit-tap-highlight-color:transparent;
+}
+.venue-card__sca .sca-btn:active { transform:scale(0.99); }
+.venue-card__sca .sca-btn:focus-visible { outline:3px solid var(--sca-orange-text); outline-offset:3px; }
+.venue-card__sca .sca-alt { margin:0; text-align:center; font-size:15px; color:var(--sca-muted); }
+.venue-card__sca .sca-alt a {
+  display:inline-block;
+  padding:12px 4px;          /* ~44px tap height without changing the line's look */
+  margin:-12px 0;
+  font-weight:700; color:var(--sca-orange-text);
+  text-decoration:underline; text-underline-offset:3px;
+}
 .venue-card__fab { position:absolute; right:12px; bottom:12px; display:flex; flex-direction:column; align-items:flex-end; gap:.45rem; pointer-events:none; }
 .venue-card__fab-toggle { width:52px; height:52px; border-radius:50%; border:0; background:#111; color:#fff; font-size:28px; font-weight:800; box-shadow:0 10px 28px rgba(0,0,0,.2); cursor:pointer; pointer-events:auto; }
 .venue-card__fab-toggle { display:none; }
