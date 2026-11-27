@@ -53,6 +53,14 @@ test("3 km and over: drive line, Uber is main", () => {
   assert.equal(at34.distanceKm, 3.4);
 });
 
+test("Walk button label marks the time as approximate, only when Directions is main", () => {
+  assert.equal(C.getVenueCta(1.5).buttonLabel, "Walk · ~23 min");
+  assert.equal(C.getVenueCta(0.02).buttonLabel, "Walk · ~1 min");
+  assert.equal(C.getVenueCta(2.5).buttonLabel, null);
+  assert.equal(C.getVenueCta(4).buttonLabel, null);
+  assert.equal(C.getVenueCta(null).buttonLabel, null);
+});
+
 test("distance_km rounds the straight-line km to 1 decimal", () => {
   assert.equal(C.getVenueCta(1.26).distanceKm, 1.3);
   assert.equal(C.getVenueCta(0.04).distanceKm, 0);

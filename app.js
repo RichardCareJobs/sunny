@@ -4959,7 +4959,7 @@ console.log("Sunny app.js loaded: Bottom Card (No Filters) 2025-10-10-f");
     [directions,uber].forEach(el=>el.classList.remove("cta--primary","cta--link"));
     if(primary==="directions"){
       directions.classList.add("cta--primary");
-      directions.textContent=`Walk · ${cta.walkMin} min`;
+      directions.textContent=cta.buttonLabel||`Walk · ~${cta.walkMin} min`;
       uber.classList.add("cta--link");
       uber.textContent="Book an Uber";
     } else if(primary==="uber"){
