@@ -18,7 +18,7 @@
   const WALK_LINE_MAX_KM = 3;     // under this: show walk time; at or over: drive distance
   const WALK_PRIMARY_MAX_KM = 2;  // under this: Directions is the main button; at or over: Uber
 
-  const NONE = Object.freeze({ mode: "none", line: null, primary: null, distanceKm: null, walkMin: null, driveKm: null });
+  const NONE = Object.freeze({ mode: "none", line: null, primary: null, buttonLabel: null, distanceKm: null, walkMin: null, driveKm: null });
 
   function walkMinutes(km) {
     return Math.max(1, Math.round((km * ROUTE_FACTOR / WALK_KMH) * 60));
@@ -34,10 +34,13 @@
     const walkMin = walkMinutes(km);
     const drive = driveKm(km);
     const isWalkLine = km < WALK_LINE_MAX_KM;
+    const primary = km < WALK_PRIMARY_MAX_KM ? "directions" : "uber";
     return {
       mode: isWalkLine ? "walk" : "drive",
       line: isWalkLine ? `~${walkMin} min walk` : `~${drive} km drive`,
-      primary: km < WALK_PRIMARY_MAX_KM ? "directions" : "uber",
+      primary,
+      // Label for the main Directions button; "~" marks the time as an estimate.
+      buttonLabel: primary === "directions" ? `Walk · ~${walkMin} min` : null,
       distanceKm: Math.round(km * 10) / 10,
       walkMin,
       driveKm: drive,
